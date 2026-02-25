@@ -131,7 +131,6 @@ current_frontend_image="$(get_env C2F_FRONTEND_IMAGE "${ENV_FILE}")"
 current_image_tag="$(get_env C2F_IMAGE_TAG "${ENV_FILE}")"
 current_skip_pull="$(get_env C2F_SKIP_PULL "${ENV_FILE}")"
 
-prompt_value "Appliance display name" "${current_brand:-Click2Fix}" app_brand
 prompt_value "Public host or static IP for UI access" "${current_public_host:-$(hostname -I 2>/dev/null | awk '{print $1}')}" public_host
 prompt_value "Frontend port" "${current_frontend_port:-5173}" frontend_port
 prompt_value "Backend port" "${current_backend_port:-8000}" backend_port
@@ -149,10 +148,12 @@ prompt_secret "Global WinRM password" "${current_winrm_password:-}" winrm_passwo
 
 prompt_value "Initial Click2Fix admin username" "${current_admin_user:-admin}" admin_user
 prompt_secret "Initial Click2Fix admin password" "${current_admin_password:-}" admin_password
-prompt_value "Backend image repository" "${current_backend_image:-click2fix-backend}" backend_image
-prompt_value "Frontend image repository" "${current_frontend_image:-click2fix-frontend}" frontend_image
-prompt_value "Image tag" "${current_image_tag:-local}" image_tag
-prompt_value "Skip docker pull (for offline/local images) [true|false]" "${current_skip_pull:-false}" skip_pull
+
+app_brand="${current_brand:-Click2Fix}"
+backend_image="${current_backend_image:-click2fix-backend}"
+frontend_image="${current_frontend_image:-click2fix-frontend}"
+image_tag="${current_image_tag:-local}"
+skip_pull="${current_skip_pull:-false}"
 
 echo
 read -r -p "Configure static network now? [y/N]: " configure_network
@@ -194,10 +195,6 @@ set_env C2F_WINRM_USERNAME "${winrm_user}" "${ENV_FILE}"
 set_env C2F_WINRM_PASSWORD "${winrm_password}" "${ENV_FILE}"
 set_env C2F_BOOTSTRAP_ADMIN_USERNAME "${admin_user}" "${ENV_FILE}"
 set_env C2F_BOOTSTRAP_ADMIN_PASSWORD "${admin_password}" "${ENV_FILE}"
-set_env C2F_BACKEND_IMAGE "${backend_image}" "${ENV_FILE}"
-set_env C2F_FRONTEND_IMAGE "${frontend_image}" "${ENV_FILE}"
-set_env C2F_IMAGE_TAG "${image_tag}" "${ENV_FILE}"
-set_env C2F_SKIP_PULL "${skip_pull}" "${ENV_FILE}"
 
 echo
 echo "Pulling and starting appliance services..."
@@ -214,7 +211,11 @@ if bool_env "${skip_pull}"; then
     exit 1
   fi
 else
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" pull
+  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" pull; then
+    echo "ERROR: image pull failed." >&2
+    echo "If using private GHCR images, run: docker login ghcr.io (token with read:packages), then rerun setup." >&2
+    exit 1
+  fi
 fi
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d
 

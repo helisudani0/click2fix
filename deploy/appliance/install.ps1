@@ -75,6 +75,30 @@ function To-Bool {
   return @("1","true","yes","on") -contains $Value.Trim().ToLowerInvariant()
 }
 
+function Invoke-NativeChecked {
+  param(
+    [string]$FilePath,
+    [string[]]$Arguments = @(),
+    [string]$FailureMessage = "Command failed."
+  )
+  & $FilePath @Arguments
+  $exitCode = $LASTEXITCODE
+  if ($exitCode -ne 0) {
+    throw "$FailureMessage Exit code: $exitCode"
+  }
+}
+
+function Get-ContainerStatus {
+  param([string]$ContainerName)
+  $exists = & docker ps -a --filter "name=^$ContainerName$" --format "{{.Names}}" 2>$null
+  if ($LASTEXITCODE -ne 0) { return "" }
+  $first = $exists | Select-Object -First 1
+  if ([string]::IsNullOrWhiteSpace($first)) { return "" }
+  $status = & docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' $ContainerName 2>$null
+  if ($LASTEXITCODE -ne 0) { return "" }
+  return ($status | Select-Object -First 1).Trim()
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $envTemplate = Join-Path $scriptDir ".env.appliance.template"
 $envPath = Join-Path $scriptDir $EnvFile
@@ -83,7 +107,7 @@ $composePath = Join-Path $scriptDir $ComposeFile
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   throw "Docker is not installed."
 }
-docker compose version | Out-Null
+Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "version") -FailureMessage "Docker Compose plugin is required."
 
 if (-not (Test-Path $envPath)) {
   Copy-Item -Path $envTemplate -Destination $envPath -Force
@@ -96,7 +120,6 @@ $defaultHost = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContin
   Select-Object -ExpandProperty IPAddress -First 1)
 if (-not $defaultHost) { $defaultHost = "localhost" }
 
-$appBrand = Read-Value "Appliance display name" (Get-EnvValue $envPath "APP_BRAND")
 $currentPublicHost = Get-EnvValue $envPath "C2F_PUBLIC_HOST"
 if ([string]::IsNullOrWhiteSpace($currentPublicHost)) { $currentPublicHost = $defaultHost }
 $publicHost = Read-Value "Public host or static IP for UI access" $currentPublicHost
@@ -117,10 +140,16 @@ $winrmPassword = Read-SecretValue "Global WinRM password" (Get-EnvValue $envPath
 $adminUser = Read-Value "Initial Click2Fix admin username" (Get-EnvValue $envPath "C2F_BOOTSTRAP_ADMIN_USERNAME")
 $adminPassword = Read-SecretValue "Initial Click2Fix admin password" (Get-EnvValue $envPath "C2F_BOOTSTRAP_ADMIN_PASSWORD")
 
-$backendImage = Read-Value "Backend image repository" (Get-EnvValue $envPath "C2F_BACKEND_IMAGE")
-$frontendImage = Read-Value "Frontend image repository" (Get-EnvValue $envPath "C2F_FRONTEND_IMAGE")
-$imageTag = Read-Value "Image tag" (Get-EnvValue $envPath "C2F_IMAGE_TAG")
-$skipPull = Read-Value "Skip docker pull (for offline/local images) [true|false]" (Get-EnvValue $envPath "C2F_SKIP_PULL")
+$appBrand = Get-EnvValue $envPath "APP_BRAND"
+if ([string]::IsNullOrWhiteSpace($appBrand)) { $appBrand = "Click2Fix" }
+$backendImage = Get-EnvValue $envPath "C2F_BACKEND_IMAGE"
+$frontendImage = Get-EnvValue $envPath "C2F_FRONTEND_IMAGE"
+$imageTag = Get-EnvValue $envPath "C2F_IMAGE_TAG"
+$skipPull = Get-EnvValue $envPath "C2F_SKIP_PULL"
+if ([string]::IsNullOrWhiteSpace($backendImage) -or [string]::IsNullOrWhiteSpace($frontendImage) -or [string]::IsNullOrWhiteSpace($imageTag)) {
+  throw "Image configuration is missing in .env.appliance. Expected C2F_BACKEND_IMAGE, C2F_FRONTEND_IMAGE, C2F_IMAGE_TAG."
+}
+if ([string]::IsNullOrWhiteSpace($skipPull)) { $skipPull = "false" }
 
 if ([string]::IsNullOrWhiteSpace($publicHost)) { throw "Public host/IP is required." }
 if ([string]::IsNullOrWhiteSpace($wazuhPassword) -or [string]::IsNullOrWhiteSpace($indexerPassword) -or [string]::IsNullOrWhiteSpace($adminPassword)) {
@@ -146,26 +175,26 @@ Set-EnvValue -Path $envPath -Key "C2F_WINRM_USERNAME" -Value $winrmUser
 Set-EnvValue -Path $envPath -Key "C2F_WINRM_PASSWORD" -Value $winrmPassword
 Set-EnvValue -Path $envPath -Key "C2F_BOOTSTRAP_ADMIN_USERNAME" -Value $adminUser
 Set-EnvValue -Path $envPath -Key "C2F_BOOTSTRAP_ADMIN_PASSWORD" -Value $adminPassword
-Set-EnvValue -Path $envPath -Key "C2F_BACKEND_IMAGE" -Value $backendImage
-Set-EnvValue -Path $envPath -Key "C2F_FRONTEND_IMAGE" -Value $frontendImage
-Set-EnvValue -Path $envPath -Key "C2F_IMAGE_TAG" -Value $imageTag
-Set-EnvValue -Path $envPath -Key "C2F_SKIP_PULL" -Value $skipPull
 
 if (To-Bool $skipPull) {
-  docker image inspect "$backendImage`:$imageTag" | Out-Null
-  docker image inspect "$frontendImage`:$imageTag" | Out-Null
+  Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", "$backendImage`:$imageTag") -FailureMessage "Backend image not found locally: $backendImage`:$imageTag."
+  Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", "$frontendImage`:$imageTag") -FailureMessage "Frontend image not found locally: $frontendImage`:$imageTag."
 } else {
-  docker compose --env-file $envPath -f $composePath pull
+  try {
+    Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "pull") -FailureMessage "Image pull failed."
+  } catch {
+    throw "Image pull failed. If you use private GHCR images, run 'docker login ghcr.io' first (PAT with read:packages), then rerun setup."
+  }
 }
 
-docker compose --env-file $envPath -f $composePath up -d
+Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "up", "-d") -FailureMessage "Failed to start services."
 
 for ($i = 0; $i -lt 60; $i++) {
-  $status = docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' c2f-backend 2>$null
+  $status = Get-ContainerStatus -ContainerName "c2f-backend"
   if ($status -eq "healthy") { break }
   Start-Sleep -Seconds 2
 }
-$status = docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' c2f-backend 2>$null
+$status = Get-ContainerStatus -ContainerName "c2f-backend"
 if ($status -ne "healthy") {
   throw "Backend is not healthy. Check logs: docker compose --env-file $envPath -f $composePath logs backend"
 }
@@ -173,12 +202,14 @@ if ($status -ne "healthy") {
 $forceReset = Get-EnvValue $envPath "C2F_BOOTSTRAP_ADMIN_FORCE_RESET"
 $resetArg = @()
 if (To-Bool $forceReset) { $resetArg += "--force-reset" }
-docker compose --env-file $envPath -f $composePath exec -T backend `
-  python tools/bootstrap_admin.py `
-  --username $adminUser `
-  --password $adminPassword `
-  --role admin `
-  @resetArg
+$bootstrapArgs = @(
+  "compose", "--env-file", $envPath, "-f", $composePath, "exec", "-T", "backend",
+  "python", "tools/bootstrap_admin.py",
+  "--username", $adminUser,
+  "--password", $adminPassword,
+  "--role", "admin"
+) + $resetArg
+Invoke-NativeChecked -FilePath "docker" -Arguments $bootstrapArgs -FailureMessage "Failed to bootstrap admin user."
 
 Write-Host ""
 Write-Host "Appliance is ready." -ForegroundColor Green

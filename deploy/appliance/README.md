@@ -33,6 +33,8 @@ Download asset:
   - Interactive first-boot setup and launch script for Windows hosts.
 - `setup.sh` / `setup.cmd`
   - One-click launcher wrappers for installers.
+- `manage.sh` / `manage.cmd` / `manage.ps1`
+  - Control Center (start/stop/restart/status/logs/upgrade).
 - `upgrade.sh`
   - Pull and apply new image tags.
 - `upgrade.ps1`
@@ -81,16 +83,29 @@ One-click Windows launcher:
 
 - Double-click `setup.cmd`
 
+`setup.cmd` behavior:
+
+- First run: launches first-time setup.
+- Later runs: opens Control Center (start/stop/restart/status/logs/upgrade).
+
 No backend/frontend repo workflow is needed on the customer side.
 
 What the script does:
 
 - creates `.env.appliance` from template if missing
-- prompts for required runtime values
+- prompts only for required runtime values (Wazuh, Indexer, endpoint connector, admin, host/ports)
 - optionally applies static IP configuration with netplan
 - updates trusted hosts and CORS for the appliance host/IP
-- pulls images and starts services
+- pulls release images automatically and starts services
 - bootstraps local admin user in DB
+
+If images are private in GHCR, run one-time login before setup:
+
+```bash
+docker login ghcr.io
+```
+
+Use a token with `read:packages`.
 
 ## Test on Another System
 

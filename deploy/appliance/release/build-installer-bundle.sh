@@ -29,8 +29,8 @@ sed -i "s|^C2F_IMAGE_TAG=.*|C2F_IMAGE_TAG=${IMAGE_TAG}|" "${ENV_FILE}"
 sed -i "s|^C2F_SKIP_PULL=.*|C2F_SKIP_PULL=false|" "${ENV_FILE}"
 
 (
-  cd "${OUT_DIR}"
-  zip -r "$(basename "${ZIP_FILE}")" "$(basename "${BUNDLE_DIR}")" >/dev/null
+  cd "${BUNDLE_DIR}"
+  zip -r "${ZIP_FILE}" . >/dev/null
 )
 
 (

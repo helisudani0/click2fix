@@ -1,0 +1,1478 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Click2Fix Backend Ops</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style nonce="__CSP_NONCE__">
+      @import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap");
+      :root {
+        color-scheme: light;
+        --bg: #f5f7fa;
+        --panel: #ffffff;
+        --panel-strong: #f7f9fb;
+        --border: #d7e1ea;
+        --text: #1f2a37;
+        --muted: #6b7a89;
+        --accent: #00a7b5;
+        --accent-2: #2b7de9;
+        --danger: #d64545;
+        --success: #17a673;
+        --warning: #f0ad4e;
+        --shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Manrope", "Segoe UI", system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+      }
+      .ops-layout {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        min-height: 100vh;
+      }
+      .sidebar {
+        position: sticky;
+        top: 0;
+        height: 100vh;
+        padding: 16px;
+        background: linear-gradient(180deg, #ffffff, #f5f7fa 70%);
+        border-right: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .brand-badge {
+        width: 38px;
+        height: 38px;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        font-weight: 700;
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        color: #ffffff;
+        box-shadow: 0 10px 24px rgba(0, 167, 181, 0.2);
+      }
+      .brand-title { font-weight: 700; }
+      .brand-subtitle { color: var(--muted); font-size: 0.8rem; }
+      .sidebar nav {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .sidebar nav a {
+        color: var(--muted);
+        text-decoration: none;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid transparent;
+      }
+      .sidebar nav a:hover {
+        color: var(--text);
+        background: #eef4f7;
+        border-color: rgba(0, 167, 181, 0.18);
+      }
+      .sidebar-footer {
+        margin-top: auto;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+      .main {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        padding: 14px 12px 26px;
+        min-width: 0;
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 18px 20px;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: var(--shadow);
+      }
+      .topbar h1 { margin: 0; font-size: 1.4rem; }
+      .topbar p { margin: 4px 0 0; color: var(--muted); }
+      .section {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .section-header h2 {
+        margin: 0;
+        font-size: 1.1rem;
+      }
+      .section-header p {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      .row { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+      .row.wide { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+      .card {
+        background: #ffffff;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 16px;
+        box-shadow: var(--shadow);
+        min-width: 0;
+        overflow: visible;
+      }
+      .card.clickable {
+        cursor: pointer;
+        transition: transform 0.15s ease, border-color 0.15s ease;
+      }
+      .card.clickable:hover {
+        transform: translateY(-2px);
+        border-color: rgba(0, 167, 181, 0.35);
+      }
+      .card h3 { margin: 0 0 8px; font-size: 1rem; }
+      .muted { color: var(--muted); }
+      .stat {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 8px 0; border-bottom: 1px solid var(--border);
+      }
+      .stat:last-child { border-bottom: none; }
+      .badge {
+        padding: 3px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 600;
+        text-transform: uppercase; letter-spacing: 0.04em;
+        border: 1px solid transparent;
+      }
+      .badge.success { background: rgba(23,166,115,0.12); color: #0f7a55; border-color: rgba(23,166,115,0.35); }
+      .badge.failed { background: rgba(214,69,69,0.12); color: #b42323; border-color: rgba(214,69,69,0.35); }
+      .badge.neutral { background: rgba(148,163,184,0.15); color: #57677a; border-color: rgba(148,163,184,0.35); }
+      .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+      button {
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        border: none; color: #ffffff; padding: 8px 14px; border-radius: 10px; cursor: pointer;
+        font-weight: 600;
+      }
+      button.secondary { background: #ffffff; color: var(--text); border: 1px solid var(--border); }
+      button.danger { background: rgba(214,69,69,0.1); color: #b42323; border: 1px solid rgba(214,69,69,0.35); }
+      input, select, textarea {
+        width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+        background: #ffffff; color: var(--text);
+      }
+      table { width: 100%; border-collapse: collapse; table-layout: auto; }
+      th, td {
+        padding: 8px 9px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        word-break: break-word;
+        vertical-align: top;
+        font-size: 0.79rem;
+      }
+      th { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; background: #f2f5f9; }
+      pre { margin: 0; white-space: pre-wrap; font-size: 0.82rem; background: #f4f7fb; padding: 12px; border-radius: 10px; border: 1px solid var(--border); }
+      .error { color: #b42323; }
+      .split { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+      .pill {
+        padding: 4px 10px; border-radius: 999px; font-size: 0.7rem; font-weight: 600;
+        background: rgba(0, 167, 181, 0.12); color: #0b6e75; border: 1px solid rgba(0, 167, 181, 0.35);
+      }
+      .hidden { display: none; }
+      .table-scroll {
+        max-height: 52vh;
+        overflow-x: hidden;
+        overflow-y: auto;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+      }
+      .table-scroll table {
+        min-width: 0;
+        width: 100%;
+      }
+      .mt-8 { margin-top: 8px; }
+      .mt-10 { margin-top: 10px; }
+      .mt-12 { margin-top: 12px; }
+      .mb-10 { margin-bottom: 10px; }
+      .summary-value {
+        font-size: 1.6rem;
+        font-weight: 700;
+        margin-top: 6px;
+      }
+      .divider {
+        border-color: var(--border);
+        margin: 12px 0;
+      }
+      .endpoint-row {
+        padding: 8px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .endpoint-path {
+        flex: 1;
+        margin-left: 10px;
+        min-width: 0;
+        white-space: normal;
+        word-break: break-word;
+      }
+      .endpoint-meta {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+      .endpoint-summary {
+        font-size: 0.78rem;
+        color: var(--muted);
+        white-space: normal;
+        word-break: break-word;
+      }
+      .method-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 56px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        font-size: 0.7rem;
+        font-weight: 700;
+        border: 1px solid transparent;
+      }
+      .method-get { background: rgba(23, 166, 115, 0.12); color: #0f7a55; border-color: rgba(23, 166, 115, 0.35); }
+      .method-post { background: rgba(43, 125, 233, 0.14); color: #255ea8; border-color: rgba(43, 125, 233, 0.35); }
+      .method-put { background: rgba(240, 173, 78, 0.2); color: #a86111; border-color: rgba(240, 173, 78, 0.4); }
+      .method-patch { background: rgba(103, 80, 164, 0.16); color: #5a3f95; border-color: rgba(103, 80, 164, 0.4); }
+      .method-delete { background: rgba(214, 69, 69, 0.14); color: #b42323; border-color: rgba(214, 69, 69, 0.35); }
+      .method-default { background: rgba(148, 163, 184, 0.15); color: #57677a; border-color: rgba(148, 163, 184, 0.35); }
+      .policy-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 10px;
+      }
+      .policy-chip {
+        background: #f7f9fb;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px;
+      }
+      .policy-title {
+        font-weight: 600;
+      }
+      .policy-detail {
+        margin-top: 6px;
+        font-size: 0.82rem;
+        color: var(--muted);
+      }
+      .api-list-scroll {
+        max-height: 56vh;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding-right: 2px;
+      }
+      .mini-chart {
+        display: grid;
+        gap: 8px;
+      }
+      .mini-row {
+        display: grid;
+        grid-template-columns: minmax(200px, 1.3fr) minmax(0, 2fr) auto;
+        gap: 10px;
+        align-items: center;
+      }
+      .mini-track {
+        height: 10px;
+        border-radius: 999px;
+        background: #e6edf4;
+        overflow: hidden;
+      }
+      .mini-progress {
+        width: 100%;
+        height: 10px;
+        border-radius: 999px;
+        overflow: hidden;
+        border: none;
+        background: #e6edf4;
+      }
+      .mini-progress::-webkit-progress-bar {
+        background: #e6edf4;
+        border-radius: 999px;
+      }
+      .mini-progress::-webkit-progress-value {
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        border-radius: 999px;
+      }
+      .mini-progress::-moz-progress-bar {
+        background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        border-radius: 999px;
+      }
+      .mini-value {
+        font-weight: 600;
+        font-size: 0.82rem;
+      }
+      @media (max-width: 1024px) {
+        .ops-layout { grid-template-columns: 1fr; }
+        .sidebar { position: relative; height: auto; }
+        .topbar { flex-direction: column; align-items: flex-start; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="ops-layout">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-badge">C2F</div>
+          <div>
+            <div class="brand-title">Backend Ops</div>
+            <div class="brand-subtitle">SOAR Control Plane</div>
+          </div>
+        </div>
+        <nav>
+          <a href="#overview">Overview</a>
+          <a href="#integrations">Integrations</a>
+          <a href="#automation">Automation</a>
+          <a href="#governance">Governance</a>
+          <a href="#api">API Tools</a>
+        </nav>
+        <div class="sidebar-footer" id="userInfo">Not authenticated.</div>
+      </aside>
+
+      <main class="main">
+        <div class="topbar">
+          <div>
+            <h1>Click2Fix Backend</h1>
+            <p>Operational control plane for Wazuh SOAR automation.</p>
+          </div>
+          <div class="actions">
+            <button id="refreshBtn" class="secondary">Refresh</button>
+            <button id="docsBtn" class="secondary">Open Swagger</button>
+            <button id="logoutTop" class="secondary">Logout</button>
+          </div>
+        </div>
+
+        <section class="card" id="auth">
+          <div class="split">
+            <h3>Authentication</h3>
+            <span class="pill" id="authStatus">Not authenticated</span>
+          </div>
+          <div id="authFields" class="row mt-12">
+            <div>
+              <label class="muted">Username</label>
+              <input id="username" placeholder="admin" />
+            </div>
+            <div>
+              <label class="muted">Password</label>
+              <input id="password" type="password" placeholder="admin123" />
+            </div>
+          </div>
+          <div class="actions mt-12">
+            <button id="loginBtn">Login</button>
+            <button id="logoutBtn" class="secondary">Logout</button>
+          </div>
+          <div id="authError" class="error mt-8"></div>
+        </section>
+
+        <section id="overview" class="section">
+          <div class="section-header">
+            <h2>Overview</h2>
+            <p>System health, workload totals, and scheduler status.</p>
+          </div>
+          <div class="row" id="summaryRow"></div>
+          <div class="row">
+            <div class="card">
+              <h3>Workload Distribution</h3>
+              <div id="summaryChart" class="mini-chart muted">Loading...</div>
+            </div>
+          </div>
+        </section>
+
+        <section id="integrations" class="section">
+          <div class="section-header">
+            <h2>Integrations</h2>
+            <p>Wazuh manager, indexer connectivity, and auth providers.</p>
+          </div>
+          <div class="row wide">
+            <div class="card">
+              <h3>Integration Health</h3>
+              <div id="integration"></div>
+            </div>
+            <div class="card">
+              <div class="split">
+                <h3>Connection Profiles</h3>
+                <button id="toggleConnections" class="secondary">Show details</button>
+              </div>
+              <div id="connectionProfilesSummary" class="muted mt-8"></div>
+              <div id="connectionProfiles" class="hidden mt-10"></div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="card">
+              <div class="split">
+                <h3>Auth Providers</h3>
+                <button id="toggleAuthProviders" class="secondary">Show details</button>
+              </div>
+              <div id="authProvidersSummary" class="muted mt-8"></div>
+              <pre id="authProviders" class="hidden">Loading...</pre>
+            </div>
+          </div>
+        </section>
+
+        <section id="automation" class="section">
+          <div class="section-header">
+            <h2>Automation</h2>
+            <p>Scheduler status, active response catalog, and policy controls.</p>
+          </div>
+          <div class="row wide">
+            <div class="card">
+              <h3>Scheduler</h3>
+              <div id="scheduler"></div>
+            </div>
+            <div class="card">
+              <h3>Active Response Catalog</h3>
+              <div class="row mt-10">
+                <div>
+                  <label class="muted">Search</label>
+                  <input id="responseSearch" placeholder="Find by id, label, command" />
+                </div>
+                <div>
+                  <label class="muted">Category</label>
+                  <select id="responseCategory">
+                    <option value="">All</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="muted">Risk</label>
+                  <select id="responseRisk">
+                    <option value="">All</option>
+                  </select>
+                </div>
+              </div>
+              <div class="muted mt-8" id="responseCatalogMeta"></div>
+              <div id="responseCommands">Loading...</div>
+            </div>
+          </div>
+          <div class="row wide">
+            <div class="card">
+              <h3>Approval Policy</h3>
+              <div id="approvalPolicySummary" class="muted">Loading...</div>
+              <div id="approvalPolicyTable" class="mt-10">Loading...</div>
+            </div>
+            <div class="card">
+              <h3>Analytics Ingest</h3>
+              <pre id="ingestConfig">Loading...</pre>
+            </div>
+          </div>
+        </section>
+
+        <section id="governance" class="section">
+          <div class="section-header">
+            <h2>Governance</h2>
+            <p>Approvals, change management, and audit log exports.</p>
+          </div>
+          <div class="card">
+            <h3>Approvals</h3>
+            <div id="approvalsTable">Loading...</div>
+          </div>
+          <div class="card">
+            <div class="split">
+              <h3>Change Requests</h3>
+              <button id="refreshChanges" class="secondary">Refresh</button>
+            </div>
+            <div class="row mt-10">
+              <div>
+                <label class="muted">Status</label>
+                <select id="changeStatus">
+                  <option value="">All</option>
+                  <option value="OPEN">Open</option>
+                  <option value="PROPOSED">Proposed</option>
+                  <option value="APPROVED">Approved</option>
+                  <option value="CLOSED">Closed</option>
+                </select>
+              </div>
+              <div>
+                <label class="muted">Search</label>
+                <input id="changeSearch" placeholder="Filter by title or target" />
+              </div>
+            </div>
+            <div id="changesTable">Loading...</div>
+          </div>
+          <div class="card">
+            <div class="split">
+              <h3>Audit Log</h3>
+              <div class="actions">
+                <button id="refreshAudit" class="secondary">Load</button>
+                <button id="exportCsv" class="secondary">Export CSV</button>
+                <button id="exportJson" class="secondary">Export JSON</button>
+              </div>
+            </div>
+            <div class="row mt-10">
+              <div>
+                <label class="muted">Actor</label>
+                <input id="auditActor" placeholder="admin" />
+              </div>
+              <div>
+                <label class="muted">Action</label>
+                <input id="auditAction" placeholder="change_requested" />
+              </div>
+              <div>
+                <label class="muted">Entity Type</label>
+                <input id="auditEntityType" placeholder="change" />
+              </div>
+              <div>
+                <label class="muted">Entity ID</label>
+                <input id="auditEntityId" placeholder="10" />
+              </div>
+            </div>
+            <div class="row mt-10">
+              <div>
+                <label class="muted">Start (ISO)</label>
+                <input id="auditStart" placeholder="2026-02-10T12:00:00" />
+              </div>
+              <div>
+                <label class="muted">End (ISO)</label>
+                <input id="auditEnd" placeholder="2026-02-10T13:00:00" />
+              </div>
+              <div>
+                <label class="muted">Limit</label>
+                <input id="auditLimit" placeholder="50" />
+              </div>
+            </div>
+            <div id="auditTable">Loading...</div>
+          </div>
+        </section>
+
+        <section id="api" class="section">
+          <div class="section-header">
+            <h2>API Tools</h2>
+            <p>Explore endpoints and send authenticated requests.</p>
+          </div>
+          <div class="row wide">
+            <div class="card">
+              <h3>API Console</h3>
+              <div class="row">
+                <div>
+                  <label class="muted">Method</label>
+                  <select id="apiMethod">
+                    <option>GET</option>
+                    <option>POST</option>
+                    <option>PUT</option>
+                    <option>PATCH</option>
+                    <option>DELETE</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="muted">Path</label>
+                  <input id="apiPath" placeholder="/api/system/overview" />
+                </div>
+              </div>
+              <div class="mt-10">
+                <label class="muted">Body (JSON)</label>
+                <textarea id="apiBody" rows="6" placeholder='{"example":true}'></textarea>
+              </div>
+              <div class="actions mt-12">
+                <button id="apiSend">Send</button>
+                <button id="apiClear" class="secondary">Clear</button>
+              </div>
+              <pre id="apiResponse" class="mt-12">Response will appear here.</pre>
+            </div>
+
+            <div class="card">
+              <h3>OpenAPI Explorer</h3>
+              <div class="actions mb-10">
+                <input id="apiFilter" placeholder="Filter endpoints" />
+                <button id="openDocs" class="secondary">Open Swagger</button>
+              </div>
+              <div class="muted mb-10" id="apiCount">Loading...</div>
+              <div class="table-scroll">
+                <div id="apiList" class="api-list-scroll muted">Loading...</div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script nonce="__CSP_NONCE__">
+      const state = {
+        sessionUser: null,
+        responseCommands: [],
+        openApiEntries: [],
+      };
+      const OPS_TIMEZONE = "Asia/Kolkata";
+
+      const els = {
+        username: document.getElementById("username"),
+        password: document.getElementById("password"),
+        loginBtn: document.getElementById("loginBtn"),
+        logoutBtn: document.getElementById("logoutBtn"),
+        logoutTop: document.getElementById("logoutTop"),
+        refreshBtn: document.getElementById("refreshBtn"),
+        docsBtn: document.getElementById("docsBtn"),
+        userInfo: document.getElementById("userInfo"),
+        authStatus: document.getElementById("authStatus"),
+        authFields: document.getElementById("authFields"),
+        authError: document.getElementById("authError"),
+        summaryRow: document.getElementById("summaryRow"),
+        summaryChart: document.getElementById("summaryChart"),
+        integration: document.getElementById("integration"),
+        scheduler: document.getElementById("scheduler"),
+        approvalPolicySummary: document.getElementById("approvalPolicySummary"),
+        approvalPolicyTable: document.getElementById("approvalPolicyTable"),
+        ingestConfig: document.getElementById("ingestConfig"),
+        approvalsTable: document.getElementById("approvalsTable"),
+        changesTable: document.getElementById("changesTable"),
+        refreshChanges: document.getElementById("refreshChanges"),
+        changeStatus: document.getElementById("changeStatus"),
+        changeSearch: document.getElementById("changeSearch"),
+        auditTable: document.getElementById("auditTable"),
+        refreshAudit: document.getElementById("refreshAudit"),
+        auditActor: document.getElementById("auditActor"),
+        auditAction: document.getElementById("auditAction"),
+        auditEntityType: document.getElementById("auditEntityType"),
+        auditEntityId: document.getElementById("auditEntityId"),
+        auditStart: document.getElementById("auditStart"),
+        auditEnd: document.getElementById("auditEnd"),
+        auditLimit: document.getElementById("auditLimit"),
+        exportCsv: document.getElementById("exportCsv"),
+        exportJson: document.getElementById("exportJson"),
+        authProviders: document.getElementById("authProviders"),
+        authProvidersSummary: document.getElementById("authProvidersSummary"),
+        toggleAuthProviders: document.getElementById("toggleAuthProviders"),
+        connectionProfiles: document.getElementById("connectionProfiles"),
+        connectionProfilesSummary: document.getElementById("connectionProfilesSummary"),
+        toggleConnections: document.getElementById("toggleConnections"),
+        responseCommands: document.getElementById("responseCommands"),
+        responseSearch: document.getElementById("responseSearch"),
+        responseCategory: document.getElementById("responseCategory"),
+        responseRisk: document.getElementById("responseRisk"),
+        responseCatalogMeta: document.getElementById("responseCatalogMeta"),
+        apiMethod: document.getElementById("apiMethod"),
+        apiPath: document.getElementById("apiPath"),
+        apiBody: document.getElementById("apiBody"),
+        apiSend: document.getElementById("apiSend"),
+        apiClear: document.getElementById("apiClear"),
+        apiResponse: document.getElementById("apiResponse"),
+        apiFilter: document.getElementById("apiFilter"),
+        apiList: document.getElementById("apiList"),
+        apiCount: document.getElementById("apiCount"),
+        openDocs: document.getElementById("openDocs"),
+      };
+
+      function readCookie(name) {
+        const escaped = String(name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const match = document.cookie.match(new RegExp(`(?:^|; )${escaped}=([^;]*)`));
+        return match ? decodeURIComponent(match[1]) : "";
+      }
+
+      function applyCsrfHeader(headers, method) {
+        const verb = String(method || "GET").toUpperCase();
+        if (!["POST", "PUT", "PATCH", "DELETE"].includes(verb)) {
+          return;
+        }
+        const csrf = readCookie("c2f_csrf");
+        if (csrf) {
+          headers["X-CSRF-Token"] = csrf;
+        }
+      }
+
+      function formatTimestamp(value) {
+        if (!value) return "-";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return String(value);
+        const formatter = new Intl.DateTimeFormat("en-US", {
+          timeZone: OPS_TIMEZONE,
+          year: "numeric",
+          month: "short",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        });
+        const parts = formatter.formatToParts(date);
+        const map = {};
+        parts.forEach((part) => {
+          if (part.type !== "literal") map[part.type] = part.value;
+        });
+        const day = String(Number(map.day || "0"));
+        const millis = String(date.getMilliseconds()).padStart(3, "0");
+        return `${map.month} ${day}, ${map.year} @ ${map.hour}:${map.minute}:${map.second}.${millis}`;
+      }
+
+      function setUserInfo() {
+        if (!state.sessionUser) {
+          els.userInfo.textContent = "Session via cookie or login required.";
+          if (els.authStatus) {
+            els.authStatus.textContent = "Session (cookie)";
+          }
+          if (els.authFields) {
+            els.authFields.classList.remove("hidden");
+          }
+          if (els.loginBtn) {
+            els.loginBtn.disabled = false;
+          }
+          if (els.logoutBtn) {
+            els.logoutBtn.disabled = true;
+          }
+          if (els.logoutTop) {
+            els.logoutTop.disabled = true;
+          }
+          return;
+        }
+        const identity = `${state.sessionUser.username || state.sessionUser.sub || "user"} (${state.sessionUser.role || "user"})`;
+        els.userInfo.textContent = `Logged in as ${identity}`;
+        if (els.authStatus) {
+          els.authStatus.textContent = `Authenticated as ${identity}`;
+        }
+        if (els.authFields) {
+          els.authFields.classList.add("hidden");
+        }
+        if (els.loginBtn) {
+          els.loginBtn.disabled = true;
+        }
+        if (els.logoutBtn) {
+          els.logoutBtn.disabled = false;
+        }
+        if (els.logoutTop) {
+          els.logoutTop.disabled = false;
+        }
+      }
+
+      async function apiFetch(path, options = {}) {
+        const headers = { ...(options.headers || {}) };
+        applyCsrfHeader(headers, options.method || "GET");
+        const response = await fetch(path, { ...options, headers, credentials: "same-origin" });
+        if (response.status === 401 && path !== "/api/auth/me") {
+          state.sessionUser = null;
+          setUserInfo();
+        }
+        return response;
+      }
+
+      async function refreshSession() {
+        const res = await apiFetch("/api/auth/me");
+        if (!res.ok) {
+          state.sessionUser = null;
+          setUserInfo();
+          return null;
+        }
+        try {
+          state.sessionUser = await res.json();
+        } catch {
+          state.sessionUser = null;
+        }
+        setUserInfo();
+        return state.sessionUser;
+      }
+
+      async function login() {
+        els.authError.textContent = "";
+        const form = new URLSearchParams();
+        form.append("username", els.username.value);
+        form.append("password", els.password.value);
+        const res = await apiFetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: form,
+        });
+        if (!res.ok) {
+          let detail = "Login failed.";
+          try {
+            const payload = await res.json();
+            if (payload && payload.detail) {
+              detail = String(payload.detail);
+            }
+          } catch {}
+          els.authError.textContent = detail;
+          return;
+        }
+        if (els.password) {
+          els.password.value = "";
+        }
+        await refreshSession();
+        loadAll();
+      }
+
+      async function logout() {
+        try {
+          await apiFetch("/api/auth/logout", { method: "POST" });
+        } catch {}
+        state.sessionUser = null;
+        if (els.password) {
+          els.password.value = "";
+        }
+        setUserInfo();
+      }
+
+      function renderStats(counts) {
+        const items = [
+          ["Approvals Pending", counts.approvals_pending, "#governance"],
+          ["Approvals In Review", counts.approvals_in_review, "#governance"],
+          ["Executions", counts.executions_total, "#automation"],
+          ["Cases", counts.cases_total, "#overview"],
+          ["Alerts", counts.alerts_total, "#integrations"],
+          ["Audit Events", counts.audit_total, "#governance"],
+          ["Changes Open", counts.changes_open, "#governance"],
+        ];
+        els.summaryRow.innerHTML = items
+          .map(
+            ([label, value, target]) =>
+              `<div class="card clickable" data-target="${target}"><div class="muted">${label}</div><div class="summary-value">${value ?? 0}</div></div>`
+          )
+          .join("");
+
+        els.summaryRow.querySelectorAll("[data-target]").forEach((card) => {
+          card.addEventListener("click", () => {
+            const target = document.querySelector(card.dataset.target);
+            if (target) {
+              target.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+          });
+        });
+
+        const max = Math.max(...items.map((item) => Number(item[1] || 0)), 1);
+        if (els.summaryChart) {
+          els.summaryChart.innerHTML = items
+            .map(([label, value]) => {
+              const count = Number(value || 0);
+              return `
+                <div class="mini-row">
+                  <span class="muted">${label}</span>
+                  <progress class="mini-progress" max="${max}" value="${count}"></progress>
+                  <span class="mini-value">${count}</span>
+                </div>
+              `;
+            })
+            .join("");
+        }
+      }
+
+      function renderIntegration(integration) {
+        const manager = integration?.wazuh_manager || {};
+        const indexer = integration?.indexer || {};
+        els.integration.innerHTML = `
+          <div class="stat"><div>Wazuh Manager</div><span class="badge ${manager.ok ? "success" : "failed"}">${manager.ok ? "Connected" : "Offline"}</span></div>
+          <div class="muted">Source: ${manager.source || "n/a"}</div>
+          <hr class="divider" />
+          <div class="stat"><div>Indexer</div><span class="badge ${indexer.ok ? "success" : "failed"}">${indexer.ok ? (indexer.status || "Connected") : "Offline"}</span></div>
+          <div class="muted">Cluster: ${indexer.cluster || "n/a"}</div>
+        `;
+      }
+
+      function renderScheduler(overview) {
+        els.scheduler.innerHTML = `
+          <div class="stat"><div>Status</div><span class="badge ${overview.scheduler_running ? "success" : "failed"}">${overview.scheduler_running ? "Running" : "Stopped"}</span></div>
+          <div class="muted">Started at: ${formatTimestamp(overview.started_at)}</div>
+        `;
+      }
+
+      function renderConnections(settings) {
+        const wazuh = settings?.wazuh || {};
+        const indexer = settings?.indexer || {};
+        if (els.connectionProfilesSummary) {
+          els.connectionProfilesSummary.textContent = `Wazuh: ${wazuh.url || "n/a"} | Indexer: ${indexer.url || "n/a"}`;
+        }
+        if (els.connectionProfiles) {
+          els.connectionProfiles.innerHTML = `
+            <div class="stat"><div>Wazuh URL</div><span class="pill">${wazuh.url || "n/a"}</span></div>
+            <div class="muted">SSL Verify: ${wazuh.verify_ssl ? "true" : "false"} | Timeout: ${wazuh.timeout || "n/a"}s</div>
+            <hr class="divider" />
+            <div class="stat"><div>Indexer URL</div><span class="pill">${indexer.url || "n/a"}</span></div>
+            <div class="muted">Enabled: ${indexer.enabled ? "true" : "false"} | Index: ${indexer.alerts_index || "n/a"}</div>
+          `;
+        }
+      }
+
+      function renderResponseCatalog(settings) {
+        const active = settings?.active_response || {};
+        const commands = Array.isArray(active.commands) ? active.commands : [];
+        state.responseCommands = commands;
+
+        if (els.responseCategory) {
+          const categories = [...new Set(commands.map((cmd) => String(cmd.category || "response").toLowerCase()))]
+            .filter(Boolean)
+            .sort();
+          const current = els.responseCategory.value || "";
+          els.responseCategory.innerHTML = `<option value="">All</option>${categories
+            .map((category) => `<option value="${category}">${category}</option>`)
+            .join("")}`;
+          if (categories.includes(current)) {
+            els.responseCategory.value = current;
+          }
+        }
+        if (els.responseRisk) {
+          const risks = [...new Set(commands.map((cmd) => String(cmd.risk || "medium").toLowerCase()))]
+            .filter(Boolean)
+            .sort();
+          const current = els.responseRisk.value || "";
+          els.responseRisk.innerHTML = `<option value="">All</option>${risks
+            .map((risk) => `<option value="${risk}">${risk}</option>`)
+            .join("")}`;
+          if (risks.includes(current)) {
+            els.responseRisk.value = current;
+          }
+        }
+
+        renderResponseCatalogFiltered();
+      }
+
+      function renderResponseCatalogFiltered() {
+        const commands = Array.isArray(state.responseCommands) ? state.responseCommands : [];
+        if (!commands.length) {
+          if (els.responseCatalogMeta) {
+            els.responseCatalogMeta.textContent = "0 commands";
+          }
+          els.responseCommands.innerHTML = "<div class='muted'>No active response commands configured.</div>";
+          return;
+        }
+
+        const search = (els.responseSearch?.value || "").trim().toLowerCase();
+        const category = (els.responseCategory?.value || "").toLowerCase();
+        const risk = (els.responseRisk?.value || "").toLowerCase();
+        const filtered = commands.filter((cmd) => {
+          const id = String(cmd.id || "").toLowerCase();
+          const label = String(cmd.label || "").toLowerCase();
+          const command = String(cmd.command || "").toLowerCase();
+          const cmdCategory = String(cmd.category || "response").toLowerCase();
+          const cmdRisk = String(cmd.risk || "medium").toLowerCase();
+          const searchPass = !search || `${id} ${label} ${command}`.includes(search);
+          const categoryPass = !category || cmdCategory === category;
+          const riskPass = !risk || cmdRisk === risk;
+          return searchPass && categoryPass && riskPass;
+        });
+
+        if (els.responseCatalogMeta) {
+          els.responseCatalogMeta.textContent = `${filtered.length} of ${commands.length} command(s)`;
+        }
+
+        const rows = filtered
+          .map(
+            (cmd) => `
+            <tr>
+              <td>${cmd.id || "-"}</td>
+              <td>${cmd.label || "-"}</td>
+              <td>${cmd.category || "-"}</td>
+              <td><span class="badge neutral">${cmd.risk || "-"}</span></td>
+              <td>${cmd.custom ? "custom" : "built-in"}</td>
+              <td>${cmd.description || "-"}</td>
+              <td>${(cmd.inputs || []).map((i) => i.name).join(", ") || "-"}</td>
+            </tr>`
+          )
+          .join("");
+        els.responseCommands.innerHTML = `
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>ID</th><th>Label</th><th>Category</th><th>Risk</th><th>Type</th><th>Description</th><th>Inputs</th></tr></thead>
+              <tbody>${rows || "<tr><td colspan='7' class='muted'>No commands match the filter.</td></tr>"}</tbody>
+            </table>
+          </div>`;
+      }
+
+      function renderApprovalPolicy(policy) {
+        const defaultPolicy = policy?.default || {};
+        const actionPolicies = policy?.actions || {};
+        const actionNames = Object.keys(actionPolicies);
+
+        const defaultReqs = Array.isArray(defaultPolicy.requirements) ? defaultPolicy.requirements : [];
+        const defaultReqText = defaultReqs.length
+          ? defaultReqs.map((req) => `${req.role || "role"} x${req.count || 1}`).join(", ")
+          : "No explicit requirement";
+
+        if (els.approvalPolicySummary) {
+          els.approvalPolicySummary.innerHTML = `
+            <div class="policy-grid">
+              <div class="policy-chip">
+                <div class="policy-title">Default Rule</div>
+                <div class="policy-detail">${defaultReqText}</div>
+              </div>
+              <div class="policy-chip">
+                <div class="policy-title">Justification Required</div>
+                <div class="policy-detail">${defaultPolicy.justification_required ? "Yes" : "No"}</div>
+              </div>
+              <div class="policy-chip">
+                <div class="policy-title">Action Overrides</div>
+                <div class="policy-detail">${actionNames.length}</div>
+              </div>
+            </div>
+          `;
+        }
+
+        if (!els.approvalPolicyTable) {
+          return;
+        }
+        if (!actionNames.length) {
+          els.approvalPolicyTable.innerHTML = "<div class='muted'>No action-specific policy overrides configured.</div>";
+          return;
+        }
+
+        const rows = actionNames
+          .sort()
+          .map((actionId) => {
+            const item = actionPolicies[actionId] || {};
+            const requirements = Array.isArray(item.requirements) ? item.requirements : [];
+            const reqText = requirements.length
+              ? requirements.map((req) => `${req.role || "role"} x${req.count || 1}`).join(", ")
+              : defaultReqText;
+            return `
+              <tr>
+                <td>${actionId}</td>
+                <td>${reqText}</td>
+                <td>${item.justification_required ? "Yes" : "No"}</td>
+              </tr>
+            `;
+          })
+          .join("");
+
+        els.approvalPolicyTable.innerHTML = `
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Action</th><th>Required Approvers</th><th>Justification</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      function renderApprovals(rows) {
+        if (!rows || !rows.length) {
+          els.approvalsTable.innerHTML = "<div class='muted'>No pending approvals.</div>";
+          return;
+        }
+        const mapRow = (r) =>
+          Array.isArray(r)
+            ? {
+                id: r[0],
+                agent: r[1],
+                action: r[2],
+                requestedBy: r[3],
+                alertId: r[5],
+                approved: r[7] || 0,
+                required: r[6] || 0,
+                justification: r[8] || "-",
+              }
+            : {
+                id: r.id,
+                agent: r.agent,
+                action: r.action || r.playbook,
+                requestedBy: r.requested_by,
+                alertId: r.alert_id,
+                approved: r.approved_total || 0,
+                required: r.required_total || 0,
+                justification: r.justification || "-",
+              };
+        const headers = "<tr><th>ID</th><th>Agent</th><th>Action</th><th>Requested By</th><th>Alert</th><th>Approved</th><th>Justification</th><th>Actions</th></tr>";
+        const body = rows
+          .map((raw) => {
+            const r = mapRow(raw);
+            return `
+            <tr>
+              <td>${r.id}</td>
+              <td>${r.agent || "-"}</td>
+              <td>${r.action || "-"}</td>
+              <td>${r.requestedBy || "-"}</td>
+              <td>${r.alertId || "-"}</td>
+              <td>${r.approved}/${r.required}</td>
+              <td>${r.justification || "-"}</td>
+              <td>
+                <button data-approve="${r.id}" class="secondary">Approve</button>
+                <button data-reject="${r.id}" class="danger">Reject</button>
+              </td>
+            </tr>`;
+          })
+          .join("");
+        els.approvalsTable.innerHTML = `<div class="table-scroll"><table><thead>${headers}</thead><tbody>${body}</tbody></table></div>`;
+        els.approvalsTable.querySelectorAll("[data-approve]").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            await apiFetch(`/api/approvals/${btn.dataset.approve}/approve`, { method: "POST" });
+            loadApprovals();
+          });
+        });
+        els.approvalsTable.querySelectorAll("[data-reject]").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            await apiFetch(`/api/approvals/${btn.dataset.reject}/reject`, { method: "POST" });
+            loadApprovals();
+          });
+        });
+      }
+
+      function renderChanges(rows) {
+        if (!rows || !rows.length) {
+          els.changesTable.innerHTML = "<div class='muted'>No change requests.</div>";
+          return;
+        }
+        const mapRow = (r) =>
+          Array.isArray(r)
+            ? {
+                id: r[0],
+                title: r[1],
+                actionId: r[2],
+                target: r[3],
+                riskScore: r[4],
+                impact: r[5],
+                status: r[7],
+                createdAt: r[8],
+              }
+            : {
+                id: r.id,
+                title: r.title,
+                actionId: r.action_id,
+                target: r.target,
+                riskScore: r.risk_score,
+                impact: r.impact,
+                status: r.status,
+                createdAt: r.created_at,
+              };
+        const filterValue = els.changeStatus ? els.changeStatus.value : "";
+        const query = (els.changeSearch ? els.changeSearch.value : "").toLowerCase();
+        let filtered = rows.map(mapRow);
+        if (filterValue) {
+          if (filterValue === "OPEN") {
+            filtered = filtered.filter((r) => r.status === "PROPOSED" || r.status === "APPROVED");
+          } else {
+            filtered = filtered.filter((r) => r.status === filterValue);
+          }
+        }
+        if (query) {
+          filtered = filtered.filter((r) => {
+            const title = String(r.title || "").toLowerCase();
+            const target = String(r.target || "").toLowerCase();
+            return title.includes(query) || target.includes(query);
+          });
+        }
+        if (!filtered.length) {
+          els.changesTable.innerHTML = "<div class='muted'>No change requests match the filter.</div>";
+          return;
+        }
+        const headers = "<tr><th>ID</th><th>Title</th><th>Action</th><th>Target</th><th>Risk</th><th>Impact</th><th>Status</th><th>Created</th><th>Actions</th></tr>";
+        const body = filtered
+          .map(
+            (r) => `
+            <tr>
+              <td>${r.id}</td>
+              <td>${r.title}</td>
+              <td>${r.actionId || "-"}</td>
+              <td>${r.target || "-"}</td>
+              <td>${r.riskScore ?? "-"}</td>
+              <td>${r.impact || "-"}</td>
+              <td>${r.status}</td>
+              <td>${formatTimestamp(r.createdAt)}</td>
+              <td>
+                <button data-change-approve="${r.id}" class="secondary">Approve</button>
+                <button data-change-close="${r.id}" class="secondary">Close</button>
+              </td>
+            </tr>`
+          )
+          .join("");
+        els.changesTable.innerHTML = `<div class="table-scroll"><table><thead>${headers}</thead><tbody>${body}</tbody></table></div>`;
+        els.changesTable.querySelectorAll("[data-change-approve]").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            await apiFetch(`/api/changes/${btn.dataset.changeApprove}/approve`, { method: "POST" });
+            loadChanges();
+          });
+        });
+        els.changesTable.querySelectorAll("[data-change-close]").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            await apiFetch(`/api/changes/${btn.dataset.changeClose}/close`, { method: "POST" });
+            loadChanges();
+          });
+        });
+      }
+
+      function renderAudit(rows) {
+        if (!rows || !rows.length) {
+          els.auditTable.innerHTML = "<div class='muted'>No audit events.</div>";
+          return;
+        }
+        const headers = "<tr><th>ID</th><th>Actor</th><th>Action</th><th>Entity</th><th>Detail</th><th>IP</th><th>Time</th></tr>";
+        const body = rows
+          .map((r) => {
+            const row = Array.isArray(r)
+              ? r
+              : [r.id, r.actor, r.action, r.entity_type, r.entity_id, r.detail, r.org_id, r.ip_address, r.created_at];
+            return `
+            <tr>
+              <td>${row[0]}</td>
+              <td>${row[1]}</td>
+              <td>${row[2]}</td>
+              <td>${row[3]}:${row[4]}</td>
+              <td>${row[5]}</td>
+              <td>${row[7] || "-"}</td>
+              <td>${formatTimestamp(row[8])}</td>
+            </tr>`
+          })
+          .join("");
+        els.auditTable.innerHTML = `<div class="table-scroll"><table><thead>${headers}</thead><tbody>${body}</tbody></table></div>`;
+      }
+
+      async function loadOverview() {
+        els.authError.textContent = "";
+        const res = await apiFetch("/api/system/overview");
+        if (!res.ok) {
+          els.authError.textContent = "Failed to load overview (check credentials).";
+          return;
+        }
+        const data = await res.json();
+        renderStats(data.counts || {});
+        renderIntegration(data.integration || {});
+        renderScheduler(data);
+        renderConnections(data.settings || {});
+        renderResponseCatalog(data.settings || {});
+        renderApprovalPolicy(data.settings?.approval_policy || {});
+        els.ingestConfig.textContent = JSON.stringify(data.settings?.analytics_ingest || {}, null, 2);
+        const authSettings = data.settings?.auth || {};
+        const oidcEnabled = authSettings?.oidc?.enabled ? "enabled" : "disabled";
+        const ldapEnabled = authSettings?.ldap?.enabled ? "enabled" : "disabled";
+        if (els.authProvidersSummary) {
+          els.authProvidersSummary.textContent = `OIDC: ${oidcEnabled} | LDAP: ${ldapEnabled}`;
+        }
+        if (els.authProviders) {
+          els.authProviders.textContent = JSON.stringify(authSettings || {}, null, 2);
+        }
+      }
+
+      async function loadApprovals() {
+        const res = await apiFetch("/api/approvals/pending");
+        if (res.ok) {
+          renderApprovals(await res.json());
+        }
+      }
+
+      async function loadChanges() {
+        const res = await apiFetch("/api/changes");
+        if (res.ok) {
+          renderChanges(await res.json());
+        }
+      }
+
+      async function loadAudit() {
+        const params = new URLSearchParams();
+        const actor = els.auditActor?.value?.trim();
+        const action = els.auditAction?.value?.trim();
+        const entityType = els.auditEntityType?.value?.trim();
+        const entityId = els.auditEntityId?.value?.trim();
+        const start = els.auditStart?.value?.trim();
+        const end = els.auditEnd?.value?.trim();
+        const limit = els.auditLimit?.value?.trim();
+        if (actor) params.append("actor", actor);
+        if (action) params.append("action", action);
+        if (entityType) params.append("entity_type", entityType);
+        if (entityId) params.append("entity_id", entityId);
+        if (start) params.append("start", start);
+        if (end) params.append("end", end);
+        params.append("limit", limit || "50");
+        const res = await apiFetch(`/api/audit?${params.toString()}`);
+        if (res.ok) {
+          renderAudit(await res.json());
+        }
+      }
+
+      async function loadAll() {
+        const jobs = [loadOverview(), loadApprovals(), loadChanges(), loadAudit()];
+        const results = await Promise.allSettled(jobs);
+        const failed = results.some((r) => r.status === "rejected");
+        if (failed && !state.sessionUser) {
+          if (els.authStatus) {
+            els.authStatus.textContent = "Not authenticated";
+          }
+          if (els.userInfo) {
+            els.userInfo.textContent = "Not authenticated.";
+          }
+        }
+      }
+
+      async function exportAudit(format) {
+        const params = new URLSearchParams();
+        const actor = els.auditActor?.value?.trim();
+        const action = els.auditAction?.value?.trim();
+        const entityType = els.auditEntityType?.value?.trim();
+        const entityId = els.auditEntityId?.value?.trim();
+        const start = els.auditStart?.value?.trim();
+        const end = els.auditEnd?.value?.trim();
+        const limit = els.auditLimit?.value?.trim();
+        if (actor) params.append("actor", actor);
+        if (action) params.append("action", action);
+        if (entityType) params.append("entity_type", entityType);
+        if (entityId) params.append("entity_id", entityId);
+        if (start) params.append("start", start);
+        if (end) params.append("end", end);
+        if (limit) params.append("limit", limit);
+        params.append("format", format);
+        const res = await apiFetch(`/api/audit/export?${params.toString()}`);
+        if (!res.ok) return;
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `audit_export.${format === "json" ? "json" : "csv"}`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+      }
+
+      async function sendApi() {
+        const method = (els.apiMethod.value || "GET").toUpperCase();
+        const path = els.apiPath.value || "/api/system/overview";
+        const bodyText = els.apiBody.value.trim();
+        const options = { method, headers: {} };
+        if (bodyText && method !== "GET" && method !== "HEAD") {
+          options.headers["Content-Type"] = "application/json";
+          options.body = bodyText;
+        }
+        try {
+          const res = await apiFetch(path, options);
+          const text = await res.text();
+          let formatted = text;
+          try {
+            formatted = JSON.stringify(JSON.parse(text), null, 2);
+          } catch {}
+          els.apiResponse.textContent = `Status ${res.status}\n${formatted}`;
+        } catch (err) {
+          els.apiResponse.textContent = `Request failed: ${err.message}`;
+        }
+      }
+
+      function clearApi() {
+        els.apiPath.value = "";
+        els.apiBody.value = "";
+        els.apiResponse.textContent = "Response will appear here.";
+      }
+
+      async function loadOpenApi() {
+        try {
+          const res = await fetch("/openapi.json");
+          if (!res.ok) {
+            els.apiList.textContent = "Failed to load OpenAPI.";
+            if (els.apiCount) {
+              els.apiCount.textContent = "OpenAPI unavailable";
+            }
+            return;
+          }
+          const data = await res.json();
+          const entries = [];
+          Object.entries(data.paths || {}).forEach(([path, methods]) => {
+            Object.entries(methods || {}).forEach(([method, meta]) => {
+              const op = meta || {};
+              entries.push({
+                method: String(method || "").toUpperCase(),
+                path,
+                summary: op.summary || op.description || "",
+                tags: Array.isArray(op.tags) ? op.tags : [],
+                secured: Array.isArray(op.security) ? op.security.length > 0 : false,
+              });
+            });
+          });
+          entries.sort((a, b) => {
+            const left = `${a.path} ${a.method}`;
+            const right = `${b.path} ${b.method}`;
+            return left.localeCompare(right);
+          });
+          state.openApiEntries = entries;
+
+          const methodClass = (method) => {
+            const normalized = String(method || "").toLowerCase();
+            if (["get", "post", "put", "patch", "delete"].includes(normalized)) {
+              return `method-${normalized}`;
+            }
+            return "method-default";
+          };
+
+          const ensureMethodOption = (method) => {
+            if (!els.apiMethod) return;
+            const wanted = String(method || "GET").toUpperCase();
+            const exists = Array.from(els.apiMethod.options || []).some((opt) => opt.value === wanted);
+            if (!exists) {
+              const opt = document.createElement("option");
+              opt.value = wanted;
+              opt.textContent = wanted;
+              els.apiMethod.appendChild(opt);
+            }
+          };
+
+          const render = (filter = "") => {
+            const term = filter.toLowerCase();
+            const rows = entries.filter((e) => {
+              const haystack = `${e.method} ${e.path} ${e.summary} ${(e.tags || []).join(" ")}`.toLowerCase();
+              return haystack.includes(term);
+            });
+            if (els.apiCount) {
+              els.apiCount.textContent = `${rows.length} of ${entries.length} endpoint(s)`;
+            }
+            els.apiList.innerHTML = rows
+              .map(
+                (e) =>
+                  `<div class="split endpoint-row">
+                    <span class="method-badge ${methodClass(e.method)}">${e.method}</span>
+                    <div class="endpoint-path endpoint-meta">
+                      <span>${e.path}</span>
+                      <span class="endpoint-summary">${e.summary || "No summary"}${e.secured ? " | auth required" : ""}${e.tags.length ? ` | ${e.tags.join(", ")}` : ""}</span>
+                    </div>
+                    <button data-path="${e.path}" data-method="${e.method}" class="secondary">Use</button>
+                  </div>`
+              )
+              .join("") || "<div class='muted'>No endpoints match.</div>";
+
+            els.apiList.querySelectorAll("button[data-path]").forEach(btn => {
+              btn.addEventListener("click", () => {
+                els.apiPath.value = btn.dataset.path;
+                ensureMethodOption(btn.dataset.method);
+                els.apiMethod.value = btn.dataset.method;
+                els.apiBody.value = "";
+                els.apiResponse.textContent = "Response will appear here.";
+              });
+            });
+          };
+
+          render();
+          els.apiFilter.addEventListener("input", (e) => render(e.target.value));
+        } catch {
+          els.apiList.textContent = "Failed to load OpenAPI.";
+          if (els.apiCount) {
+            els.apiCount.textContent = "OpenAPI unavailable";
+          }
+        }
+      }
+
+      els.loginBtn.addEventListener("click", login);
+      els.logoutBtn.addEventListener("click", logout);
+      els.logoutTop.addEventListener("click", logout);
+      els.refreshBtn.addEventListener("click", loadAll);
+      els.refreshChanges.addEventListener("click", loadChanges);
+      els.changeStatus.addEventListener("change", loadChanges);
+      els.changeSearch.addEventListener("input", () => {
+        if (els.changeSearch.value.length === 0 || els.changeSearch.value.length > 2) {
+          loadChanges();
+        }
+      });
+      els.refreshAudit.addEventListener("click", loadAudit);
+      els.exportCsv.addEventListener("click", () => exportAudit("csv"));
+      els.exportJson.addEventListener("click", () => exportAudit("json"));
+      els.apiSend.addEventListener("click", sendApi);
+      els.apiClear.addEventListener("click", clearApi);
+      els.docsBtn.addEventListener("click", () => window.open("/docs", "_blank"));
+      els.openDocs.addEventListener("click", () => window.open("/docs", "_blank"));
+      if (els.responseSearch) {
+        els.responseSearch.addEventListener("input", renderResponseCatalogFiltered);
+      }
+      if (els.responseCategory) {
+        els.responseCategory.addEventListener("change", renderResponseCatalogFiltered);
+      }
+      if (els.responseRisk) {
+        els.responseRisk.addEventListener("change", renderResponseCatalogFiltered);
+      }
+      els.toggleConnections.addEventListener("click", () => {
+        const hidden = els.connectionProfiles.classList.toggle("hidden");
+        els.toggleConnections.textContent = hidden ? "Show details" : "Hide details";
+      });
+      els.toggleAuthProviders.addEventListener("click", () => {
+        const hidden = els.authProviders.classList.toggle("hidden");
+        els.toggleAuthProviders.textContent = hidden ? "Show details" : "Hide details";
+      });
+
+      setUserInfo();
+      loadOpenApi();
+      refreshSession().finally(loadAll);
+    </script>
+  </body>
+</html>

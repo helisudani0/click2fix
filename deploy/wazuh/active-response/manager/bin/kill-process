@@ -1,0 +1,6 @@
+#!/bin/sh
+TS=$(date '+%Y-%m-%d %H:%M:%S')
+LOG="/var/ossec/logs/active-responses.log"
+STDIN_PAYLOAD=$(cat 2>/dev/null)
+echo "$TS c2f-manager-wrapper kill-process invoked args:$* payload:$STDIN_PAYLOAD" >> "$LOG"
+exit 0

@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": true,
+    "checkJs": false,
+    "jsx": "react-jsx",
+    "baseUrl": "."
+  },
+  "include": ["frontend/src/**/*", "frontend/vite.config.js"],
+  "exclude": ["frontend/node_modules", "frontend/dist", "backend", "src", "tests"]
+}

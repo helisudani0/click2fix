@@ -1,0 +1,28 @@
+{
+  "name": "SOC Suspicious Login Response",
+  "description": "Respond to suspicious account activity and capture evidence.",
+  "steps": [
+    {
+      "id": "disable_account",
+      "action": "disable-account",
+      "args": {
+        "user": "suspicious_user"
+      },
+      "reason": "Contain potentially compromised identity."
+    },
+    {
+      "id": "collect_forensics",
+      "action": "collect-forensics",
+      "args": {},
+      "reason": "Capture host context for triage."
+    },
+    {
+      "id": "ioc_hunt",
+      "action": "ioc-scan",
+      "args": {
+        "ioc_set": "identity-compromise-baseline"
+      },
+      "reason": "Validate compromise spread."
+    }
+  ]
+}

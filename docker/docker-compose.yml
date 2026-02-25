@@ -1,0 +1,106 @@
+services:
+  db:
+    image: postgres:16
+    container_name: wazuh-click2fix-db
+    environment:
+      POSTGRES_DB: click2fix
+      POSTGRES_USER: click2fix
+      POSTGRES_PASSWORD: click2fix
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    deploy:
+      resources:
+        reservations:
+          cpus: "${DB_CPU_RESERVATION:-0.25}"
+          memory: "${DB_MEMORY_RESERVATION:-256M}"
+        limits:
+          cpus: "${DB_CPU_LIMIT:-1.00}"
+          memory: "${DB_MEMORY_LIMIT:-1024M}"
+    mem_reservation: "${DB_MEMORY_RESERVATION:-256M}"
+    mem_limit: "${DB_MEMORY_LIMIT:-1024M}"
+    cpus: "${DB_CPU_LIMIT:-1.00}"
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    container_name: wazuh-click2fix-backend
+    volumes:
+      - ../backend:/app
+      - ../backend/data:/app/data
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://click2fix:click2fix@db:5432/click2fix
+      - JWT_SECRET=${JWT_SECRET:-PLEASE_CHANGE_ME_USE_32_PLUS_RANDOM_CHARACTERS}
+      - C2F_ORCHESTRATION_MODE=endpoint
+      - WAZUH_URL=${WAZUH_URL:-https://WAZUH_MANAGER_IP:55000}
+      - WAZUH_USER=${WAZUH_USER:-c2f_api}
+      - WAZUH_PASSWORD=${WAZUH_PASSWORD:-}
+      - INDEXER_URL=${INDEXER_URL:-https://WAZUH_INDEXER_IP:9200}
+      - INDEXER_USER=${INDEXER_USER:-admin}
+      - INDEXER_PASSWORD=${INDEXER_PASSWORD:-}
+      - C2F_WINRM_USERNAME=${C2F_WINRM_USERNAME:-}
+      - C2F_WINRM_PASSWORD=${C2F_WINRM_PASSWORD:-}
+      - C2F_WINDOWS_CONNECTOR_ENABLED=${C2F_WINDOWS_CONNECTOR_ENABLED:-true}
+      - C2F_WINRM_USERNAME_001=${C2F_WINRM_USERNAME_001:-}
+      - C2F_WINRM_PASSWORD_001=${C2F_WINRM_PASSWORD_001:-}
+      - C2F_WINRM_USERNAME_004=${C2F_WINRM_USERNAME_004:-}
+      - C2F_WINRM_PASSWORD_004=${C2F_WINRM_PASSWORD_004:-}
+      - C2F_LINUX_CONNECTOR_ENABLED=${C2F_LINUX_CONNECTOR_ENABLED:-false}
+      - C2F_SSH_USERNAME=${C2F_SSH_USERNAME:-}
+      - C2F_SSH_PASSWORD=${C2F_SSH_PASSWORD:-}
+      - OTX_API_KEY=${OTX_API_KEY:-}
+      - C2F_CIRCUIT_BREAKER_ENABLED=${C2F_CIRCUIT_BREAKER_ENABLED:-true}
+      - C2F_CIRCUIT_BREAKER_MEMORY_LIMIT_MB=${BACKEND_MEMORY_LIMIT_MB:-2048}
+      - C2F_CIRCUIT_BREAKER_THRESHOLD_PERCENT=${C2F_CIRCUIT_BREAKER_THRESHOLD_PERCENT:-90}
+      - C2F_CIRCUIT_BREAKER_POLL_SECONDS=${C2F_CIRCUIT_BREAKER_POLL_SECONDS:-2}
+      - C2F_CIRCUIT_BREAKER_MAX_PAUSE_SECONDS=${C2F_CIRCUIT_BREAKER_MAX_PAUSE_SECONDS:-120}
+    depends_on:
+      - db
+    deploy:
+      resources:
+        reservations:
+          cpus: "${BACKEND_CPU_RESERVATION:-1.00}"
+          memory: "${BACKEND_MEMORY_RESERVATION:-1024M}"
+        limits:
+          cpus: "${BACKEND_CPU_LIMIT:-2.00}"
+          memory: "${BACKEND_MEMORY_LIMIT:-2048M}"
+    mem_reservation: "${BACKEND_MEMORY_RESERVATION:-1024M}"
+    mem_limit: "${BACKEND_MEMORY_LIMIT:-2048M}"
+    cpus: "${BACKEND_CPU_LIMIT:-2.00}"
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend.Dockerfile
+    container_name: wazuh-click2fix-frontend
+    volumes:
+      # Only mount source code, not node_modules
+      - ../frontend/src:/app/src
+      - ../frontend/public:/app/public
+      - ../frontend/index.html:/app/index.html
+      - ../frontend/vite.config.js:/app/vite.config.js
+      # Explicitly exclude node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+    deploy:
+      resources:
+        reservations:
+          cpus: "${FRONTEND_CPU_RESERVATION:-0.25}"
+          memory: "${FRONTEND_MEMORY_RESERVATION:-256M}"
+        limits:
+          cpus: "${FRONTEND_CPU_LIMIT:-1.00}"
+          memory: "${FRONTEND_MEMORY_LIMIT:-512M}"
+    mem_reservation: "${FRONTEND_MEMORY_RESERVATION:-256M}"
+    mem_limit: "${FRONTEND_MEMORY_LIMIT:-512M}"
+    cpus: "${FRONTEND_CPU_LIMIT:-1.00}"
+
+volumes:
+  db-data:

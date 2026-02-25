@@ -1,0 +1,26 @@
+{
+  "name": "SOC Post-Incident Hardening",
+  "description": "Post-remediation hardening and telemetry reset.",
+  "steps": [
+    {
+      "id": "sca_rescan",
+      "action": "sca-rescan",
+      "args": {},
+      "reason": "Measure policy compliance after cleanup."
+    },
+    {
+      "id": "service_restart",
+      "action": "service-restart",
+      "args": {
+        "service": "wuauserv"
+      },
+      "reason": "Stabilize affected service after remediation."
+    },
+    {
+      "id": "restart_wazuh",
+      "action": "restart-wazuh",
+      "args": {},
+      "reason": "Refresh endpoint telemetry channel."
+    }
+  ]
+}

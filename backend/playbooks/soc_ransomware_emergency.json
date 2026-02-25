@@ -1,0 +1,42 @@
+{
+  "name": "SOC Ransomware Emergency",
+  "description": "Emergency containment for probable ransomware execution.",
+  "steps": [
+    {
+      "id": "kill_encryptor",
+      "action": "kill-process",
+      "args": {
+        "pid": "1234"
+      },
+      "reason": "Stop active encryption quickly."
+    },
+    {
+      "id": "block_c2_ip",
+      "action": "firewall-drop",
+      "args": {
+        "ip": "1.2.3.4"
+      },
+      "reason": "Cut command-and-control traffic."
+    },
+    {
+      "id": "quarantine_dropper",
+      "action": "quarantine-file",
+      "args": {
+        "path": "C:\\\\Users\\\\Public\\\\payload.exe"
+      },
+      "reason": "Prevent relaunch after process kill."
+    },
+    {
+      "id": "collect_memory",
+      "action": "collect-memory",
+      "args": {},
+      "reason": "Preserve volatile artifacts."
+    },
+    {
+      "id": "collect_forensics",
+      "action": "collect-forensics",
+      "args": {},
+      "reason": "Capture triage package for incident timeline."
+    }
+  ]
+}

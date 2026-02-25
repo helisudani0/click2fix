@@ -1,0 +1,17 @@
+[Unit]
+Description=Click2Fix Appliance First-Boot Setup
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+ConditionPathExists=!/var/lib/click2fix/firstboot.done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/c2f-firstboot.sh
+StandardInput=tty-force
+StandardOutput=journal+console
+StandardError=journal+console
+TTYPath=/dev/tty1
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,125 @@
+name: release-appliance
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version tag (for example v1.2.0)"
+        required: true
+        type: string
+      publish_latest:
+        description: "Also update :latest image tags"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            PUBLISH_LATEST="${{ github.event.inputs.publish_latest }}"
+          else
+            VERSION="${GITHUB_REF_NAME}"
+            PUBLISH_LATEST="true"
+          fi
+          CLEAN="${VERSION#v}"
+          OWNER_LC="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          REPO_LC="$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "clean=${CLEAN}" >> "$GITHUB_OUTPUT"
+          echo "publish_latest=${PUBLISH_LATEST}" >> "$GITHUB_OUTPUT"
+          echo "owner_lc=${OWNER_LC}" >> "$GITHUB_OUTPUT"
+          echo "repo_lc=${REPO_LC}" >> "$GITHUB_OUTPUT"
+          echo "backend_image=ghcr.io/${OWNER_LC}/${REPO_LC}-backend" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=ghcr.io/${OWNER_LC}/${REPO_LC}-frontend" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend image
+        shell: bash
+        run: |
+          docker build -f docker/backend.Dockerfile -t "${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}" .
+          docker push "${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}"
+          if [ "${{ steps.meta.outputs.publish_latest }}" = "true" ]; then
+            docker tag "${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}" "${{ steps.meta.outputs.backend_image }}:latest"
+            docker push "${{ steps.meta.outputs.backend_image }}:latest"
+          fi
+
+      - name: Build and push frontend image
+        shell: bash
+        run: |
+          docker build -f docker/frontend.Dockerfile -t "${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}" .
+          docker push "${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}"
+          if [ "${{ steps.meta.outputs.publish_latest }}" = "true" ]; then
+            docker tag "${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}" "${{ steps.meta.outputs.frontend_image }}:latest"
+            docker push "${{ steps.meta.outputs.frontend_image }}:latest"
+          fi
+
+      - name: Build installer bundle
+        shell: bash
+        run: |
+          chmod +x deploy/appliance/release/build-installer-bundle.sh
+          deploy/appliance/release/build-installer-bundle.sh \
+            "${{ steps.meta.outputs.version }}" \
+            "${{ steps.meta.outputs.owner_lc }}" \
+            "${{ steps.meta.outputs.backend_image }}" \
+            "${{ steps.meta.outputs.frontend_image }}" \
+            "${{ steps.meta.outputs.clean }}"
+
+      - name: Prepare release notes
+        id: notes
+        shell: bash
+        run: |
+          NOTES_FILE="deploy/releases/${{ steps.meta.outputs.version }}/RELEASE_NOTES.md"
+          cat > "${NOTES_FILE}" <<EOF
+          Click2Fix appliance release: ${{ steps.meta.outputs.version }}
+
+          Customer download:
+          - click2fix-appliance-installer-${{ steps.meta.outputs.version }}.zip
+          - click2fix-appliance-installer-${{ steps.meta.outputs.version }}.sha256
+
+          Published images:
+          - ${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}
+          - ${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}
+
+          Quick install:
+          1. Download installer zip from this release.
+          2. Extract on target machine.
+          3. Run setup.cmd (Windows) or setup.sh (Linux).
+          4. Fill prompted Wazuh/indexer/endpoint credentials.
+          EOF
+          echo "path=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.version }}
+          name: Click2Fix ${{ steps.meta.outputs.version }}
+          body_path: ${{ steps.notes.outputs.path }}
+          files: |
+            deploy/releases/${{ steps.meta.outputs.version }}/click2fix-appliance-installer-${{ steps.meta.outputs.version }}.zip
+            deploy/releases/${{ steps.meta.outputs.version }}/click2fix-appliance-installer-${{ steps.meta.outputs.version }}.sha256

@@ -1,0 +1,30 @@
+{
+  "name": "SOC Network IOC Containment",
+  "description": "Contain known-bad network indicators tied to an alert.",
+  "steps": [
+    {
+      "id": "block_ip_firewall",
+      "action": "firewall-drop",
+      "args": {
+        "ip": "1.2.3.4"
+      },
+      "reason": "Immediate network containment."
+    },
+    {
+      "id": "host_deny",
+      "action": "host-deny",
+      "args": {
+        "ip": "1.2.3.4"
+      },
+      "reason": "Add defense-in-depth deny rule."
+    },
+    {
+      "id": "hunt_ioc_set",
+      "action": "ioc-scan",
+      "args": {
+        "ioc_set": "campaign-2026-02"
+      },
+      "reason": "Hunt for campaign indicators."
+    }
+  ]
+}

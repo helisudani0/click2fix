@@ -1,0 +1,1120 @@
+wazuh:
+  url: "https://WAZUH_MANAGER_IP:55000"
+  user: "c2f_api"
+  password: ""
+  verify_ssl: false
+  timeout: 10
+  session:
+    pool_connections: 20
+    pool_maxsize: 100
+
+indexer:
+  enabled: true
+  url: "https://WAZUH_INDEXER_IP:9200"
+  user: "admin"
+  password: ""
+  verify_ssl: false
+  timeout: 10
+  alerts_index: "wazuh-alerts-*"
+  vulnerability_index: "wazuh-states-vulnerabilities-*"
+  syscollector_index: "wazuh-states-inventory-{resource}-*"
+  sca_index: "wazuh-states-sca-*"
+  session:
+    pool_connections: 20
+    pool_maxsize: 100
+
+threat_intel:
+  enabled: true
+  timeout_seconds: 8
+  otx_enabled: true
+  otx_base_url: "https://otx.alienvault.com"
+  otx_api_key: ""
+  abuse_ch_enabled: true
+  abuse_ch_base_url: "https://threatfox-api.abuse.ch"
+
+active_response:
+  enabled: true
+  runner:
+    enabled: false
+    command: "c2f-runner"
+    custom: false
+    prepend_action: true
+  fallback_commands:
+    - "restart-wazuh"
+    - "netsh"
+    - "c2f-runner"
+  commands:
+    - id: "firewall-drop"
+      label: "Block Source IP"
+      description: "Containment: block a source IP on the endpoint firewall."
+      command: "firewall-drop"
+      category: "containment"
+      risk: "high"
+      custom: false
+      inputs:
+        - name: "ip"
+          label: "IP Address"
+          placeholder: "1.2.3.4"
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: true
+        timeout_seconds: 30
+        validation:
+          - field: "ip"
+            type: "ip_address"
+            required: true
+            description: "Valid IPv4 or IPv6 address"
+    - id: "unblock-ip"
+      label: "Unblock Source IP"
+      description: "Rollback: remove a previously created C2F firewall block rule."
+      command: "unblock-ip"
+      category: "containment"
+      risk: "medium"
+      custom: false
+      inputs:
+        - name: "ip"
+          label: "IP Address"
+          placeholder: "1.2.3.4"
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: true
+        timeout_seconds: 30
+        validation:
+          - field: "ip"
+            type: "ip_address"
+            required: true
+            description: "Valid IPv4 or IPv6 address"
+    - id: "host-deny"
+      label: "Host Deny"
+      description: "Containment: add source IP to host deny list."
+      command: "host-deny"
+      category: "containment"
+      risk: "high"
+      custom: false
+      inputs:
+        - name: "ip"
+          label: "IP Address"
+          placeholder: "1.2.3.4"
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: true
+        timeout_seconds: 30
+        validation:
+          - field: "ip"
+            type: "ip_address"
+            required: true
+            description: "Valid IPv4 or IPv6 address"
+    - id: "win-route-null"
+      label: "Route Null (Windows)"
+      description: "Containment: route malicious source to null on Windows."
+      command: "win-route-null"
+      category: "containment"
+      risk: "high"
+      custom: false
+      inputs:
+        - name: "ip"
+          label: "IP Address"
+          placeholder: "1.2.3.4"
+      capabilities:
+        supported_os: ["windows"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: true
+        timeout_seconds: 30
+        validation:
+          - field: "ip"
+            type: "ip_address"
+            required: true
+            description: "Valid IPv4 or IPv6 address"
+    - id: "kill-process"
+      label: "Kill Process (Endpoint)"
+      description: "Endpoint response: terminate a process by PID."
+      command: "kill-process"
+      category: "response"
+      risk: "critical"
+      custom: true
+      inputs:
+        - name: "pid"
+          label: "PID"
+          placeholder: "1234"
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 60
+        validation:
+          - field: "pid"
+            type: "integer"
+            required: true
+            min: 1
+            max: 99999
+            description: "Valid process ID"
+    - id: "quarantine-file"
+      label: "Quarantine File"
+      description: "Endpoint response: quarantine suspicious file path."
+      command: "quarantine-file"
+      category: "response"
+      risk: "high"
+      custom: true
+      inputs:
+        - name: "path"
+          label: "File Path"
+          placeholder: "C:\\\\path\\\\to\\\\file.exe"
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 120
+        validation:
+          - field: "path"
+            type: "file_path"
+            required: true
+            description: "Valid file system path"
+    - id: "malware-scan"
+      label: "Malware Scan"
+      description: "Threat hunting: run endpoint malware scan command."
+      command: "malware-scan"
+      category: "threat-hunt"
+      risk: "medium"
+      custom: true
+      inputs:
+        - name: "scope"
+          label: "Scan Scope"
+          placeholder: "quick | full | custom-path"
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 600
+        validation:
+          - field: "scope"
+            type: "enum"
+            required: false
+            values: ["quick", "full", "custom-path"]
+            default: "quick"
+            description: "Scan type: quick, full, or custom path"
+    - id: "sca-rescan"
+      label: "SCA Rescan"
+      description: "Compliance: trigger fresh SCA policy scan."
+      command: "sca-rescan"
+      category: "compliance"
+      risk: "low"
+      custom: true
+      inputs: []
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "manager_api"
+        requires_credentials: false
+        requires_network: false
+        timeout_seconds: 300
+        validation: []
+    - id: "patch-linux"
+      label: "Patch (Linux)"
+      description: "Remediation: run Linux patch workflow (no forced reboot; reports WAITING_REBOOT when required)."
+      command: "patch-linux"
+      category: "patching"
+      risk: "high"
+      custom: true
+      inputs: []
+      capabilities:
+        supported_os: ["linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: true
+        timeout_seconds: 1800
+        validation: []
+    - id: "patch-windows"
+      label: "Patch (Windows)"
+      description: "Remediation: run Windows patch workflow (no forced reboot; reports WAITING_REBOOT when required)."
+      command: "patch-windows"
+      category: "patching"
+      risk: "high"
+      custom: true
+      inputs: []
+      capabilities:
+        supported_os: ["windows"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: true
+        timeout_seconds: 1800
+        validation: []
+    - id: "windows-os-update"
+      label: "Windows OS Security Update"
+      description: "Remediation: install Windows OS updates with Standard-Cumulative profile (excludes driver/firmware/preview updates; no forced reboot)."
+      command: "windows-os-update"
+      category: "patching"
+      risk: "high"
+      custom: true
+      inputs: []
+      docs:
+        what_it_does: "Installs Windows OS updates using a Standard-Cumulative profile with SOC-safe filtering and post-update build validation."
+        when_to_use: "Use for Windows OS/build vulnerabilities from the feed when no direct package-manager mapping exists."
+        impact: "High-impact remediation. May install cumulative/security updates and may require reboot."
+        rollback: "Use rollback-kb/manual rollback procedures for problematic KB updates."
+        evidence: "Execution evidence includes available/installed/failed/remaining update details and outcome metrics (including WAITING_REBOOT when reboot is required)."
+      capabilities:
+        supported_os: ["windows"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: true
+        timeout_seconds: 3600
+        validation: []
+    - id: "fleet-software-update"
+      label: "Fleet Software Update"
+      description: "Bulk patch workflow: discover pending software updates, install them, and report remaining updates per endpoint (no forced reboot)."
+      command: "fleet-software-update"
+      category: "patching"
+      risk: "high"
+      custom: true
+      inputs: []
+      docs:
+        what_it_does: "Runs OS-level update discovery/install across selected endpoints (Windows software + driver/firmware updates when exposed by Windows Update API, and Linux package updates) and captures proof of pending/installed/remaining updates."
+        when_to_use: "Use for one-click maintenance windows or urgent fleet-wide vulnerability remediation."
+        impact: "High-impact remediation. Endpoint performance may be affected during update scan/install. Some endpoints may require reboot (reported as WAITING_REBOOT, not auto-triggered)."
+        rollback: "Use rollback-kb or package rollback actions where applicable; unresolved updates remain visible as remaining count."
+        evidence: "Execution evidence includes per-endpoint update lists (available/installed/failed/remaining), install codes, and aggregate counts."
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: true
+        timeout_seconds: 3600
+        validation: []
+    - id: "package-update"
+      label: "Update Package"
+      description: "Remediation: install/upgrade a specific package (Windows winget / Linux apt)."
+      command: "package-update"
+      category: "patching"
+      risk: "high"
+      custom: true
+      inputs:
+        - name: "package"
+          label: "Package Name/ID"
+          placeholder: "Example: Google.Chrome, nginx, or all"
+          default: "all"
+        - name: "version"
+          label: "Version (optional)"
+          placeholder: "Example: 1.2.3"
+      docs:
+        evidence: "Execution evidence includes package-level status as available/installed/not-updated with explicit counts."
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: true
+        timeout_seconds: 1800
+        validation:
+          - field: "package"
+            type: "string"
+            required: false
+            min_length: 1
+            max_length: 200
+            default: "all"
+            description: "Package name(s)/identifier(s), comma-separated, or all"
+          - field: "version"
+            type: "string"
+            required: false
+            min_length: 1
+            max_length: 100
+            description: "Optional version specifier"
+    - id: "software-install-upgrade"
+      label: "Install/Upgrade Specific Software"
+      description: "Remediation: install or upgrade a specific software package on selected endpoints."
+      command: "package-update"
+      category: "patching"
+      risk: "high"
+      custom: true
+      inputs:
+        - name: "package"
+          label: "Package Name/ID"
+          placeholder: "Example: Google.Chrome, nginx"
+        - name: "version"
+          label: "Version (optional)"
+          placeholder: "Example: 1.2.3"
+      docs:
+        what_it_does: "Runs targeted install/upgrade for only the package(s) you provide."
+        when_to_use: "Use for software-specific vulnerability remediation instead of fleet-wide update actions."
+        impact: "High-impact remediation scoped to selected package(s) only."
+        rollback: "Use vendor/package rollback workflow if the upgraded package introduces issues."
+        evidence: "Execution evidence includes package-level available/installed/failed/remaining details with counts."
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: true
+        timeout_seconds: 1800
+        validation:
+          - field: "package"
+            type: "string"
+            required: true
+            min_length: 1
+            max_length: 200
+            description: "Package name(s)/identifier(s), comma-separated"
+          - field: "version"
+            type: "string"
+            required: false
+            min_length: 1
+            max_length: 100
+            description: "Optional version specifier"
+    - id: "custom-os-command"
+      label: "Internal Global Shell Transport"
+      description: "Internal transport action used by the Global Shell API path."
+      command: "custom-os-command"
+      category: "patching"
+      risk: "critical"
+      custom: true
+      inputs:
+        - name: "command"
+          label: "Custom Command"
+          placeholder: "Windows: Install-WindowsUpdate -AcceptAll -IgnoreReboot | Linux: sudo apt-get install --only-upgrade openssl -y"
+        - name: "verify_kb"
+          label: "Verify KB (Windows, optional)"
+          placeholder: "Example: KB5075912"
+        - name: "verify_min_build"
+          label: "Verify Min Build (Windows, optional)"
+          placeholder: "Example: 19045.6937"
+        - name: "verify_stdout_contains"
+          label: "Verify Output Contains (optional)"
+          placeholder: "Example: Installation Successful"
+        - name: "run_as_system"
+          label: "Run As SYSTEM (Windows, optional)"
+          placeholder: "true | false"
+      docs:
+        what_it_does: "Executes the exact command payload on selected endpoints."
+        when_to_use: "Internal path for Global Shell and generated fallback command execution."
+        impact: "Critical-risk action. Command runs with endpoint action privileges and may significantly change system state."
+        rollback: "Command-specific rollback; use platform/vendor rollback procedures."
+        evidence: "Execution output includes command evidence, stdout/stderr, and verification checks for KB/build/output fields."
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 1800
+        validation:
+          - field: "command"
+            type: "string"
+            required: true
+            min_length: 3
+            max_length: 20000
+            description: "OS command to execute on endpoint"
+          - field: "verify_kb"
+            type: "string"
+            required: false
+            min_length: 2
+            max_length: 32
+            description: "Windows-only KB identifier expected after command"
+          - field: "verify_min_build"
+            type: "string"
+            required: false
+            min_length: 3
+            max_length: 32
+            description: "Windows-only minimum build expected after command"
+          - field: "verify_stdout_contains"
+            type: "string"
+            required: false
+            min_length: 1
+            max_length: 500
+            description: "Require command stdout/stderr to contain this marker text"
+          - field: "run_as_system"
+            type: "boolean"
+            required: false
+            description: "Run in SYSTEM scheduled-task context (Windows only)"
+    - id: "collect-forensics"
+      label: "Collect Forensics"
+      description: "Investigation: collect triage package from endpoint."
+      command: "collect-forensics"
+      category: "forensics"
+      risk: "medium"
+      custom: true
+      inputs: []
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 600
+        validation: []
+    - id: "route-null"
+      label: "Route Null (Linux)"
+      description: "Containment: drop traffic from attacker IP using null route."
+      command: "route-null"
+      category: "containment"
+      risk: "high"
+      custom: false
+      inputs:
+        - name: "ip"
+          label: "IP Address"
+          placeholder: "1.2.3.4"
+      capabilities:
+        supported_os: ["linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: true
+        timeout_seconds: 30
+        validation:
+          - field: "ip"
+            type: "ip_address"
+            required: true
+            description: "Valid IPv4 or IPv6 address"
+    - id: "netsh"
+      label: "Netsh Block (Windows)"
+      description: "Containment: block source IP with Windows netsh firewall."
+      command: "netsh"
+      category: "containment"
+      risk: "high"
+      custom: false
+      inputs:
+        - name: "ip"
+          label: "IP Address"
+          placeholder: "1.2.3.4"
+      capabilities:
+        supported_os: ["windows"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: true
+        timeout_seconds: 30
+        validation:
+          - field: "ip"
+            type: "ip_address"
+            required: true
+            description: "Valid IPv4 or IPv6 address"
+    - id: "restart-wazuh"
+      label: "Restart Wazuh Agent"
+      description: "Recovery: restart Wazuh agent service on endpoint."
+      command: "restart-wazuh"
+      category: "recovery"
+      risk: "medium"
+      custom: false
+      inputs: []
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "manager_api"
+        requires_credentials: false
+        requires_network: false
+        timeout_seconds: 60
+        validation: []
+    - id: "endpoint-healthcheck"
+      label: "Endpoint Healthcheck"
+      description: "Validation: run a safe connectivity check and return host details."
+      command: "endpoint-healthcheck"
+      category: "validation"
+      risk: "low"
+      custom: true
+      inputs: []
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 30
+        validation: []
+    - id: "disable-account"
+      label: "Disable User Account"
+      description: "Containment: disable compromised local account on endpoint."
+      command: "disable-account"
+      category: "containment"
+      risk: "critical"
+      custom: false
+      inputs:
+        - name: "user"
+          label: "Username"
+          placeholder: "jdoe"
+      capabilities:
+        supported_os: ["windows"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 30
+        validation:
+          - field: "user"
+            type: "string"
+            required: true
+            min_length: 1
+            max_length: 100
+            description: "Valid Windows username"
+    - id: "enable-account"
+      label: "Enable User Account"
+      description: "Rollback: re-enable a previously disabled local account."
+      command: "enable-account"
+      category: "recovery"
+      risk: "high"
+      custom: false
+      inputs:
+        - name: "user"
+          label: "Username"
+          placeholder: "jdoe"
+      capabilities:
+        supported_os: ["windows"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 30
+        validation:
+          - field: "user"
+            type: "string"
+            required: true
+            min_length: 1
+            max_length: 100
+            description: "Valid Windows username"
+    - id: "ioc-scan"
+      label: "IOC Hunt Scan"
+      description: "Threat hunting: scan endpoint for known IOCs (hashes/domains/paths)."
+      command: "ioc-scan"
+      category: "threat-hunt"
+      risk: "medium"
+      custom: true
+      inputs:
+        - name: "ioc_set"
+          label: "IOC Set Name"
+          placeholder: "campaign-2026-02"
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 300
+        validation:
+          - field: "ioc_set"
+            type: "string"
+            required: false
+            description: "Name of IOC set to scan against"
+    - id: "toc-scan"
+      label: "TOC (Type-On-Close) Hunt Scan"
+      description: "Threat hunting: scan endpoint for tactics, techniques, and procedures (TTPs) at closure time."
+      command: "toc-scan"
+      category: "threat-hunt"
+      risk: "medium"
+      custom: true
+      inputs:
+        - name: "ioc_set"
+          label: "IOC Set Name"
+          placeholder: "final-closure-scan"
+      docs:
+        what_it_does: "Executes a comprehensive endpoint scan at case/ticket closure to verify no persistence or residual malware."
+        when_to_use: "Use before closing a security incident to validate remediation completeness."
+        impact: "Medium impact - captures running processes and network connections for TTP analysis."
+        evidence: "Execution evidence includes process patterns, network indicators, and potential TTPs detected."
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 300
+        validation:
+          - field: "ioc_set"
+            type: "string"
+            required: false
+            description: "Name of TOC scan profile to apply"
+    - id: "yara-scan"
+      label: "YARA Scan"
+      description: "Threat hunting: execute YARA signatures against target paths."
+      command: "yara-scan"
+      category: "threat-hunt"
+      risk: "high"
+      custom: true
+      inputs:
+        - name: "path"
+          label: "Scan Path"
+          placeholder: "C:\\\\Users or /home"
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 600
+        validation:
+          - field: "path"
+            type: "file_path"
+            required: true
+            description: "Valid directory path to scan"
+    - id: "collect-memory"
+      label: "Collect Memory Snapshot"
+      description: "Forensics: collect volatile memory snapshot from endpoint."
+      command: "collect-memory"
+      category: "forensics"
+      risk: "critical"
+      custom: true
+      inputs: []
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 1200
+        validation: []
+    - id: "hash-blocklist"
+      label: "Block Hash"
+      description: "Containment: add malicious hash to endpoint blocklist."
+      command: "hash-blocklist"
+      category: "containment"
+      risk: "high"
+      custom: true
+      inputs:
+        - name: "sha256"
+          label: "SHA256"
+          placeholder: "64-char SHA256 hash"
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 120
+        validation:
+          - field: "sha256"
+            type: "sha256_hash"
+            required: true
+            description: "Valid 64-character SHA256 hash"
+    - id: "service-restart"
+      label: "Restart Endpoint Service"
+      description: "Recovery: restart specific endpoint service after containment."
+      command: "service-restart"
+      category: "recovery"
+      risk: "medium"
+      custom: true
+      inputs:
+        - name: "service"
+          label: "Service Name"
+          placeholder: "wuauserv"
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 120
+        validation:
+          - field: "service"
+            type: "string"
+            required: true
+            min_length: 1
+            max_length: 100
+            description: "Valid service name"
+    - id: "threat-hunt-persistence"
+      label: "Persistence Hunt"
+      description: "Threat hunting: inspect startup/persistence artifacts."
+      command: "threat-hunt-persistence"
+      category: "threat-hunt"
+      risk: "medium"
+      custom: true
+      inputs: []
+      capabilities:
+        supported_os: ["windows", "linux"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 300
+        validation: []
+    - id: "rollback-kb"
+      label: "Rollback KB Update"
+      description: "Patch remediation: rollback problematic Windows KB."
+      command: "rollback-kb"
+      category: "patching"
+      risk: "high"
+      custom: true
+      inputs:
+        - name: "kb"
+          label: "KB Number"
+          placeholder: "KB5030219"
+      capabilities:
+        supported_os: ["windows"]
+        preferred_channel: "endpoint"
+        requires_credentials: true
+        requires_network: false
+        timeout_seconds: 600
+        validation:
+          - field: "kb"
+            type: "kb_number"
+            required: true
+            description: "Valid Windows KB number (e.g., KB5030219)"
+
+orchestration:
+  mode: "endpoint"
+  bulk_max_workers: 60
+  timeout_seconds: 120
+  stop_on_error: false
+  active_response_fallback_to_endpoint: true
+  windows_patch_stagger_seconds: 5
+  windows_patch_stagger_min_targets: 5
+  windows_os_update_profile_fallback_on_missing_target: true
+  windows_os_update_force_kb_fallback_enabled: true
+  windows_os_update_force_kb_fallback_timeout_seconds: 1200
+  circuit_breaker_enabled: true
+  circuit_breaker_threshold_percent: 90
+  circuit_breaker_poll_seconds: 2
+  circuit_breaker_max_pause_seconds: 120
+  circuit_breaker_memory_limit_mb: 0
+
+endpoint_connectors:
+  windows:
+    enabled: true
+    transport: "ntlm"
+    use_https: false
+    port: 5985
+    verify_tls: false
+    username: ""
+    username_env: "C2F_WINRM_USERNAME"
+    password: ""
+    password_env: "C2F_WINRM_PASSWORD"
+    agent_credentials:
+      "001":
+        username: ""
+        username_env: "C2F_WINRM_USERNAME_001"
+        password: ""
+        password_env: "C2F_WINRM_PASSWORD_001"
+      "004":
+        username: ""
+        username_env: "C2F_WINRM_USERNAME_004"
+        password: ""
+        password_env: "C2F_WINRM_PASSWORD_004"
+  linux:
+    enabled: false
+    port: 22
+    username: ""
+    username_env: "C2F_SSH_USERNAME"
+    password: ""
+    password_env: "C2F_SSH_PASSWORD"
+    key_file: ""
+  agent_overrides:
+    "001":
+      ip: "192.168.1.173"
+      platform: "windows"
+      name: "TSPLLP129"
+    "004":
+      ip: "192.168.1.248"
+      platform: "windows"
+      name: "LAPTOP-9GQ8LUGU"
+
+playbooks_path: "./playbooks"
+log_path: "./logs"
+db_path: "./db/wazuh.db"
+
+database:
+  url: "postgresql+psycopg2://click2fix:click2fix@db:5432/click2fix"
+
+attachments_path: "./data/attachments"
+evidence_path: "./data/evidence"
+
+forensics_integrity:
+  verify_on_download: true
+  verify_on_lock: true
+  sweep:
+    enabled: true
+    cron: "0 2 * * *"
+    max_items: 2000
+
+analytics_ingest:
+  enabled: true
+  interval_seconds: 300
+  limit: 200
+  query: null
+
+verification:
+  post_action:
+    enabled: true
+    actions:
+      - "patch-windows"
+      - "windows-os-update"
+      - "fleet-software-update"
+      - "patch-linux"
+      - "package-update"
+      - "software-install-upgrade"
+      - "custom-os-command"
+    initial_delay_seconds: 5
+    max_delay_seconds: 60
+    max_attempts: 6
+    include_capability_triggers: true
+    restart_batch_size: 25
+    max_parallel_checks: 20
+
+scheduler_policy:
+  auto_create: true
+  interval_hours: 6
+
+approval_policy:
+  default:
+    requirements:
+      - role: "admin"
+        count: 1
+    justification_required: false
+  actions:
+    kill-process:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    quarantine-file:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    patch-linux:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    patch-windows:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    windows-os-update:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    fleet-software-update:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    package-update:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    software-install-upgrade:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    custom-os-command:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    collect-forensics:
+      requirements:
+        - role: "analyst"
+          count: 1
+      justification_required: true
+    firewall-drop:
+      requirements:
+        - role: "analyst"
+          count: 1
+        - role: "admin"
+          count: 1
+      justification_required: true
+    unblock-ip:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    host-deny:
+      requirements:
+        - role: "analyst"
+          count: 1
+        - role: "admin"
+          count: 1
+      justification_required: true
+    route-null:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    win-route-null:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    netsh:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    restart-wazuh:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    endpoint-healthcheck:
+      requirements:
+        - role: "analyst"
+          count: 1
+      justification_required: false
+    disable-account:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    enable-account:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    ioc-scan:
+      requirements:
+        - role: "analyst"
+          count: 1
+      justification_required: true
+    toc-scan:
+      requirements:
+        - role: "analyst"
+          count: 1
+      justification_required: false
+    yara-scan:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    collect-memory:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    hash-blocklist:
+      requirements:
+        - role: "analyst"
+          count: 1
+        - role: "admin"
+          count: 1
+      justification_required: true
+    service-restart:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+    threat-hunt-persistence:
+      requirements:
+        - role: "analyst"
+          count: 1
+      justification_required: true
+    rollback-kb:
+      requirements:
+        - role: "admin"
+          count: 1
+      justification_required: true
+
+security:
+  jwt_secret: "CHANGE_ME_TO_A_LONG_RANDOM_VALUE"
+  enforce_strong_jwt: true
+  jwt_issuer: "click2fix-api"
+  jwt_audience: "click2fix-ui"
+  token_exp_hours: 8
+  cookie_name: "c2f_token"
+  csrf_cookie_name: "c2f_csrf"
+  cookie_secure: false
+  return_access_token_in_body: false
+  cookie_samesite: "strict"
+  cookie_httponly: true
+  trusted_hosts:
+    - "localhost"
+    - "127.0.0.1"
+    - "*.localhost"
+    - "backend"
+    - "frontend"
+    - "wazuh-click2fix-backend"
+    - "wazuh-click2fix-frontend"
+  max_request_body_bytes: 10485760
+  max_upload_body_bytes: 26214400
+  allow_demo_users: false
+  cors_origins:
+    - "http://localhost:5173"
+  cors_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "PATCH"
+    - "OPTIONS"
+  cors_headers:
+    - "Authorization"
+    - "Content-Type"
+    - "Accept"
+    - "Origin"
+  login_rate_limit:
+    max_attempts: 8
+    window_seconds: 300
+    block_seconds: 900
+
+auth:
+  oidc:
+    enabled: false
+    issuer_url: ""
+    discovery_url: ""
+    client_id: "001"
+    client_secret: ""
+    redirect_uri: "http://localhost:8000/api/auth/oidc/callback"
+    frontend_redirect: "http://localhost:5173/login"
+    username_claim: "preferred_username"
+    default_role: "analyst"
+  ldap:
+    enabled: false
+    server: "ldap://localhost:389"
+    bind_dn: ""
+    bind_password: ""
+    base_dn: ""
+    user_filter: "(uid={username})"
+    use_ssl: false
+    default_role: "analyst"
+
+vulnerability_remediation:
+  windows_package_map:
+    oracle virtualbox: "Oracle.VirtualBox"
+    visual studio community 2022: "Microsoft.VisualStudio.2022.Community"
+    visual studio build tools: "Microsoft.VisualStudio.BuildTools"
+    visual studio code: "Microsoft.VisualStudioCode"
+    mongodb: "MongoDB.Server"
+    mongodb compass: "MongoDB.Compass.Full"
+    node js: "OpenJS.NodeJS.22"
+    npm: "OpenJS.NodeJS.22"
+    vlc media player: "VideoLAN.VLC"
+    wireshark: "WiresharkFoundation.Wireshark"
+    wazuh agent: "Wazuh.WazuhAgent"
+    google chrome: "Google.Chrome.EXE"
+    mozilla firefox: "Mozilla.Firefox"
+    microsoft edge: "Microsoft.Edge"
+    microsoft onedrive: "Microsoft.OneDrive"
+    microsoft teams: "Microsoft.Teams"
+    edge webview2 runtime: "Microsoft.EdgeWebView2Runtime"
+    7 zip: "7zip.7zip"
+    notepad plus plus: "Notepad++.Notepad++"
+    adobe acrobat reader: "Adobe.Acrobat.Reader.64-bit"
+    adobe reader: "Adobe.Acrobat.Reader.64-bit"
+    zoom: "Zoom.Zoom"
+    slack: "SlackTechnologies.Slack"
+    postman: "Postman.Postman"
+    putty: "PuTTY.PuTTY"
+    winrar: "RARLab.WinRAR"
+    git: "Git.Git"
+    docker desktop: "Docker.DockerDesktop"
+    google cloud sdk: "Google.CloudSDK"
+    nvidia physx: "Nvidia.PhysX"
+    photos: "Microsoft.Windows.Photos"
+    qemu: "QEMU.QEMU"
+    intel hardware accelerated execution manager: "Intel.HAXM"
+  linux_package_map:
+    node js: "nodejs"
+    npm: "npm"
+    mongodb: "mongodb-org"
+    virtualbox: "virtualbox"
+    wireshark: "wireshark"
+    vlc media player: "vlc"
+    google chrome: "google-chrome-stable"
+    firefox: "firefox"
+    openssl: "openssl"
+    curl: "curl"
+    sudo: "sudo"
+    systemd: "systemd"
+    docker: "docker.io"
+    containerd: "containerd"
+  windows_service_map:
+    wazuh agent: "WazuhSvc"
+    mongodb: "MongoDB"
+    postgresql: "postgresql-x64-17"
+    docker desktop: "com.docker.service"
+  linux_service_map:
+    mongodb: "mongod"
+    postgresql: "postgresql"
+    mysql: "mysql"
+    nginx: "nginx"
+    apache: "apache2"
+    docker: "docker"

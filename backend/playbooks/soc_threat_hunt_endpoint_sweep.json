@@ -1,0 +1,28 @@
+{
+  "name": "SOC Threat Hunt Endpoint Sweep",
+  "description": "Run baseline hunting checks for endpoint compromise.",
+  "steps": [
+    {
+      "id": "ioc_scan",
+      "action": "ioc-scan",
+      "args": {
+        "ioc_set": "baseline-global"
+      },
+      "reason": "Search for known malicious indicators."
+    },
+    {
+      "id": "yara_scan",
+      "action": "yara-scan",
+      "args": {
+        "path": "C:\\\\Users"
+      },
+      "reason": "Inspect user space for malware patterns."
+    },
+    {
+      "id": "persistence_hunt",
+      "action": "threat-hunt-persistence",
+      "args": {},
+      "reason": "Validate persistence mechanisms."
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Python / backend
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+backend/.tmp-script-check/
+backend/logs/
+backend/data/
+backend/db/*.db
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+
+# Local secrets and runtime env files
+backend/.env
+docker/.env
+deploy/appliance/.env.appliance
+
+# Generated release artifacts
+deploy/releases/
+
+# Generated/local playbooks
+backend/playbooks/Auto-Response-*.json
+backend/playbooks/GeneratedPlaybook*.json
+
+# Keep safe templates in git
+!backend/.env.example
+!docker/.env.example
+!deploy/appliance/.env.appliance.template

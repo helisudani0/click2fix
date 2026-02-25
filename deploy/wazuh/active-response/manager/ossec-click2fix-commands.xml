@@ -1,0 +1,10 @@
+<!--
+  Click2Fix single-runner command pack for Wazuh manager.
+  Paste this <command> block inside <ossec_config> in /var/ossec/etc/ossec.conf.
+-->
+
+<command>
+  <name>c2f-runner</name>
+  <executable>c2f-runner</executable>
+  <timeout_allowed>yes</timeout_allowed>
+</command>

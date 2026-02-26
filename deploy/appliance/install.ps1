@@ -75,6 +75,13 @@ function To-Bool {
   return @("1","true","yes","on") -contains $Value.Trim().ToLowerInvariant()
 }
 
+function New-StrongSecret {
+  param([int]$Bytes = 48)
+  $buffer = New-Object byte[] $Bytes
+  [System.Security.Cryptography.RandomNumberGenerator]::Fill($buffer)
+  return ([Convert]::ToBase64String($buffer)).TrimEnd("=")
+}
+
 function Invoke-NativeChecked {
   param(
     [string]$FilePath,
@@ -175,6 +182,11 @@ if ([string]::IsNullOrWhiteSpace($backendImage) -or [string]::IsNullOrWhiteSpace
   throw "Image configuration is missing in .env.appliance. Expected C2F_BACKEND_IMAGE, C2F_FRONTEND_IMAGE, C2F_IMAGE_TAG."
 }
 if ([string]::IsNullOrWhiteSpace($skipPull)) { $skipPull = "false" }
+$jwtSecret = Get-EnvValue $envPath "JWT_SECRET"
+if ([string]::IsNullOrWhiteSpace($jwtSecret) -or $jwtSecret -match "^CHANGE_ME" -or $jwtSecret.Length -lt 32) {
+  $jwtSecret = New-StrongSecret
+  Write-Host "Generated secure JWT secret for this appliance." -ForegroundColor Yellow
+}
 
 if ([string]::IsNullOrWhiteSpace($publicHost)) { throw "Public host/IP is required." }
 if ([string]::IsNullOrWhiteSpace($wazuhPassword) -or [string]::IsNullOrWhiteSpace($indexerPassword) -or [string]::IsNullOrWhiteSpace($adminPassword)) {
@@ -196,6 +208,7 @@ Set-EnvValue -Path $envPath -Key "WAZUH_PASSWORD" -Value $wazuhPassword
 Set-EnvValue -Path $envPath -Key "INDEXER_URL" -Value $indexerUrl
 Set-EnvValue -Path $envPath -Key "INDEXER_USER" -Value $indexerUser
 Set-EnvValue -Path $envPath -Key "INDEXER_PASSWORD" -Value $indexerPassword
+Set-EnvValue -Path $envPath -Key "JWT_SECRET" -Value $jwtSecret
 Set-EnvValue -Path $envPath -Key "C2F_WINRM_USERNAME" -Value $winrmUser
 Set-EnvValue -Path $envPath -Key "C2F_WINRM_PASSWORD" -Value $winrmPassword
 Set-EnvValue -Path $envPath -Key "C2F_BOOTSTRAP_ADMIN_USERNAME" -Value $adminUser

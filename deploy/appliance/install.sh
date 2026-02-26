@@ -55,6 +55,10 @@ show_diagnostics() {
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs --tail 80 db >&2 || true
 }
 
+generate_secret() {
+  head -c 48 /dev/urandom | base64 | tr -d '\n'
+}
+
 prompt_value() {
   local label="$1"
   local default_value="$2"
@@ -147,6 +151,7 @@ current_backend_image="$(get_env C2F_BACKEND_IMAGE "${ENV_FILE}")"
 current_frontend_image="$(get_env C2F_FRONTEND_IMAGE "${ENV_FILE}")"
 current_image_tag="$(get_env C2F_IMAGE_TAG "${ENV_FILE}")"
 current_skip_pull="$(get_env C2F_SKIP_PULL "${ENV_FILE}")"
+current_jwt_secret="$(get_env JWT_SECRET "${ENV_FILE}")"
 
 prompt_value "Public host or static IP for UI access" "${current_public_host:-$(hostname -I 2>/dev/null | awk '{print $1}')}" public_host
 prompt_value "Frontend port" "${current_frontend_port:-5173}" frontend_port
@@ -171,6 +176,11 @@ backend_image="${current_backend_image:-click2fix-backend}"
 frontend_image="${current_frontend_image:-click2fix-frontend}"
 image_tag="${current_image_tag:-local}"
 skip_pull="${current_skip_pull:-false}"
+jwt_secret="${current_jwt_secret:-}"
+if [[ -z "${jwt_secret}" || "${jwt_secret}" == CHANGE_ME* || ${#jwt_secret} -lt 32 ]]; then
+  jwt_secret="$(generate_secret)"
+  echo "Generated secure JWT secret for this appliance."
+fi
 
 echo
 read -r -p "Configure static network now? [y/N]: " configure_network
@@ -208,6 +218,7 @@ set_env WAZUH_PASSWORD "${wazuh_password}" "${ENV_FILE}"
 set_env INDEXER_URL "${indexer_url}" "${ENV_FILE}"
 set_env INDEXER_USER "${indexer_user}" "${ENV_FILE}"
 set_env INDEXER_PASSWORD "${indexer_password}" "${ENV_FILE}"
+set_env JWT_SECRET "${jwt_secret}" "${ENV_FILE}"
 set_env C2F_WINRM_USERNAME "${winrm_user}" "${ENV_FILE}"
 set_env C2F_WINRM_PASSWORD "${winrm_password}" "${ENV_FILE}"
 set_env C2F_BOOTSTRAP_ADMIN_USERNAME "${admin_user}" "${ENV_FILE}"

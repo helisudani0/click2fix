@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List, Set
+from urllib.parse import quote, urlsplit
 
 import requests
 from requests import RequestException
@@ -13,8 +15,30 @@ from sqlalchemy import text
 from core.settings import SETTINGS
 from db.database import connect
 
-_IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_IPV4_RE = re.compile(
+    r"\b(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b"
+)
 _SHA256_RE = re.compile(r"\b[a-fA-F0-9]{64}\b")
+_SHA1_RE = re.compile(r"\b[a-fA-F0-9]{40}\b")
+_MD5_RE = re.compile(r"\b[a-fA-F0-9]{32}\b")
+_DOMAIN_RE = re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}\b")
+_URL_RE = re.compile(r"\bhttps?://[^\s\"'<>]+", re.IGNORECASE)
+
+_IP_HINTS = {
+    "ip",
+    "srcip",
+    "dstip",
+    "sourceip",
+    "destinationip",
+    "src_ip",
+    "dst_ip",
+    "remoteip",
+    "clientip",
+    "ipaddress",
+}
+_HASH_HINTS = {"hash", "sha256", "sha1", "md5", "checksum", "filehash"}
+_DOMAIN_HINTS = {"domain", "hostname", "dns", "query", "fqdn"}
+_URL_HINTS = {"url", "uri", "request", "link"}
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -42,13 +66,114 @@ def _safe_json(value: Any) -> str:
 
 
 def _verdict_from_score(score: int) -> str:
-    if score >= 80:
+    if score >= 85:
         return "malicious"
-    if score >= 50:
+    if score >= 55:
         return "suspicious"
     if score > 0:
         return "low_confidence"
     return "unknown"
+
+
+def _walk_values(value: Any, path: str = "") -> Iterable[tuple[str, Any]]:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            child = f"{path}.{key}" if path else str(key)
+            yield from _walk_values(item, child)
+        return
+    if isinstance(value, list):
+        for idx, item in enumerate(value):
+            child = f"{path}[{idx}]"
+            yield from _walk_values(item, child)
+        return
+    yield path, value
+
+
+def _path_tokens(path: str) -> Set[str]:
+    raw = str(path or "").replace("[", ".").replace("]", "")
+    tokens = re.split(r"[^a-zA-Z0-9_]+", raw.lower())
+    return {t for t in tokens if t}
+
+
+def _clean_scalar(value: Any) -> str:
+    text_value = str(value or "").strip().strip("\"'")
+    return text_value
+
+
+def _normalize_ipv4(value: Any) -> str | None:
+    candidate = _clean_scalar(value)
+    if not candidate:
+        return None
+    try:
+        ip_obj = ipaddress.ip_address(candidate)
+    except Exception:
+        return None
+    if not isinstance(ip_obj, ipaddress.IPv4Address):
+        return None
+    if not ip_obj.is_global:
+        return None
+    return str(ip_obj)
+
+
+def _normalize_hash(value: Any) -> str | None:
+    candidate = _clean_scalar(value).lower()
+    if not candidate:
+        return None
+    if len(candidate) not in {32, 40, 64}:
+        return None
+    if not re.fullmatch(r"[a-f0-9]+", candidate):
+        return None
+    if len(set(candidate)) == 1:
+        return None
+    return candidate
+
+
+def _normalize_url(value: Any) -> str | None:
+    candidate = _clean_scalar(value)
+    if not candidate:
+        return None
+    parsed = urlsplit(candidate)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        return None
+    if not parsed.netloc:
+        return None
+    normalized = parsed.geturl().rstrip(".,;)")
+    return normalized
+
+
+def _normalize_domain(value: Any) -> str | None:
+    candidate = _clean_scalar(value).lower()
+    if not candidate:
+        return None
+    if "@" in candidate:
+        return None
+
+    if "://" in candidate:
+        parsed = urlsplit(candidate)
+        candidate = parsed.hostname or ""
+
+    candidate = candidate.split("/")[0].split(":")[0].strip(".")
+    if not candidate or candidate in {"localhost", "localdomain"}:
+        return None
+    if candidate.endswith((".local", ".lan", ".home", ".internal")):
+        return None
+
+    try:
+        ipaddress.ip_address(candidate)
+        return None
+    except Exception:
+        pass
+
+    if not _DOMAIN_RE.fullmatch(candidate):
+        return None
+    return candidate
+
+
+def _append_indicators(target: Dict[str, Set[str]], ioc_type: str, values: Iterable[str]) -> None:
+    bucket = target.setdefault(ioc_type, set())
+    for value in values:
+        if value:
+            bucket.add(value)
 
 
 class IOCEnricher:
@@ -58,36 +183,105 @@ class IOCEnricher:
         self.timeout_seconds = max(2, _to_int(cfg.get("timeout_seconds", 8), 8))
         self.otx_enabled = _to_bool(cfg.get("otx_enabled", True), True)
         self.abuse_enabled = _to_bool(cfg.get("abuse_ch_enabled", True), True)
+        self.max_indicators_per_type = max(1, _to_int(cfg.get("max_indicators_per_type", 25), 25))
         self.otx_base = str(cfg.get("otx_base_url", "https://otx.alienvault.com")).rstrip("/")
         self.abuse_base = str(cfg.get("abuse_ch_base_url", "https://threatfox-api.abuse.ch")).rstrip("/")
         self.otx_api_key = os.getenv("OTX_API_KEY", str(cfg.get("otx_api_key", "") or "")).strip()
         self.session = requests.Session()
-        adapter = HTTPAdapter(pool_connections=20, pool_maxsize=100)
+        adapter = HTTPAdapter(pool_connections=20, pool_maxsize=100, max_retries=2)
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
+        self._cache: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
 
     def extract(self, alert: Any) -> Dict[str, List[str]]:
-        text_value = json.dumps(alert, default=str) if isinstance(alert, dict) else str(alert or "")
-        ips = sorted(set(_IPV4_RE.findall(text_value)))
-        hashes = sorted(set(_SHA256_RE.findall(text_value)))
-        return {
-            "ip": ips,
-            "hash": hashes,
+        indicators: Dict[str, Set[str]] = {
+            "ip": set(),
+            "hash": set(),
+            "domain": set(),
+            "url": set(),
         }
+
+        for path, value in _walk_values(alert):
+            if value is None:
+                continue
+            if isinstance(value, (dict, list, tuple)):
+                continue
+            scalar = _clean_scalar(value)
+            if not scalar or len(scalar) > 4096:
+                continue
+
+            tokens = _path_tokens(path)
+            if tokens & _IP_HINTS:
+                ip_value = _normalize_ipv4(scalar)
+                if ip_value:
+                    indicators["ip"].add(ip_value)
+
+            if tokens & _HASH_HINTS:
+                hash_value = _normalize_hash(scalar)
+                if hash_value:
+                    indicators["hash"].add(hash_value)
+
+            if tokens & _DOMAIN_HINTS:
+                domain_value = _normalize_domain(scalar)
+                if domain_value:
+                    indicators["domain"].add(domain_value)
+
+            if tokens & _URL_HINTS:
+                url_value = _normalize_url(scalar)
+                if url_value:
+                    indicators["url"].add(url_value)
+                    domain_value = _normalize_domain(url_value)
+                    if domain_value:
+                        indicators["domain"].add(domain_value)
+
+        text_value = json.dumps(alert, default=str) if isinstance(alert, dict) else str(alert or "")
+
+        _append_indicators(indicators, "ip", filter(None, (_normalize_ipv4(match) for match in _IPV4_RE.findall(text_value))))
+        _append_indicators(indicators, "hash", filter(None, (_normalize_hash(match) for match in _SHA256_RE.findall(text_value))))
+        _append_indicators(indicators, "hash", filter(None, (_normalize_hash(match) for match in _SHA1_RE.findall(text_value))))
+        _append_indicators(indicators, "hash", filter(None, (_normalize_hash(match) for match in _MD5_RE.findall(text_value))))
+
+        for url_match in _URL_RE.findall(text_value):
+            normalized_url = _normalize_url(url_match)
+            if normalized_url:
+                indicators["url"].add(normalized_url)
+                domain_value = _normalize_domain(normalized_url)
+                if domain_value:
+                    indicators["domain"].add(domain_value)
+
+        for domain_match in _DOMAIN_RE.findall(text_value):
+            normalized_domain = _normalize_domain(domain_match)
+            if normalized_domain:
+                indicators["domain"].add(normalized_domain)
+
+        result: Dict[str, List[str]] = {}
+        for ioc_type, values in indicators.items():
+            ordered = sorted(values)
+            if self.max_indicators_per_type > 0:
+                ordered = ordered[: self.max_indicators_per_type]
+            result[ioc_type] = ordered
+        return result
 
     def _query_otx(self, ioc: str, ioc_type: str) -> Dict[str, Any] | None:
         if not self.otx_enabled:
             return None
+
         endpoint = ""
         if ioc_type == "ip":
             endpoint = f"/api/v1/indicators/IPv4/{ioc}/general"
         elif ioc_type == "hash":
             endpoint = f"/api/v1/indicators/file/{ioc}/general"
+        elif ioc_type == "domain":
+            endpoint = f"/api/v1/indicators/domain/{ioc}/general"
+        elif ioc_type == "url":
+            endpoint = f"/api/v1/indicators/url/{quote(ioc, safe='')}/general"
         else:
             return None
+
         headers = {"Accept": "application/json"}
         if self.otx_api_key:
             headers["X-OTX-API-KEY"] = self.otx_api_key
+
         try:
             response = self.session.get(
                 f"{self.otx_base}{endpoint}",
@@ -97,10 +291,15 @@ class IOCEnricher:
             if response.status_code >= 400:
                 return None
             data = response.json() if response.text else {}
-            pulse_info = data.get("pulse_info", {}) if isinstance(data, dict) else {}
+            if not isinstance(data, dict):
+                return None
+
+            pulse_info = data.get("pulse_info") if isinstance(data.get("pulse_info"), dict) else {}
             pulse_count = _to_int(pulse_info.get("count", 0), 0)
-            reputation = _to_int(data.get("reputation", 0) if isinstance(data, dict) else 0, 0)
-            score = max(0, min(100, (pulse_count * 15) + max(0, reputation)))
+            reputation = _to_int(data.get("reputation", 0), 0)
+            malware_count = _to_int((data.get("malware") or {}).get("count", 0), 0)
+
+            score = max(0, min(100, (pulse_count * 10) + max(0, reputation) + (malware_count * 8)))
             return {
                 "source": "alienvault_otx",
                 "score": score,
@@ -108,6 +307,7 @@ class IOCEnricher:
                 "details": {
                     "pulse_count": pulse_count,
                     "reputation": reputation,
+                    "malware_count": malware_count,
                 },
             }
         except (RequestException, ValueError):
@@ -116,12 +316,14 @@ class IOCEnricher:
     def _query_abuse_ch(self, ioc: str, ioc_type: str) -> Dict[str, Any] | None:
         if not self.abuse_enabled:
             return None
+
         if ioc_type == "hash":
             payload = {"query": "search_hash", "hash": ioc}
-        elif ioc_type == "ip":
+        elif ioc_type in {"ip", "domain", "url"}:
             payload = {"query": "search_ioc", "search_term": ioc}
         else:
             return None
+
         try:
             response = self.session.post(
                 f"{self.abuse_base}/api/v1/",
@@ -133,18 +335,17 @@ class IOCEnricher:
             data = response.json() if response.text else {}
             if not isinstance(data, dict):
                 return None
-            if data.get("query_status") in {"no_result", "unknown_query", "bad_query"}:
-                return {
-                    "source": "abuse_ch_threatfox",
-                    "score": 0,
-                    "verdict": "unknown",
-                    "details": {"query_status": data.get("query_status")},
-                }
-            rows = data.get("data")
-            if not isinstance(rows, list):
-                rows = []
+
+            status = str(data.get("query_status") or "").strip().lower()
+            if status in {"no_result", "unknown_query", "bad_query"}:
+                return None
+
+            rows = data.get("data") if isinstance(data.get("data"), list) else []
+            if not rows:
+                return None
+
             confidence_scores: List[int] = []
-            malware_families = set()
+            malware_families: Set[str] = set()
             for row in rows:
                 if not isinstance(row, dict):
                     continue
@@ -152,11 +353,13 @@ class IOCEnricher:
                 family = str(row.get("malware") or row.get("malware_printable") or "").strip()
                 if family:
                     malware_families.add(family)
-            score = max(confidence_scores) if confidence_scores else 0
+
+            max_confidence = max(confidence_scores) if confidence_scores else 0
+            score = max(0, min(100, max_confidence + min(len(rows) * 2, 10)))
             return {
                 "source": "abuse_ch_threatfox",
-                "score": max(0, min(100, score)),
-                "verdict": _verdict_from_score(max(0, min(100, score))),
+                "score": score,
+                "verdict": _verdict_from_score(score),
                 "details": {
                     "matches": len(rows),
                     "families": sorted(malware_families),
@@ -166,36 +369,46 @@ class IOCEnricher:
             return None
 
     def _enrich_indicator(self, ioc: str, ioc_type: str) -> List[Dict[str, Any]]:
+        cache_key = (ioc_type, ioc)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         findings: List[Dict[str, Any]] = []
+
         otx = self._query_otx(ioc, ioc_type)
         if otx:
             findings.append(otx)
+
         abuse = self._query_abuse_ch(ioc, ioc_type)
         if abuse:
             findings.append(abuse)
-        if not findings:
-            return [
+
+        if findings:
+            scores = [int(item.get("score") or 0) for item in findings]
+            max_score = max(scores)
+            avg_score = int(round(sum(scores) / max(1, len(scores))))
+            combined_score = int(round((max_score * 0.7) + (avg_score * 0.3)))
+            findings.append(
                 {
-                    "source": "community_feeds",
-                    "score": 0,
-                    "verdict": "unknown",
-                    "details": {"reason": "no_feed_response"},
+                    "source": "normalized_combined",
+                    "score": max(0, min(100, combined_score)),
+                    "verdict": _verdict_from_score(combined_score),
+                    "details": {
+                        "sources": [item.get("source") for item in findings],
+                        "max_score": max_score,
+                        "avg_score": avg_score,
+                    },
                 }
-            ]
-        avg_score = int(round(sum(item["score"] for item in findings) / max(1, len(findings))))
-        findings.append(
-            {
-                "source": "normalized_combined",
-                "score": max(0, min(100, avg_score)),
-                "verdict": _verdict_from_score(avg_score),
-                "details": {"sources": [item["source"] for item in findings]},
-            }
-        )
+            )
+
+        self._cache[cache_key] = findings
         return findings
 
     def enrich_alert(self, alert_id: str, alert: Any) -> None:
         if not self.enabled:
             return
+
         iocs = self.extract(alert)
         db = connect()
         try:
@@ -203,7 +416,9 @@ class IOCEnricher:
                 for ioc in values:
                     findings = self._enrich_indicator(ioc, ioc_type)
                     for finding in findings:
-                        source = str(finding.get("source") or "")
+                        source = str(finding.get("source") or "").strip()
+                        if not source:
+                            continue
                         exists = db.execute(
                             text(
                                 """

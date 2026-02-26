@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+import json
 from math import sqrt
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text
 
@@ -25,6 +25,32 @@ KILL_CHAIN_MAP = {
     "Command and Control": "Command and Control",
     "Exfiltration": "Actions on Objectives",
     "Impact": "Actions on Objectives",
+}
+
+_HIGH_IMPACT_TACTICS = {
+    "credential access",
+    "lateral movement",
+    "command and control",
+    "impact",
+}
+
+_AUTH_HINTS = {
+    "failed password",
+    "logon failure",
+    "bad password",
+    "authentication failure",
+    "brute force",
+    "password spray",
+    "pass-the-hash",
+}
+
+_EXECUTION_HINTS = {
+    "powershell",
+    "cmd.exe",
+    "rundll32",
+    "regsvr32",
+    "mimikatz",
+    "malware",
 }
 
 
@@ -218,13 +244,74 @@ def kill_chain(case_id: Optional[int] = None) -> Dict:
         db.close()
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _load_raw_json(raw_value: Any) -> Dict[str, Any]:
+    if isinstance(raw_value, dict):
+        return raw_value
+    if not raw_value:
+        return {}
+    try:
+        parsed = json.loads(str(raw_value))
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _to_ioc_objects(ioc_rows: List[List[Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for row in ioc_rows:
+        ioc = row[0] if len(row) > 0 else None
+        ioc_type = row[1] if len(row) > 1 else None
+        source = row[2] if len(row) > 2 else None
+        score = _safe_int(row[3], 0) if len(row) > 3 else 0
+        verdict = str(row[4] or "").lower() if len(row) > 4 else ""
+        out.append(
+            {
+                "ioc": ioc,
+                "ioc_type": str(ioc_type or "").lower(),
+                "source": source,
+                "score": score,
+                "verdict": verdict,
+            }
+        )
+    return out
+
+
+def _derive_impact(
+    rule_level: Optional[int],
+    tactics: List[str],
+    has_high_ioc: bool,
+    has_suspicious_ioc: bool,
+) -> str:
+    tactic_l = {str(t or "").lower() for t in tactics}
+    if has_high_ioc:
+        return "high"
+    if tactic_l & _HIGH_IMPACT_TACTICS:
+        return "high"
+    if rule_level is not None and rule_level >= 12:
+        return "high"
+    if has_suspicious_ioc:
+        return "medium"
+    if tactics:
+        return "medium"
+    if rule_level is not None and rule_level >= 7:
+        return "medium"
+    return "low"
+
+
 def alert_summary(alert_id: str) -> Dict:
     db = connect()
     try:
         alert = db.execute(
             text(
                 """
-                SELECT alert_id, agent_name, agent_id, rule_description, rule_id, rule_level, event_time
+                SELECT alert_id, agent_name, agent_id, rule_description, rule_id, rule_level, event_time, raw_json
                 FROM alerts_store
                 WHERE alert_id=:alert_id
                 """
@@ -235,73 +322,144 @@ def alert_summary(alert_id: str) -> Dict:
         if not alert:
             return {"summary": "Alert not found", "alert_id": alert_id}
 
-        alert_id, agent_name, agent_id, rule_desc, rule_id, rule_level, event_time = alert
+        (
+            alert_id_value,
+            agent_name,
+            agent_id,
+            rule_desc,
+            rule_id,
+            rule_level,
+            event_time,
+            raw_json,
+        ) = alert
+
         ioc_rows = db.execute(
             text(
                 """
                 SELECT ioc, ioc_type, source, score, verdict
                 FROM ioc_enrichments
                 WHERE alert_id=:alert_id
+                ORDER BY score DESC NULLS LAST
                 """
             ),
-            {"alert_id": alert_id},
+            {"alert_id": alert_id_value},
         ).fetchall()
-
         iocs = _rows_to_lists(ioc_rows)
-        suggestions = remediation_suggestions(rule_level)
-        fp_score = false_positive_score(db, rule_id, rule_level)
-        impact = "low"
-        if rule_level is not None:
-            if rule_level >= 12:
-                impact = "high"
-            elif rule_level >= 7:
-                impact = "medium"
+        ioc_objects = _to_ioc_objects(iocs)
 
-        root_cause = "Isolated event. Requires analyst review."
-        try:
-            if iocs:
-                high_ioc = any(
-                    (len(row) > 3 and row[3] is not None and int(row[3]) >= 80)
-                    or (len(row) > 4 and row[4] is not None and str(row[4]).lower() == "malicious")
-                    for row in iocs
-                )
-                if high_ioc:
-                    root_cause = "IOC enrichment indicates known malicious artifacts."
-            if agent_id:
-                agent_24h = db.execute(
-                    text(
-                        """
-                        SELECT COUNT(*) FROM alerts_store
-                        WHERE agent_id=:agent_id AND event_time >= NOW() - interval '24 hours'
-                        """
-                    ),
-                    {"agent_id": agent_id},
-                ).scalar() or 0
-                if agent_24h > 25:
-                    root_cause = f"Recurring alerts on agent {agent_id}. Likely persistent local issue."
-            if rule_id:
-                rule_7d = db.execute(
-                    text(
-                        """
-                        SELECT COUNT(*) FROM alerts_store
-                        WHERE rule_id=:rule_id AND event_time >= NOW() - interval '7 days'
-                        """
-                    ),
-                    {"rule_id": rule_id},
-                ).scalar() or 0
-                if rule_7d > 200:
-                    root_cause = "Rule is firing at high volume. Possible noisy detection or misconfiguration."
-        except Exception:
-            pass
+        mitre_rows = db.execute(
+            text(
+                """
+                SELECT tactic, technique, technique_id
+                FROM mitre_alerts
+                WHERE alert_id=:alert_id
+                """
+            ),
+            {"alert_id": alert_id_value},
+        ).fetchall()
+        mitre_list = _rows_to_lists(mitre_rows)
+        tactics = [str(row[0]) for row in mitre_list if len(row) > 0 and row[0]]
+        techniques = [
+            str(row[2] or row[1])
+            for row in mitre_list
+            if (len(row) > 2 and row[2]) or (len(row) > 1 and row[1])
+        ]
 
-        summary = (
-            f"Alert {alert_id} on agent {agent_name or agent_id} "
-            f"triggered rule {rule_desc or rule_id} (level {rule_level}). "
-            f"IOC count: {len(iocs)}."
+        rule_text = str(rule_desc or rule_id or "").lower()
+        raw_alert = _load_raw_json(raw_json)
+        platform = (
+            str((((raw_alert.get("agent") or {}).get("os") or {}).get("platform") or "")).lower()
+            if isinstance(raw_alert, dict)
+            else ""
+        )
+
+        has_high_ioc = any(
+            ioc.get("score", 0) >= 85 or ioc.get("verdict") == "malicious" for ioc in ioc_objects
+        )
+        has_suspicious_ioc = any(
+            ioc.get("score", 0) >= 55 or ioc.get("verdict") in {"suspicious", "malicious"}
+            for ioc in ioc_objects
+        )
+
+        rule_24h = 0
+        if rule_id:
+            rule_24h = db.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM alerts_store
+                    WHERE rule_id=:rule_id AND event_time >= NOW() - interval '24 hours'
+                    """
+                ),
+                {"rule_id": rule_id},
+            ).scalar() or 0
+
+        agent_24h = 0
+        if agent_id:
+            agent_24h = db.execute(
+                text(
+                    """
+                    SELECT COUNT(*) FROM alerts_store
+                    WHERE agent_id=:agent_id AND event_time >= NOW() - interval '24 hours'
+                    """
+                ),
+                {"agent_id": agent_id},
+            ).scalar() or 0
+
+        impact = _derive_impact(rule_level, tactics, has_high_ioc, has_suspicious_ioc)
+
+        root_cause = "Insufficient corroborating telemetry; analyst review recommended."
+        if has_high_ioc:
+            root_cause = "IOC enrichment indicates high-confidence malicious artifacts associated with this alert."
+        elif any(hint in rule_text for hint in _AUTH_HINTS):
+            if rule_24h >= 15:
+                root_cause = "Repeated authentication failures indicate likely brute-force/password-spray activity."
+            else:
+                root_cause = "Authentication anomaly detected; validate user behavior and credential exposure."
+        elif "vulnerability" in rule_text or "sca" in rule_text or "compliance" in rule_text:
+            root_cause = "Compliance or vulnerability drift detected; remediation or rescanning is required."
+        elif tactics:
+            root_cause = f"Behavior maps to MITRE tactic '{tactics[0]}', indicating likely adversarial tradecraft."
+        elif rule_24h > 200 and (rule_level or 0) <= 5:
+            root_cause = "High-frequency low-severity rule suggests noisy detection logic or local misconfiguration."
+        elif agent_24h > 30:
+            root_cause = f"Recurring detections on agent {agent_id} suggest persistent host-specific issues."
+
+        mitre_text = ", ".join(techniques[:2]) if techniques else "none"
+        summary_parts = [
+            f"Alert {alert_id_value} on agent {agent_name or agent_id}",
+            f"triggered rule '{rule_desc or rule_id}' (level {rule_level}).",
+            f"MITRE mapping: {mitre_text}.",
+            f"IOC indicators: {len(ioc_objects)}.",
+        ]
+        if has_high_ioc:
+            summary_parts.append("Threat intel corroborates malicious activity.")
+        elif has_suspicious_ioc:
+            summary_parts.append("Threat intel shows suspicious indicators requiring containment review.")
+        if rule_24h > 100 and (rule_level or 0) <= 5 and not has_high_ioc:
+            summary_parts.append("Rule volume suggests potential tuning need.")
+        summary = " ".join(summary_parts)
+
+        suggestions = remediation_suggestions(
+            rule_level,
+            rule_text=rule_text,
+            tactics=tactics,
+            iocs=ioc_objects,
+            platform=platform,
+        )
+        fp_score = false_positive_score(
+            db,
+            rule_id,
+            rule_level,
+            has_high_conf_ioc=has_high_ioc,
+            has_suspicious_ioc=has_suspicious_ioc,
+            mitre_count=len(mitre_list),
+            agent_alerts_24h=agent_24h,
+            rule_alerts_24h=rule_24h,
+            rule_text=rule_text,
         )
 
         return {
-            "alert_id": alert_id,
+            "alert_id": alert_id_value,
             "summary": summary,
             "agent": agent_name or agent_id,
             "rule": rule_desc or rule_id,
@@ -317,43 +475,102 @@ def alert_summary(alert_id: str) -> Dict:
         db.close()
 
 
-def remediation_suggestions(rule_level: Optional[int]) -> List[str]:
-    actions = [a["id"] for a in list_actions()]
+def remediation_suggestions(
+    rule_level: Optional[int],
+    *,
+    rule_text: str = "",
+    tactics: Optional[List[str]] = None,
+    iocs: Optional[List[Dict[str, Any]]] = None,
+    platform: str = "",
+) -> List[str]:
+    actions = [a["id"] for a in list_actions() if a.get("id")]
+    available = set(actions)
     suggestions: List[str] = []
+    rule_l = str(rule_text or "").lower()
+    tactic_l = {str(t or "").lower() for t in (tactics or [])}
+    ioc_items = iocs or []
+
+    has_network_ioc = any(ioc.get("ioc_type") in {"ip", "domain", "url"} for ioc in ioc_items)
+    has_high_ioc = any(
+        ioc.get("score", 0) >= 85 or ioc.get("verdict") == "malicious" for ioc in ioc_items
+    )
+
+    def add(candidate: str) -> None:
+        if candidate in available and candidate not in suggestions:
+            suggestions.append(candidate)
+
+    if any(hint in rule_l for hint in _AUTH_HINTS) or "credential access" in tactic_l:
+        for candidate in ("disable-account", "ioc-scan", "threat-hunt-persistence"):
+            add(candidate)
+
+    if has_high_ioc or any(hint in rule_l for hint in _EXECUTION_HINTS):
+        for candidate in ("kill-process", "quarantine-file", "malware-scan"):
+            add(candidate)
+
+    if has_network_ioc or "command and control" in tactic_l:
+        for candidate in ("firewall-drop", "host-deny", "route-null", "win-route-null"):
+            add(candidate)
+
+    if "vulnerability" in rule_l or "cve" in rule_l or "sca" in rule_l or "patch" in rule_l:
+        if platform == "windows":
+            for candidate in ("patch-windows", "sca-rescan"):
+                add(candidate)
+        elif platform == "linux":
+            for candidate in ("patch-linux", "sca-rescan"):
+                add(candidate)
+        else:
+            for candidate in ("patch-windows", "patch-linux", "sca-rescan"):
+                add(candidate)
+
+    if not suggestions:
+        if rule_level is not None and rule_level >= 12:
+            for candidate in ("kill-process", "firewall-drop", "malware-scan"):
+                add(candidate)
+        elif rule_level is not None and rule_level >= 7:
+            for candidate in ("ioc-scan", "endpoint-healthcheck"):
+                add(candidate)
+        else:
+            for candidate in ("endpoint-healthcheck", "sca-rescan"):
+                add(candidate)
+
+    return suggestions[:4] if suggestions else actions[:2]
+
+
+def false_positive_score(
+    conn,
+    rule_id: Optional[str],
+    rule_level: Optional[int],
+    *,
+    has_high_conf_ioc: bool = False,
+    has_suspicious_ioc: bool = False,
+    mitre_count: int = 0,
+    agent_alerts_24h: int = 0,
+    rule_alerts_24h: int = 0,
+    rule_text: str = "",
+) -> int:
+    score = 55
 
     if rule_level is None:
-        return actions[:2]
-
-    if rule_level >= 12:
-        for candidate in ("kill-process", "firewall-drop", "patch-linux"):
-            if candidate in actions:
-                suggestions.append(candidate)
-    elif rule_level >= 7:
-        for candidate in ("firewall-drop", "patch-linux"):
-            if candidate in actions:
-                suggestions.append(candidate)
+        score += 5
+    elif rule_level >= 12:
+        score -= 35
+    elif rule_level >= 8:
+        score -= 20
+    elif rule_level >= 5:
+        score -= 8
     else:
-        for candidate in ("patch-linux",):
-            if candidate in actions:
-                suggestions.append(candidate)
+        score += 20
 
-    return suggestions or actions[:2]
+    if has_high_conf_ioc:
+        score -= 35
+    elif has_suspicious_ioc:
+        score -= 18
 
+    if mitre_count > 0:
+        score -= 10
 
-def false_positive_score(conn, rule_id: Optional[str], rule_level: Optional[int]) -> int:
-    score = 0
-    if rule_level is None:
-        return 50
-
-    if rule_level <= 3:
-        score += 40
-    elif rule_level <= 5:
-        score += 25
-    elif rule_level <= 7:
-        score += 10
-
-    if rule_id:
-        count_24h = conn.execute(
+    if rule_id and rule_alerts_24h <= 0:
+        rule_alerts_24h = conn.execute(
             text(
                 """
                 SELECT COUNT(*) FROM alerts_store
@@ -362,9 +579,16 @@ def false_positive_score(conn, rule_id: Optional[str], rule_level: Optional[int]
             ),
             {"rule_id": rule_id},
         ).scalar() or 0
-        if count_24h > 50:
-            score += 30
-        elif count_24h > 20:
-            score += 15
 
-    return min(score, 100)
+    if rule_alerts_24h > 200 and (rule_level or 0) <= 5 and not has_high_conf_ioc:
+        score += 25
+    elif rule_alerts_24h > 80 and (rule_level or 0) <= 5 and not has_high_conf_ioc:
+        score += 12
+
+    if agent_alerts_24h > 80 and (rule_level or 0) <= 5 and not has_high_conf_ioc:
+        score += 10
+
+    if any(hint in str(rule_text or "").lower() for hint in _AUTH_HINTS) and rule_alerts_24h >= 15:
+        score -= 10
+
+    return max(0, min(100, score))

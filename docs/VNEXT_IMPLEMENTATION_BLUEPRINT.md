@@ -104,6 +104,17 @@ Click2Fix should operate as a production-grade SOAR control plane where:
 - Support dry-run, approval, execute, verify, and score-delta report.
 - Skip domain-managed controls by default unless explicitly overridden.
 
+## Next Update Priorities
+
+Before enabling broader vNext feature expansion, the next release focus is:
+
+1. Tighten IOC enrichment quality and confidence handling.
+2. Add SOC-grade MITRE ATT&CK mapping depth and coverage.
+3. Tighten alert summaries and recommendations to improve accuracy and analyst usefulness.
+
+After these are stabilized, delivery continues with the planned next-version scope in `docs/VNEXT_IMPLEMENTATION_BLUEPRINT.md`.
+
+
 ## Proposed Architecture Changes
 
 ### Backend Modules

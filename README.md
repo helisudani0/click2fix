@@ -95,7 +95,7 @@ Required configuration (environment-driven):
 
 ## Release Status
 
-- Latest release: `v1.0.0`
+- Latest release: `v1.0.1`
 - Published images:
   - `ghcr.io/helisudani0/click2fix-backend:<version>`
   - `ghcr.io/helisudani0/click2fix-frontend:<version>`

@@ -44,36 +44,62 @@ def store_alerts(alerts: Iterable[dict]) -> int:
             except Exception as exc:
                 print(f"Failed to enrich alert {alert_id}: {exc}")
 
-            m = None
+            primary_mitre = None
             try:
-                m = mapper.map_alert(alert)
-                if m:
+                mitre_matches = []
+                if hasattr(mapper, "map_alerts"):
+                    mitre_matches = mapper.map_alerts(alert) or []
+                if not mitre_matches:
+                    fallback = mapper.map_alert(alert)
+                    if fallback:
+                        mitre_matches = [fallback]
+
+                if mitre_matches:
+                    primary_mitre = mitre_matches[0]
+
+                for match in mitre_matches:
+                    tactic = str(match.get("tactic") or "").strip()
+                    technique = str(match.get("technique") or "").strip()
+                    technique_id = str(match.get("technique_id") or "").strip().upper()
+                    if not tactic and not technique and not technique_id:
+                        continue
+
                     exists = db.execute(
                         text(
                             """
                             SELECT 1 FROM mitre_alerts
-                            WHERE alert_id=:alert_id AND technique_id=:technique_id
+                            WHERE alert_id=:alert_id
+                              AND COALESCE(technique_id, '')=:technique_id
+                              AND COALESCE(tactic, '')=:tactic
+                              AND COALESCE(technique, '')=:technique
                             LIMIT 1
                             """
                         ),
-                        {"alert_id": alert_id, "technique_id": m["technique_id"]},
+                        {
+                            "alert_id": alert_id,
+                            "technique_id": technique_id,
+                            "tactic": tactic,
+                            "technique": technique,
+                        },
                     ).fetchone()
-                    if not exists:
-                        db.execute(
-                            text(
-                                """
-                                INSERT INTO mitre_alerts
-                                (alert_id, tactic, technique, technique_id)
-                                VALUES (:alert_id, :tactic, :technique, :technique_id)
-                                """
-                            ),
-                            {
-                                "alert_id": alert_id,
-                                "tactic": m["tactic"],
-                                "technique": m["technique"],
-                                "technique_id": m["technique_id"],
-                            },
-                        )
+                    if exists:
+                        continue
+
+                    db.execute(
+                        text(
+                            """
+                            INSERT INTO mitre_alerts
+                            (alert_id, tactic, technique, technique_id)
+                            VALUES (:alert_id, :tactic, :technique, :technique_id)
+                            """
+                        ),
+                        {
+                            "alert_id": alert_id,
+                            "tactic": tactic,
+                            "technique": technique,
+                            "technique_id": technique_id,
+                        },
+                    )
             except Exception as exc:
                 print(f"Failed to map MITRE for alert {alert_id}: {exc}")
 
@@ -99,8 +125,10 @@ def store_alerts(alerts: Iterable[dict]) -> int:
                         "rule_id": rule.get("id"),
                         "rule_description": rule.get("description"),
                         "rule_level": rule.get("level") if isinstance(rule, dict) else None,
-                        "tactic": (m["tactic"] if m else None),
-                        "technique_id": (m["technique_id"] if m else None),
+                        "tactic": (primary_mitre["tactic"] if primary_mitre else None),
+                        "technique_id": (
+                            primary_mitre["technique_id"] if primary_mitre else None
+                        ),
                         "event_time": event_dt,
                         "raw_json": json.dumps(alert, default=str),
                     },

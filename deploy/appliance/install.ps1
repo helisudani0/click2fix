@@ -107,6 +107,22 @@ function Get-ContainerStatus {
   return ($status | Select-Object -First 1).Trim()
 }
 
+function Show-ComposeDiagnostics {
+  param(
+    [string]$EnvPath,
+    [string]$ComposePath
+  )
+  Write-Host ""
+  Write-Host "---- docker compose ps ----" -ForegroundColor Yellow
+  & docker compose --env-file $EnvPath -f $ComposePath ps
+  Write-Host ""
+  Write-Host "---- backend logs (tail 160) ----" -ForegroundColor Yellow
+  & docker compose --env-file $EnvPath -f $ComposePath logs --tail 160 backend
+  Write-Host ""
+  Write-Host "---- db logs (tail 80) ----" -ForegroundColor Yellow
+  & docker compose --env-file $EnvPath -f $ComposePath logs --tail 80 db
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $envTemplate = Join-Path $scriptDir ".env.appliance.template"
 $envPath = Join-Path $scriptDir $EnvFile
@@ -203,7 +219,13 @@ if (To-Bool $skipPull) {
   }
 }
 
-Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "up", "-d") -FailureMessage "Failed to start services."
+try {
+  # Bring up DB + backend first so backend health is evaluated before frontend dependency kicks in.
+  Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "up", "-d", "db", "backend") -FailureMessage "Failed to start backend stack."
+} catch {
+  Show-ComposeDiagnostics -EnvPath $envPath -ComposePath $composePath
+  throw
+}
 
 for ($i = 0; $i -lt 60; $i++) {
   $status = Get-ContainerStatus -ContainerName "c2f-backend"
@@ -212,7 +234,15 @@ for ($i = 0; $i -lt 60; $i++) {
 }
 $status = Get-ContainerStatus -ContainerName "c2f-backend"
 if ($status -ne "healthy") {
+  Show-ComposeDiagnostics -EnvPath $envPath -ComposePath $composePath
   throw "Backend is not healthy. Check logs: docker compose --env-file $envPath -f $composePath logs backend"
+}
+
+try {
+  Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "up", "-d", "frontend") -FailureMessage "Failed to start frontend."
+} catch {
+  Show-ComposeDiagnostics -EnvPath $envPath -ComposePath $composePath
+  throw
 }
 
 $forceReset = Get-EnvValue $envPath "C2F_BOOTSTRAP_ADMIN_FORCE_RESET"
@@ -225,7 +255,12 @@ $bootstrapArgs = @(
   "--password", $adminPassword,
   "--role", "admin"
 ) + $resetArg
-Invoke-NativeChecked -FilePath "docker" -Arguments $bootstrapArgs -FailureMessage "Failed to bootstrap admin user."
+try {
+  Invoke-NativeChecked -FilePath "docker" -Arguments $bootstrapArgs -FailureMessage "Failed to bootstrap admin user."
+} catch {
+  Show-ComposeDiagnostics -EnvPath $envPath -ComposePath $composePath
+  throw
+}
 
 Write-Host ""
 Write-Host "Appliance is ready." -ForegroundColor Green

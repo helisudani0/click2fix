@@ -43,6 +43,18 @@ set_env() {
   mv "$tmp" "$file"
 }
 
+show_diagnostics() {
+  echo
+  echo "---- docker compose ps ----" >&2
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps >&2 || true
+  echo >&2
+  echo "---- backend logs (tail 160) ----" >&2
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs --tail 160 backend >&2 || true
+  echo >&2
+  echo "---- db logs (tail 80) ----" >&2
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs --tail 80 db >&2 || true
+}
+
 prompt_value() {
   local label="$1"
   local default_value="$2"
@@ -224,7 +236,11 @@ else
     exit 1
   fi
 fi
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d
+if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d db backend; then
+  echo "ERROR: failed to start backend stack." >&2
+  show_diagnostics
+  exit 1
+fi
 
 echo "Waiting for backend health..."
 for _ in $(seq 1 60); do
@@ -239,6 +255,13 @@ status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}
 if [[ "${status}" != "healthy" ]]; then
   echo "ERROR: backend is not healthy. Check logs:" >&2
   echo "  docker compose --env-file ${ENV_FILE} -f ${COMPOSE_FILE} logs backend" >&2
+  show_diagnostics
+  exit 1
+fi
+
+if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d frontend; then
+  echo "ERROR: failed to start frontend." >&2
+  show_diagnostics
   exit 1
 fi
 
@@ -248,12 +271,16 @@ bootstrap_args=()
 if [[ "${bootstrap_force,,}" == "true" || "${bootstrap_force}" == "1" ]]; then
   bootstrap_args+=(--force-reset)
 fi
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T backend \
+if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T backend \
   python tools/bootstrap_admin.py \
   --username "${admin_user}" \
   --password "${admin_password}" \
   --role admin \
-  "${bootstrap_args[@]}"
+  "${bootstrap_args[@]}"; then
+  echo "ERROR: failed to bootstrap admin user." >&2
+  show_diagnostics
+  exit 1
+fi
 
 echo
 echo "Appliance is ready."

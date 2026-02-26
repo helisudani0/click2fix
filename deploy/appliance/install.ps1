@@ -88,6 +88,14 @@ function Invoke-NativeChecked {
   }
 }
 
+function Ensure-DockerEngine {
+  try {
+    Invoke-NativeChecked -FilePath "docker" -Arguments @("info") -FailureMessage "Docker engine check failed."
+  } catch {
+    throw "Docker engine is not running. Start Docker Desktop (Linux containers mode), wait until it shows Running, then rerun setup."
+  }
+}
+
 function Get-ContainerStatus {
   param([string]$ContainerName)
   $exists = & docker ps -a --filter "name=^$ContainerName$" --format "{{.Names}}" 2>$null
@@ -108,6 +116,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   throw "Docker is not installed."
 }
 Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "version") -FailureMessage "Docker Compose plugin is required."
+Ensure-DockerEngine
 
 if (-not (Test-Path $envPath)) {
   Copy-Item -Path $envTemplate -Destination $envPath -Force
@@ -183,7 +192,14 @@ if (To-Bool $skipPull) {
   try {
     Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "pull") -FailureMessage "Image pull failed."
   } catch {
-    throw "Image pull failed. If you use private GHCR images, run 'docker login ghcr.io' first (PAT with read:packages), then rerun setup."
+    $detail = $_.Exception.Message
+    if ($detail -match "unauthorized|denied|authentication") {
+      throw "Image pull failed: registry authentication denied. If using private GHCR images, run 'docker login ghcr.io' (PAT with read:packages), then rerun setup."
+    }
+    if ($detail -match "dockerDesktopLinuxEngine|Cannot connect to the Docker daemon|error during connect|pipe") {
+      throw "Image pull failed because Docker engine is unavailable. Start Docker Desktop and rerun setup."
+    }
+    throw "Image pull failed. Details: $detail"
   }
 }
 

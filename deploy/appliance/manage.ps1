@@ -18,6 +18,14 @@ function Invoke-NativeChecked {
   }
 }
 
+function Ensure-DockerEngine {
+  try {
+    Invoke-NativeChecked -FilePath "docker" -Arguments @("info") -FailureMessage "Docker engine check failed."
+  } catch {
+    throw "Docker engine is not running. Start Docker Desktop (Linux containers mode), wait until it is Running, then retry."
+  }
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $envPath = Join-Path $scriptDir $EnvFile
 $composePath = Join-Path $scriptDir $ComposeFile
@@ -28,6 +36,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   throw "Docker is not installed."
 }
 Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "version") -FailureMessage "Docker Compose plugin is required."
+Ensure-DockerEngine
 
 function Show-Menu {
   Write-Host ""

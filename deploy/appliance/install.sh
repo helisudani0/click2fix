@@ -103,6 +103,11 @@ if ! docker compose version >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! docker info >/dev/null 2>&1; then
+  echo "ERROR: Docker engine is not running. Start Docker Desktop/daemon and retry." >&2
+  exit 1
+fi
+
 if [[ ! -f "${ENV_FILE}" ]]; then
   cp "${ENV_TEMPLATE}" "${ENV_FILE}"
   chmod 600 "${ENV_FILE}"
@@ -213,7 +218,9 @@ if bool_env "${skip_pull}"; then
 else
   if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" pull; then
     echo "ERROR: image pull failed." >&2
-    echo "If using private GHCR images, run: docker login ghcr.io (token with read:packages), then rerun setup." >&2
+    echo "Common causes:" >&2
+    echo "  1) Docker engine unavailable" >&2
+    echo "  2) Private registry auth required (run: docker login ghcr.io with read:packages token)" >&2
     exit 1
   fi
 fi

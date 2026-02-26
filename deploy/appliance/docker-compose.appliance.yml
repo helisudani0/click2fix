@@ -24,6 +24,8 @@ services:
     image: ${C2F_BACKEND_IMAGE:?C2F_BACKEND_IMAGE is required}:${C2F_IMAGE_TAG:-latest}
     container_name: c2f-backend
     restart: unless-stopped
+    env_file:
+      - .env.appliance
     depends_on:
       db:
         condition: service_healthy

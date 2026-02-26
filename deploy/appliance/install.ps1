@@ -75,6 +75,31 @@ function To-Bool {
   return @("1","true","yes","on") -contains $Value.Trim().ToLowerInvariant()
 }
 
+function Get-PreferredIPv4 {
+  try {
+    $route = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue |
+      Where-Object { $_.NextHop -and $_.NextHop -ne "0.0.0.0" } |
+      Sort-Object RouteMetric, ifMetric |
+      Select-Object -First 1
+    if ($route) {
+      $routedIp = Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $route.InterfaceIndex -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -notlike "169.254.*" -and $_.IPAddress -ne "127.0.0.1" } |
+        Select-Object -ExpandProperty IPAddress -First 1
+      if ($routedIp) { return $routedIp }
+    }
+  } catch {}
+
+  $fallback = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.IPAddress -notlike "169.254.*" -and
+      $_.IPAddress -ne "127.0.0.1" -and
+      $_.InterfaceAlias -notmatch "vEthernet|VirtualBox|VMware|Hyper-V|Loopback|Docker|WSL"
+    } |
+    Select-Object -ExpandProperty IPAddress -First 1
+  if ($fallback) { return $fallback }
+  return "localhost"
+}
+
 function New-StrongSecret {
   param([int]$Bytes = 48)
   $buffer = New-Object byte[] $Bytes
@@ -152,10 +177,7 @@ if (-not (Test-Path $envPath)) {
 
 Write-Host "== Click2Fix Appliance First-Boot Setup (Windows) ==" -ForegroundColor Cyan
 
-$defaultHost = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-  Where-Object { $_.IPAddress -notlike "169.254.*" -and $_.IPAddress -ne "127.0.0.1" } |
-  Select-Object -ExpandProperty IPAddress -First 1)
-if (-not $defaultHost) { $defaultHost = "localhost" }
+$defaultHost = Get-PreferredIPv4
 
 $currentPublicHost = Get-EnvValue $envPath "C2F_PUBLIC_HOST"
 if ([string]::IsNullOrWhiteSpace($currentPublicHost)) { $currentPublicHost = $defaultHost }
@@ -196,6 +218,12 @@ if ([string]::IsNullOrWhiteSpace($jwtSecret) -or $jwtSecret -match "^CHANGE_ME" 
 if ([string]::IsNullOrWhiteSpace($publicHost)) { throw "Public host/IP is required." }
 if ([string]::IsNullOrWhiteSpace($wazuhPassword) -or [string]::IsNullOrWhiteSpace($indexerPassword) -or [string]::IsNullOrWhiteSpace($adminPassword)) {
   throw "Passwords cannot be empty."
+}
+if ($adminUser.Trim().Length -lt 3) {
+  throw "Initial admin username must be at least 3 characters."
+}
+if ($adminPassword.Length -lt 8) {
+  throw "Initial admin password must be at least 8 characters."
 }
 
 $trustedHosts = "localhost,127.0.0.1,*.localhost,backend,frontend,c2f-backend,c2f-frontend,$publicHost"
@@ -274,10 +302,15 @@ $bootstrapArgs = @(
   "--role", "admin"
 ) + $resetArg
 try {
-  Invoke-NativeChecked -FilePath "docker" -Arguments $bootstrapArgs -FailureMessage "Failed to bootstrap admin user."
+  $bootstrapOutput = & docker @bootstrapArgs 2>&1
+  $bootstrapExit = $LASTEXITCODE
+  if ($bootstrapOutput) { $bootstrapOutput | ForEach-Object { Write-Host $_ } }
+  if ($bootstrapExit -ne 0) {
+    throw "Bootstrap command failed with exit code $bootstrapExit."
+  }
 } catch {
   Show-ComposeDiagnostics -EnvPath $envPath -ComposePath $composePath
-  throw
+  throw "Failed to bootstrap admin user. $($_.Exception.Message)"
 }
 
 Write-Host ""

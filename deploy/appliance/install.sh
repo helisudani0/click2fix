@@ -55,6 +55,27 @@ show_diagnostics() {
   docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs --tail 80 db >&2 || true
 }
 
+detect_public_host() {
+  local detected=""
+  if command -v ip >/dev/null 2>&1; then
+    detected="$(ip route get 1.1.1.1 2>/dev/null | awk '
+      /src/ {
+        for (i=1; i<=NF; i++) {
+          if ($i == "src") { print $(i+1); exit }
+        }
+      }')"
+  fi
+  if [[ -z "${detected}" ]]; then
+    detected="$(hostname -I 2>/dev/null | awk '
+      {
+        for (i=1; i<=NF; i++) {
+          if ($i !~ /^127\./ && $i !~ /^172\.17\./) { print $i; exit }
+        }
+      }')"
+  fi
+  printf '%s' "${detected}"
+}
+
 generate_secret() {
   head -c 48 /dev/urandom | base64 | tr -d '\n'
 }
@@ -153,7 +174,7 @@ current_image_tag="$(get_env C2F_IMAGE_TAG "${ENV_FILE}")"
 current_skip_pull="$(get_env C2F_SKIP_PULL "${ENV_FILE}")"
 current_jwt_secret="$(get_env JWT_SECRET "${ENV_FILE}")"
 
-prompt_value "Public host or static IP for UI access" "${current_public_host:-$(hostname -I 2>/dev/null | awk '{print $1}')}" public_host
+prompt_value "Public host or static IP for UI access" "${current_public_host:-$(detect_public_host)}" public_host
 prompt_value "Frontend port" "${current_frontend_port:-5173}" frontend_port
 prompt_value "Backend port" "${current_backend_port:-8000}" backend_port
 
@@ -200,6 +221,14 @@ if [[ -z "${public_host}" ]]; then
 fi
 if [[ -z "${wazuh_password}" || -z "${indexer_password}" || -z "${admin_password}" ]]; then
   echo "ERROR: passwords cannot be empty." >&2
+  exit 1
+fi
+if [[ ${#admin_user} -lt 3 ]]; then
+  echo "ERROR: initial admin username must be at least 3 characters." >&2
+  exit 1
+fi
+if [[ ${#admin_password} -lt 8 ]]; then
+  echo "ERROR: initial admin password must be at least 8 characters." >&2
   exit 1
 fi
 

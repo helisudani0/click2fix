@@ -311,8 +311,8 @@ bootstrap_args=()
 if [[ "${bootstrap_force,,}" == "true" || "${bootstrap_force}" == "1" ]]; then
   bootstrap_args+=(--force-reset)
 fi
-if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T backend \
-  python tools/bootstrap_admin.py \
+if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T -w /app backend \
+  python -m tools.bootstrap_admin \
   --username "${admin_user}" \
   --password "${admin_password}" \
   --role admin \

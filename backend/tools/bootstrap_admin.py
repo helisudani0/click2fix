@@ -10,7 +10,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 from typing import Optional
+
+# Ensure imports work both as module (-m tools.bootstrap_admin) and as script path.
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 from passlib.context import CryptContext
 from sqlalchemy import text

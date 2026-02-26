@@ -295,8 +295,8 @@ $forceReset = Get-EnvValue $envPath "C2F_BOOTSTRAP_ADMIN_FORCE_RESET"
 $resetArg = @()
 if (To-Bool $forceReset) { $resetArg += "--force-reset" }
 $bootstrapArgs = @(
-  "compose", "--env-file", $envPath, "-f", $composePath, "exec", "-T", "backend",
-  "python", "tools/bootstrap_admin.py",
+  "compose", "--env-file", $envPath, "-f", $composePath, "exec", "-T", "-w", "/app", "backend",
+  "python", "-m", "tools.bootstrap_admin",
   "--username", $adminUser,
   "--password", $adminPassword,
   "--role", "admin"

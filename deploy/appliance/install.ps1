@@ -78,7 +78,12 @@ function To-Bool {
 function New-StrongSecret {
   param([int]$Bytes = 48)
   $buffer = New-Object byte[] $Bytes
-  [System.Security.Cryptography.RandomNumberGenerator]::Fill($buffer)
+  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  try {
+    $rng.GetBytes($buffer)
+  } finally {
+    if ($null -ne $rng) { $rng.Dispose() }
+  }
   return ([Convert]::ToBase64String($buffer)).TrimEnd("=")
 }
 

@@ -1,4 +1,6 @@
-from fastapi import APIRouter, HTTPException, WebSocket
+import asyncio
+
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from core.ws_bus import subscribe, unsubscribe
 from core.security import COOKIE_NAME, decode_token
 from core.settings import SETTINGS
@@ -62,8 +64,34 @@ async def execution_ws(ws: WebSocket, execution_id: int):
     await ws.accept()
     await subscribe(execution_id, ws)
 
+    heartbeat_seconds = 15
     try:
         while True:
-            await ws.receive_text()
+            try:
+                payload = await asyncio.wait_for(ws.receive_text(), timeout=heartbeat_seconds)
+                if str(payload or "").strip().lower() == "ping":
+                    await ws.send_json(
+                        {
+                            "type": "heartbeat",
+                            "step": "ws",
+                            "status": "RUNNING",
+                            "stdout": "",
+                            "stderr": "",
+                        }
+                    )
+            except asyncio.TimeoutError:
+                await ws.send_json(
+                    {
+                        "type": "heartbeat",
+                        "step": "ws",
+                        "status": "RUNNING",
+                        "stdout": "",
+                        "stderr": "",
+                    }
+                )
+    except WebSocketDisconnect:
+        pass
     except Exception:
+        pass
+    finally:
         await unsubscribe(execution_id, ws)

@@ -325,6 +325,8 @@ fi
 echo
 echo "Appliance is ready."
 echo "UI URL: http://${public_host}:${frontend_port}"
+echo "Backend API/docs: http://${public_host}:${backend_port}/docs"
+echo "Backend Ops: http://${public_host}:${backend_port}/ops"
 echo "Login user: ${admin_user}"
 echo
 echo "Next checks:"

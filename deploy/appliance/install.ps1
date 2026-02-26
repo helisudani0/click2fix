@@ -316,4 +316,6 @@ try {
 Write-Host ""
 Write-Host "Appliance is ready." -ForegroundColor Green
 Write-Host "UI URL: http://$publicHost`:$frontendPort"
+Write-Host "Backend API/docs: http://$publicHost`:$backendPort/docs"
+Write-Host "Backend Ops: http://$publicHost`:$backendPort/ops"
 Write-Host "Login user: $adminUser"

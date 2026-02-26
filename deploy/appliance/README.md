@@ -34,7 +34,7 @@ Download asset:
 - `setup.sh` / `setup.cmd`
   - One-click launcher wrappers for installers.
 - `manage.sh` / `manage.cmd` / `manage.ps1`
-  - Control Center (start/stop/restart/status/logs/upgrade).
+  - Control Center (start/stop/restart/status/logs/upgrade/show access URLs).
 - `upgrade.sh`
   - Pull and apply new image tags.
 - `upgrade.ps1`
@@ -98,6 +98,10 @@ What the script does:
 - updates trusted hosts and CORS for the appliance host/IP
 - pulls release images automatically and starts services
 - bootstraps local admin user in DB
+- prints customer access URLs:
+  - Frontend UI: `http://<host>:<frontend_port>`
+  - Backend API docs: `http://<host>:<backend_port>/docs`
+  - Backend Ops: `http://<host>:<backend_port>/ops`
 
 If images are private in GHCR, run one-time login before setup:
 

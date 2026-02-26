@@ -873,101 +873,136 @@ export default function ExecutionStream({ executionId }) {
   useEffect(() => {
     if (!executionId || !streamEnabled) return;
 
-    const ws = executionSocket(executionId);
+    let activeSocket = null;
+    let closedByClient = false;
+    let reconnectTimer = null;
+    let reconnectAttempts = 0;
 
-    ws.onopen = () => {
-      setEvents((prev) => [
-        ...prev,
-        normalizeStep({
-          step: "ws",
-          status: "SUCCESS",
-          stdout: "connected",
-          stderr: "",
-        }),
-      ]);
-    };
-
-    ws.onmessage = e => {
-      try {
-        const msg = JSON.parse(e.data);
-        setEvents((prev) => [...prev, normalizeStep(msg)]);
-        if (
-          msg
-          && typeof msg === "object"
-          && msg.type === "target_done"
-          && typeof msg.step === "string"
-          && msg.step.startsWith("endpoint:")
-        ) {
-          const agentId = msg.step.split(":", 2)[1] || "";
-          if (!agentId) return;
-          const ok = String(msg.status || "").toUpperCase() === "SUCCESS";
-          setTargets((prev) => {
-            const existing = prev.find((t) => t.agent_id === agentId);
-            const updated = {
-              ...(existing || {}),
-              agent_id: agentId,
-              ok,
-              stdout: String(msg.stdout || ""),
-              stderr: String(msg.stderr || ""),
-            };
-            if (!existing) return [updated, ...prev];
-            return prev.map((t) => (t.agent_id === agentId ? updated : t));
-          });
-        }
-        if (
-          msg
-          && typeof msg === "object"
-          && msg.type === "target_log"
-          && typeof msg.step === "string"
-          && msg.step.startsWith("endpoint:")
-        ) {
-          const agentId = msg.step.split(":", 2)[1] || "";
-          const chunk = String(msg.stdout || "");
-          if (!agentId || !chunk) return;
-          setTargets((prev) => {
-            const existing = prev.find((t) => t.agent_id === agentId);
-            const base = existing?.stdout ? `${existing.stdout}\n${chunk}` : chunk;
-            const lines = base.split(/\r?\n/);
-            const trimmed = lines.length > 800 ? lines.slice(-800).join("\n") : base;
-            const updated = {
-              ...(existing || {}),
-              agent_id: agentId,
-              stdout: trimmed,
-            };
-            if (!existing) return [updated, ...prev];
-            return prev.map((t) => (t.agent_id === agentId ? updated : t));
-          });
-        }
-      } catch {
-        // Ignore malformed stream messages.
+    const clearReconnectTimer = () => {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
       }
     };
 
-    ws.onerror = () => {
-      setEvents((prev) => [
-        ...prev,
-        normalizeStep({
-          step: "ws",
-          status: "FAILED",
-          stdout: "",
-          stderr: "websocket error",
-        }),
-      ]);
+    const connect = () => {
+      clearReconnectTimer();
+      activeSocket = executionSocket(executionId);
+
+      activeSocket.onopen = () => {
+        const wasReconnect = reconnectAttempts > 0;
+        reconnectAttempts = 0;
+        setEvents((prev) => [
+          ...prev,
+          normalizeStep({
+            step: "ws",
+            status: "SUCCESS",
+            stdout: wasReconnect ? "reconnected" : "connected",
+            stderr: "",
+          }),
+        ]);
+      };
+
+      activeSocket.onmessage = e => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg && typeof msg === "object" && msg.type === "heartbeat") return;
+          setEvents((prev) => [...prev, normalizeStep(msg)]);
+          if (
+            msg
+            && typeof msg === "object"
+            && msg.type === "target_done"
+            && typeof msg.step === "string"
+            && msg.step.startsWith("endpoint:")
+          ) {
+            const agentId = msg.step.split(":", 2)[1] || "";
+            if (!agentId) return;
+            const ok = String(msg.status || "").toUpperCase() === "SUCCESS";
+            setTargets((prev) => {
+              const existing = prev.find((t) => t.agent_id === agentId);
+              const updated = {
+                ...(existing || {}),
+                agent_id: agentId,
+                ok,
+                stdout: String(msg.stdout || ""),
+                stderr: String(msg.stderr || ""),
+              };
+              if (!existing) return [updated, ...prev];
+              return prev.map((t) => (t.agent_id === agentId ? updated : t));
+            });
+          }
+          if (
+            msg
+            && typeof msg === "object"
+            && msg.type === "target_log"
+            && typeof msg.step === "string"
+            && msg.step.startsWith("endpoint:")
+          ) {
+            const agentId = msg.step.split(":", 2)[1] || "";
+            const chunk = String(msg.stdout || "");
+            if (!agentId || !chunk) return;
+            setTargets((prev) => {
+              const existing = prev.find((t) => t.agent_id === agentId);
+              const base = existing?.stdout ? `${existing.stdout}\n${chunk}` : chunk;
+              const lines = base.split(/\r?\n/);
+              const trimmed = lines.length > 800 ? lines.slice(-800).join("\n") : base;
+              const updated = {
+                ...(existing || {}),
+                agent_id: agentId,
+                stdout: trimmed,
+              };
+              if (!existing) return [updated, ...prev];
+              return prev.map((t) => (t.agent_id === agentId ? updated : t));
+            });
+          }
+        } catch {
+          // Ignore malformed stream messages.
+        }
+      };
+
+      activeSocket.onerror = () => {
+        // Let onclose drive reconnect decisions.
+      };
+
+      activeSocket.onclose = (e) => {
+        if (closedByClient) return;
+
+        if (e.code === 1000 || e.code === 1001) {
+          return;
+        }
+
+        const closeDetail = `websocket closed (code=${e.code}${e.reason ? `, reason=${e.reason}` : ""})`;
+        setEvents((prev) => [
+          ...prev,
+          normalizeStep({
+            step: "ws",
+            status: "FAILED",
+            stdout: "",
+            stderr: closeDetail,
+          }),
+        ]);
+
+        if (e.code === 4401 || e.code === 4403) {
+          return;
+        }
+
+        reconnectAttempts += 1;
+        const delayMs = Math.min(15000, 1000 * (2 ** Math.min(reconnectAttempts, 4)));
+        reconnectTimer = setTimeout(() => {
+          if (!closedByClient) connect();
+        }, delayMs);
+      };
     };
 
-    ws.onclose = (e) => {
-      setEvents((prev) => [
-        ...prev,
-        normalizeStep({
-          step: "ws",
-          status: "FAILED",
-          stdout: "",
-          stderr: `websocket closed (code=${e.code}${e.reason ? `, reason=${e.reason}` : ""})`,
-        }),
-      ]);
-    };
+    connect();
 
-    return () => ws.close();
+    return () => {
+      closedByClient = true;
+      clearReconnectTimer();
+      if (activeSocket && activeSocket.readyState <= WebSocket.OPEN) {
+        activeSocket.close(1000, "stream disabled");
+      }
+    };
 
   }, [executionId, streamEnabled]);
 

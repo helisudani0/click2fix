@@ -6375,11 +6375,17 @@ catch {
                         or f"{action_id} completed (task result=0 without explicit terminal status log)",
                     }
 
-                # Task Scheduler transient statuses can appear briefly while the task is still
+                # Task Scheduler can report TASK_RUNNING while the task is legitimately
+                # still in progress. Keep polling until overall timeout.
+                if last_task_result_code == 267009:  # 0x00041301 TASK_RUNNING
+                    inconclusive_result_since = None
+                    terminal_flush_since = None
+                    return None
+
+                # Other transient statuses can appear briefly while the task is still
                 # being dispatched. Treat these as inconclusive for a bounded grace period.
                 transient_scheduler_codes = {
                     267008,  # 0x00041300 TASK_READY
-                    267009,  # 0x00041301 TASK_RUNNING
                     267011,  # 0x00041303 TASK_HAS_NOT_RUN
                 }
                 if last_task_result_code in transient_scheduler_codes:
@@ -6466,6 +6472,10 @@ catch {
 
         if result_obj is None:
             timeout_msg = f"Timed out waiting for {action_id} result after {int(timeout_seconds or 0)}s"
+            if last_task_result_code == 267009:
+                timeout_msg += " (Task Scheduler still reports RUNNING: 0x00041301)"
+                if last_task_run_time:
+                    timeout_msg += f"; last_run={last_task_run_time}"
             if action_id == "package-update":
                 stop_script = (
                     "$ErrorActionPreference='SilentlyContinue';"

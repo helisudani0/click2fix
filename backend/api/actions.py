@@ -607,51 +607,6 @@ def _store_execution_targets(conn, execution_id: int, rows) -> None:
         )
 
 
-def _trigger_sca_rescan_best_effort(agent_ids: list[str]) -> dict:
-    ordered: list[str] = []
-    seen: set[str] = set()
-    for aid in agent_ids or []:
-        raw = _normalize_agent_identifier(aid)
-        if not raw or raw in seen:
-            continue
-        seen.add(raw)
-        ordered.append(raw)
-    if not ordered:
-        return {
-            "ok": False,
-            "triggered": [],
-            "failed": [],
-            "error": "no_agents",
-            "attempted": 0,
-        }
-
-    try:
-        client.restart_agents(ordered)
-        return {
-            "ok": True,
-            "triggered": ordered,
-            "failed": [],
-            "error": "",
-            "attempted": len(ordered),
-        }
-    except Exception as batch_exc:
-        triggered: list[str] = []
-        failed: list[dict] = []
-        for aid in ordered:
-            try:
-                client.restart_agents([aid])
-                triggered.append(aid)
-            except Exception as single_exc:
-                failed.append({"agent_id": aid, "error": str(single_exc)})
-        return {
-            "ok": len(failed) == 0,
-            "triggered": triggered,
-            "failed": failed,
-            "error": str(batch_exc),
-            "attempted": len(ordered),
-        }
-
-
 def _run_global_shell_async_job(
     execution_id: int,
     action_id: str,
@@ -751,35 +706,6 @@ def _run_global_shell_async_job(
         )
         if target_rows:
             _store_execution_targets(db, int(execution_id), target_rows)
-            successful_agent_ids = [
-                str(row.get("agent_id") or "").strip()
-                for row in target_rows
-                if isinstance(row, dict) and row.get("ok")
-            ]
-            if successful_agent_ids:
-                rescan = _trigger_sca_rescan_best_effort(successful_agent_ids)
-                db.execute(
-                    text(
-                        """
-                        INSERT INTO execution_steps
-                        (execution_id, step, stdout, stderr, status)
-                        VALUES (:execution_id, :step, :stdout, :stderr, :status)
-                        """
-                    ),
-                    {
-                        "execution_id": execution_id,
-                        "step": "sca-rescan",
-                        "stdout": (
-                            f"triggered={len(rescan.get('triggered') or [])}; "
-                            f"failed={len(rescan.get('failed') or [])}; "
-                            f"attempted={int(rescan.get('attempted') or 0)}"
-                        ),
-                        "stderr": _to_text(rescan.get("error"))
-                        if not rescan.get("ok")
-                        else "",
-                        "status": "SUCCESS" if rescan.get("ok") else "FAILED",
-                    },
-                )
         db.commit()
 
         publish_event(

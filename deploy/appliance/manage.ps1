@@ -26,6 +26,17 @@ function Ensure-DockerEngine {
   }
 }
 
+function Get-EnvValue {
+  param(
+    [string]$Path,
+    [string]$Key
+  )
+  if (-not (Test-Path $Path)) { return "" }
+  $line = (Get-Content -Path $Path | Where-Object { $_ -match "^\s*$Key=" } | Select-Object -First 1)
+  if (-not $line) { return "" }
+  return ($line -replace "^\s*$Key=", "")
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $envPath = Join-Path $scriptDir $EnvFile
 $composePath = Join-Path $scriptDir $ComposeFile
@@ -48,7 +59,8 @@ function Show-Menu {
   Write-Host "5) Show status"
   Write-Host "6) Tail backend logs"
   Write-Host "7) Upgrade images and restart"
-  Write-Host "8) Exit"
+  Write-Host "8) Show access URLs"
+  Write-Host "9) Exit"
 }
 
 while ($true) {
@@ -77,7 +89,18 @@ while ($true) {
       "7" {
         & powershell -NoProfile -ExecutionPolicy Bypass -File $upgradeScript -EnvFile $EnvFile -ComposeFile $ComposeFile
       }
-      "8" { break }
+      "8" {
+        $publicHost = Get-EnvValue -Path $envPath -Key "C2F_PUBLIC_HOST"
+        if ([string]::IsNullOrWhiteSpace($publicHost)) { $publicHost = "localhost" }
+        $frontendPort = Get-EnvValue -Path $envPath -Key "C2F_FRONTEND_PORT"
+        if ([string]::IsNullOrWhiteSpace($frontendPort)) { $frontendPort = "5173" }
+        $backendPort = Get-EnvValue -Path $envPath -Key "C2F_BACKEND_PORT"
+        if ([string]::IsNullOrWhiteSpace($backendPort)) { $backendPort = "8000" }
+        Write-Host "UI URL: http://$publicHost`:$frontendPort"
+        Write-Host "Backend API/docs: http://$publicHost`:$backendPort/docs"
+        Write-Host "Backend Ops: http://$publicHost`:$backendPort/ops"
+      }
+      "9" { break }
       default { Write-Host "Invalid choice." -ForegroundColor Yellow }
     }
   } catch {

@@ -6,11 +6,7 @@ import api, {
   getLegacyToken
 } from "../api/client";
 import { APP_TIMEZONE_LABEL } from "../utils/time";
-
-const RAW_APP_VERSION = String(import.meta.env.VITE_APP_VERSION || "").trim();
-const UI_APP_VERSION = RAW_APP_VERSION
-  ? (RAW_APP_VERSION.toLowerCase().startsWith("v") ? RAW_APP_VERSION : `v${RAW_APP_VERSION}`)
-  : "dev";
+import { UI_APP_VERSION } from "../utils/appVersion";
 
 const ROUTE_LABELS = {
   "/": "Dashboard",
@@ -152,6 +148,7 @@ export default function AppLayout() {
           <div>
             <div className="brand-title">Click2Fix</div>
             <div className="brand-subtitle">SOC Operations Platform</div>
+            <div className="brand-version">Version {UI_APP_VERSION}</div>
           </div>
         </div>
 
@@ -213,6 +210,9 @@ export default function AppLayout() {
             </div>
           </div>
           <div className="topbar-right">
+            <div className="topbar-version" title="Current frontend version">
+              {UI_APP_VERSION}
+            </div>
             <div className="topbar-shortcuts" aria-label="Quick navigation">
               <NavLink to="/alerts" className={({ isActive }) => `topbar-shortcut${isActive ? " active" : ""}`}>
                 Alerts

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api, { decodeLegacyTokenPayload, getLegacyToken, setLegacyToken } from "../api/client";
+import { UI_APP_VERSION } from "../utils/appVersion";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -68,6 +69,7 @@ export default function Login() {
           <div>
             <div className="brand-title">Click2Fix</div>
             <div className="brand-subtitle">SOAR Console</div>
+            <div className="brand-version">Version {UI_APP_VERSION}</div>
           </div>
         </div>
 

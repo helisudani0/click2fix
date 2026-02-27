@@ -1,186 +1,148 @@
-# Click2Fix vNext Blueprint (Implementation Plan)
+# Click2Fix v1.1 Final Upgrade Plan
 
-This document captures the next-version blueprint and planning scope.  
-It is preserved for future guidance and does not represent the exact current shipped state.
+This document is the final scope and execution plan for the next upgrade.
+It supersedes earlier draft notes for v1.1 planning and focuses on shipping a SOC-grade release.
 
-## Product Intent
+## Product Definition for v1.1
 
-Click2Fix should operate as a production-grade SOAR control plane where:
+Click2Fix v1.1 is a Wazuh-centered SOC decision and response platform, not only a remediation runner.
 
-- Analysts can execute `PowerShell` and `CMD` remotely as-is across selected agents.
-- Automated remediations are verifiable, auditable, and resilient at 50+ agent scale.
-- Security telemetry remains visible, but trusted automation noise is classified correctly.
-- SCA/CIS findings move from passive visibility to policy-driven correction workflows.
+Core product promise:
 
-## Scope for Next Version
+- Raise analyst decision quality with better context, confidence, and mapping.
+- Execute actions safely with approval, verification, and evidence.
+- Operate reliably at enterprise scale (50+ agents baseline, expandable).
 
-### 1. Platform Stability and Resource Governance
+## Upgrade Objectives
 
-- Add Docker resource `reservations` and `limits` for `db`, `backend`, `frontend`.
-- Make limits environment-driven through `.env` for small and large fleets.
-- Enforce backend circuit breaker in executor ingestion:
-  - if memory usage exceeds threshold (default 90% of configured limit), pause new ingestion.
-  - resume automatically when usage drops below threshold.
-  - always emit audit/evidence events during pause/resume.
+1. Improve SOC triage quality (IOC enrichment, MITRE depth, alert narrative quality).
+2. Improve incident-level operations (correlation, prioritization, assignment, SLA visibility).
+3. Improve response correctness (dry-run, verification, idempotent outcomes, long-running task clarity).
+4. Improve governance and trust (audit, automation context, chain-of-custody integrity).
+5. Improve performance and operational resilience (resource governance, connection pooling, scheduler).
 
-### 2. Session Pooling and Performance
+## In Scope
 
-- Refactor `WazuhClient` and `IndexerClient` to use persistent `requests.Session`.
-- Configure keep-alive and retry/backoff policy for transient API failures.
-- Measure and expose per-execution API latency statistics in execution metadata.
+### 1) SOC Signal Quality Hardening
 
-### 3. Playbook and Action Dry-Run
+- IOC enrichment v2:
+  - direct connectors for AlienVault OTX and Abuse.ch
+  - normalized scoring with confidence and source weighting
+  - support for IP, hash, domain, and URL IOCs
+  - persisted enrichment evidence with timestamps
+- MITRE ATT&CK mapping v2:
+  - use native Wazuh ATT&CK fields first
+  - add deterministic fallback mapping and keyword heuristics
+  - allow multiple tactic/technique mappings per alert
+  - confidence-scored primary mapping for triage screens
+- Alert summary and recommendations v2:
+  - context-aware summaries using rule, IOC, MITRE, recurrence, and host context
+  - recommendation logic tied to tactic/risk and available action capabilities
+  - false-positive estimation based on multi-signal evidence, not severity only
 
-- Use JSON request field only: `dry_run: true|false`.
-- Do not use `X-Dry-Run` header in v1 path.
-- Persist dry-run events as `playbook_simulated` with actor, target set, and resolved plan.
-- Dry-run must never perform endpoint-side changes.
+### 2) Incident and Analyst Operations
 
-### 4. Closed-Loop Remediation Verification
+- Incident correlation model:
+  - correlate alerts by time window, agent, identity, tactic, and IOC overlap
+  - produce correlated incident groups from related alerts
+- Incident queue operations:
+  - status, owner, priority, due time, and escalation state
+  - explicit analyst workflow: open -> investigate -> contain -> verified -> closed
+- SLA and workload visibility:
+  - aging and due-state indicators
+  - assignment and handoff audit history
 
-- After successful remediation actions (`patch-windows`, `package-update`, related), trigger SCA rescan.
-- Restart/rescan targets in bulk when API supports multi-agent payloads.
-- Poll verification state with exponential backoff to reduce manager pressure.
-- Validate scan freshness:
-  - capture pre-remediation scan timestamp.
-  - accept verification only if post-rescan timestamp is newer.
-- Persist outcome as `verified`, `not_verified`, or `stale_scan`.
+### 3) Response Safety and Verification
 
-### 5. Scheduler and Policy Jobs
+- Dry-run standardization:
+  - `dry_run: true|false` in request JSON only
+  - persist `playbook_simulated` events with actor, targets, and resolved plan
+- Closed-loop remediation verification:
+  - trigger `sca-rescan` after relevant remediation actions
+  - use exponential backoff and scan freshness checks
+  - record verified/not_verified/stale_scan outcomes
+- Execution state reliability:
+  - preserve strict success/failed/partial semantics
+  - improve handling for long-running update operations and asynchronous completion
+- Global Shell guardrail:
+  - command transport only; no hidden command rewrite behavior
 
-- Complete scheduler APIs and persistence semantics.
-- Add default recurring fleet health-check policy (every 6-12 hours configurable).
-- Add periodic forensic integrity sweep job:
-  - recompute hash for stored artifacts.
-  - compare with baseline hash.
-  - log drift as high-priority audit events.
+### 4) Governance, Audit, and Detection Context
 
-### 6. Forensic Integrity / Chain of Custody
+- Trusted automation context:
+  - correlate alerts with approved execution context
+  - classify events as `expected_admin_activity`, `review_required`, or `suspicious`
+- Evidence integrity:
+  - SHA-256 at ingest, re-verify on lock/download/export
+  - periodic integrity sweep and drift events
+- Change governance:
+  - policy-driven approvals for high-risk actions
+  - immutable audit log for request/approval/execution/verification chain
 
-- Compute SHA-256 at artifact ingest.
-- Re-verify hash on lock/download/export.
-- Record immutable integrity verification timeline per artifact.
+### 5) Platform Resilience and Scale
 
-### 7. Threat Intel Enrichment (Custom Connectors)
+- Resource governance:
+  - Docker reservations and limits for db/backend/frontend
+  - environment-driven profiles via `.env`
+  - backend circuit breaker under memory pressure
+- Performance tuning:
+  - persistent `requests.Session` for Wazuh and Indexer clients
+  - retry/backoff and keep-alive tuning
+  - latency stats in execution metadata
+- Scheduler completion:
+  - recurring health-check and forensic integrity sweep jobs
+- Connector parity:
+  - maintain Windows first-class path
+  - strengthen Linux execution parity where capabilities exist
 
-- Replace placeholder enrichment with direct feed connectors (AlienVault OTX, Abuse.ch).
-- Extract IOC keys during ingestion (IP, hash, domain where available).
-- Normalize feed responses into unified confidence/risk scoring model.
-- Store enrichment evidence and timestamp for analyst review.
+## Explicit Gaps Closed in v1.1 Plan
 
-### 8. Cross-Platform Connector Parity
+This final plan explicitly closes gaps that were previously under-defined:
 
-- Keep Windows connector as first-class path.
-- Enable Linux execution paths (for example `patch-linux`, `firewall-drop`) with shared execution contract.
-- Ensure action definitions remain agent-agnostic and target by platform capability.
+1. Incident model and analyst queue are now first-class scope.
+2. Correlation rules are defined around entity/time/tactic/IOC overlap.
+3. Risk scoring includes context beyond severity.
+4. Detection tuning loop is included in governance workflow.
+5. KPI-driven release acceptance is now required.
 
-### 9. Global Shell Principle (Critical)
-
-- Global Shell is a command transport, not a command rewrite engine.
-- User-provided command must execute exactly as entered for selected shell type.
-- Backend may wrap only for transport, timeout, output capture, and evidence markers.
-- No hidden hardcoded replacement logic for specific package/vendor commands.
-
-### 10. Trusted Automation Context for Detection Tuning
-
-- Maintain ATT&CK detections; do not suppress by default.
-- Correlate detections with approved execution context:
-  - actor
-  - service account
-  - source host
-  - target
-  - execution window
-  - action family
-- Classify into:
-  - `expected_admin_activity`
-  - `review_required`
-  - `suspicious`
-- Keep full original alert payload and ATT&CK mapping.
-
-### 11. SCA/CIS Policy Remediation Layer
-
-- Build control-to-remediation mapping catalog.
-- Generate plan from failed controls with risk labels and reboot requirements.
-- Support dry-run, approval, execute, verify, and score-delta report.
-- Skip domain-managed controls by default unless explicitly overridden.
-
-## Next Update Priorities
-
-Before enabling broader vNext feature expansion, the next release focus is:
-
-1. Tighten IOC enrichment quality and confidence handling.
-2. Add SOC-grade MITRE ATT&CK mapping depth and coverage.
-3. Tighten alert summaries and recommendations to improve accuracy and analyst usefulness.
-
-After these are stabilized, delivery continues with the planned next-version scope in `docs/VNEXT_IMPLEMENTATION_BLUEPRINT.md`.
-
-
-## Proposed Architecture Changes
-
-### Backend Modules
-
-- `backend/core/endpoint_executor.py`
-  - circuit breaker ingestion pause/resume
-  - command transport normalization only
-  - strict success/failure semantics from endpoint results
-- `backend/core/wazuh_verification.py`
-  - bulk rescan trigger
-  - timestamp freshness validation
-  - backoff policy
-- `backend/core/scheduler.py`
-  - recurring policy jobs for health-check and integrity sweep
-- `backend/core/forensic_integrity.py`
-  - baseline hash record + periodic sweep comparison
-- `backend/core/enrichment.py`
-  - custom IOC feed clients and score normalization
-- `backend/api/actions.py`
-  - dry-run behavior and simulation audit semantics
-- `backend/api/scheduler.py`
-  - policy job CRUD and execution telemetry
-- `backend/api/vulnerabilities.py`
-  - "open in manual shell" payload with exact target scoping
-
-### Frontend Modules
-
-- `frontend/src/pages/GlobalShell.jsx`
-  - multi-agent selector parity with Actions/Vulnerabilities
-  - clear command history: shell type, exact command, output preview
-  - readable clean output section without dropping raw output
-- `frontend/src/pages/Scheduler.jsx`
-  - policy job management and run history
-- vulnerabilities page
-  - manual-shell handoff for selected vulnerability and affected targets only
-- execution details views
-  - timezone rendering (IST option/default if org configured)
-  - stronger running/stuck indicators and stale-state reconciliation
-
-## Data Model Additions (Proposed)
+## Data Model Additions (Finalized for v1.1)
 
 - `execution_context`
 - `automation_context_profiles`
 - `alert_execution_correlation`
-- `sca_policy_profiles`
-- `sca_control_mappings`
-- `sca_policy_runs`
-- `sca_control_run_results`
-- `forensic_integrity_sweeps`
 - `ioc_enrichment_records`
+- `forensic_integrity_sweeps`
+- `incidents`
+- `incident_alerts`
+- `incident_assignments`
+- `incident_sla_events`
+- `detection_tuning_suggestions`
 
 Required common fields: `org_id`, `created_at`, `updated_at`, `created_by`.
 
-## API Blueprint (Proposed)
+## API Blueprint (v1.1)
 
-### Governance / Correlation
+### Correlation and Governance
 
 - `POST /governance/automation-context/profiles`
 - `GET /governance/automation-context/profiles`
 - `POST /governance/automation-context/validate`
 - `GET /governance/alerts/correlated?execution_id={id}`
+- `POST /incidents/correlate`
+- `GET /incidents`
+- `PATCH /incidents/{incident_id}`
+- `POST /incidents/{incident_id}/assign`
 
-### SCA Policy Engine
+### SOC Summaries and Intelligence
+
+- `GET /analytics/alert/{alert_id}`
+- `GET /ioc/{alert_id}`
+- `GET /mitre/alert/{alert_id}`
+- `GET /mitre/heatmap`
+
+### SCA Policy and Verification
 
 - `GET /sca/policies`
-- `GET /sca/agent/{agent_id}/results`
 - `POST /sca/policies/{policy_id}/plan`
 - `POST /sca/policies/{policy_id}/dry-run`
 - `POST /sca/policies/{policy_id}/execute`
@@ -193,192 +155,79 @@ Required common fields: `org_id`, `created_at`, `updated_at`, `created_by`.
 - `PATCH /scheduler/jobs/{job_id}`
 - `POST /scheduler/jobs/{job_id}/run-now`
 
-## Delivery Plan
+## Delivery Phases
 
-1. Stability first: resource limits + circuit breaker.
-2. Performance: API session pooling.
-3. Safety: dry-run + simulation audit.
-4. Correctness: closed-loop verification with freshness checks.
-5. Proactive ops: scheduler completion + default health-check and integrity sweep.
-6. Analyst value: IOC enrichment and SCA policy remediation.
-7. Platform breadth: Linux connector parity.
-8. Detection clarity: trusted automation context classification.
+### Phase 1: SOC Signal Quality (Priority 0)
 
-## Acceptance Criteria
+- IOC enrichment v2
+- MITRE mapping v2
+- alert summary and recommendation v2
 
-- Global Shell executes entered command unchanged for both `PowerShell` and `CMD`.
-- Executor does not OOM under configured 60-worker stress window.
-- Rescan verification does not mark stale pre-remediation SCA data as success.
-- Partial package upgrades report partial success, not blanket failure.
-- Every dry-run emits `playbook_simulated` audit event.
-- Integrity sweep detects modified evidence and creates alertable audit records.
-- Vulnerability-to-manual-shell flow scopes execution only to impacted agents.
+Exit criteria:
 
-## Risks and Controls
+- summary/recommendation quality is analyst-usable across top recurring alert families
+- MITRE coverage and confidence are visibly improved
 
-- Over-tuning ATT&CK alerts:
-  - enforce multi-signal matching and keep review tier.
-- Endpoint variance (different package managers, policies, permissions):
-  - provide explicit per-endpoint output and reason codes.
-- Long-running OS update workflows:
-  - report asynchronous progress and avoid false "still running" status.
+### Phase 2: Incident Operations (Priority 1)
 
-## Notes
+- incident correlation
+- incident queue fields and assignment workflow
+- SLA/aging indicators
 
-- This is the implementation blueprint for the next version and should be treated as the source-of-truth planning document.
-- Current production behavior may differ until each phase is completed.
+Exit criteria:
 
-## Deployment Model (50+ Agents)
+- related alerts are grouped with measurable triage reduction
+- analysts can assign and track incident ownership/SLA state
 
-Use a single-tenant deployment inside the company's internal network (or over site-to-site VPN), not on the public internet.
+### Phase 3: Response Trust Layer (Priority 1)
 
-Recommended placement:
+- dry-run semantics and simulation audit
+- closed-loop remediation verification
+- trusted automation context classification
 
-- Click2Fix host (Docker) on an internal management subnet.
-- Network path from Click2Fix backend to:
-  - Wazuh Manager API
-  - Wazuh Indexer API
-  - Endpoint management ports (WinRM/SSH)
-- Access to Click2Fix UI restricted to IT/SOC admins via VPN, bastion, or corporate reverse proxy.
+Exit criteria:
 
-## Prerequisites Checklist
+- remediation outcomes are verifiable and auditable end-to-end
+- trusted automation context suppresses noise without hiding raw evidence
 
-### 1. Core Infrastructure
+### Phase 4: Scale and Resilience (Priority 2)
 
-- Linux or Windows host with Docker + Docker Compose.
-- Minimum baseline for ~50 active agents:
-  - 4 vCPU
-  - 8 GB RAM
-  - SSD-backed storage for DB volume/logs
-- Stable DNS or fixed IPs for Wazuh manager/indexer and endpoints.
+- resource governance and circuit breaker hardening
+- session pooling performance improvements
+- scheduler completion and integrity sweep automation
 
-### 2. Wazuh Integration Prerequisites
+Exit criteria:
 
-- Wazuh Manager API URL/port reachable from Click2Fix backend.
-- Wazuh Indexer URL/port reachable from Click2Fix backend.
-- Dedicated Wazuh API user for Click2Fix with required permissions (recommended: scoped role; temporary bootstrap can be admin-equivalent during setup).
-- TLS strategy decided:
-  - preferred: trusted certificates + SSL verification enabled
-  - lab fallback: verification disabled (not recommended for production)
+- stable operation under target concurrency
+- no recurring OOM or queue starvation under planned load profile
 
-### 3. Click2Fix Configuration Prerequisites
+## Acceptance Criteria (Release Gate)
 
-- Set and validate backend environment values:
-  - `WAZUH_URL`
-  - `WAZUH_USER`
-  - `WAZUH_PASSWORD`
-  - `INDEXER_URL`
-  - `INDEXER_USER`
-  - `INDEXER_PASSWORD`
-- Set secure auth/session values:
-  - `JWT_SECRET` (long random secret)
-  - trusted hosts and allowed CORS origins in `backend/config/settings.yaml`
-- Configure Docker resource limits in `docker/.env`:
-  - DB/Backend/Frontend CPU + memory reservations and limits
-  - circuit breaker thresholds
+- Global Shell executes entered command unchanged for PowerShell and CMD transport paths.
+- Executor remains stable under configured stress profile without OOM.
+- Verification loop never marks stale SCA data as successful remediation.
+- Dry-run emits auditable `playbook_simulated` events with actor and target set.
+- MITRE mapping supports multi-technique persistence per alert.
+- IOC enrichment stores normalized confidence and source evidence.
+- Incident queue supports owner, priority, status, and SLA visibility.
+- Alert summaries and recommendations are context-aware and not severity-only.
 
-### 4. Endpoint Connectivity Prerequisites (Windows)
+## KPI Targets (Go-Live Tracking)
 
-- Endpoints must be online and connected in Wazuh.
-- WinRM enabled and listening on each managed endpoint (`5985` HTTP or `5986` HTTPS).
-- Remote PowerShell execution enabled (`Enable-PSRemoting` and policy as required).
-- Firewall allows inbound WinRM from Click2Fix backend host.
-- Credentials configured:
-  - global: `C2F_WINRM_USERNAME` / `C2F_WINRM_PASSWORD`
-  - per-agent override when needed: `C2F_WINRM_USERNAME_<AGENTID>` / `C2F_WINRM_PASSWORD_<AGENTID>`
-- Service account privilege model:
-  - local admin rights for patching/OS actions
-  - least privilege + auditing for lower-risk actions
-- If using "Run as SYSTEM", execution account must have rights to create/start scheduled tasks.
+- Reduce median analyst touches per incident.
+- Improve triage confidence for high-severity incidents.
+- Decrease false-positive escalation rate.
+- Increase verified auto-remediation completion rate.
+- Track MTTR improvement versus v1.0 baseline.
 
-### 5. Endpoint Connectivity Prerequisites (Linux, if enabled)
+## Non-Goals for v1.1
 
-- Set `C2F_LINUX_CONNECTOR_ENABLED=true`.
-- SSH reachable from backend to endpoints (default port 22 unless overridden).
-- Configure `C2F_SSH_USERNAME` + password or key.
-- Ensure non-interactive privilege escalation path exists for remediation commands (sudo policy).
+- Replacing Wazuh as a detection engine.
+- Full SOAR marketplace/integration ecosystem expansion.
+- Major UI redesign unrelated to SOC workflow outcomes.
 
-### 6. Network/Firewall Port Matrix
+## Operational Notes
 
-- User browser -> Frontend: `5173` (or reverse-proxy HTTPS port).
-- Frontend -> Backend API/WebSocket: `8000`.
-- Backend -> PostgreSQL: `5432` (internal Docker network by default).
-- Backend -> Wazuh Manager API: `55000` (typical).
-- Backend -> Wazuh Indexer: `9200` (typical).
-- Backend -> Windows endpoints: `5985/5986`.
-- Backend -> Linux endpoints: `22` (if enabled).
-
-### 7. Security and Operations Prerequisites
-
-- Disable demo users in production (`allow_demo_users: false`).
-- Rotate all bootstrap/default/test credentials before go-live.
-- Restrict platform access by role (`admin`, `analyst`, `superadmin`) and audit all action execution.
-- Configure backups:
-  - PostgreSQL volume backups
-  - evidence/attachment storage backups
-- Define change-control rules for high-risk actions (`patch-*`, `custom-os-command`, OS update flows).
-
-## Launch Procedure (Docker)
-
-1. Populate `docker/.env` and backend env values (Wazuh/Indexer/connector credentials).
-2. From the `docker/` directory:
-
-```powershell
-docker compose up -d --build
-```
-
-3. Validate containers are healthy:
-
-```powershell
-docker compose ps
-docker compose logs -f backend
-```
-
-4. Open frontend UI and log in with a provisioned non-demo admin account.
-
-5. In Click2Fix:
-  - verify connector status
-  - verify agent list sync
-  - run `endpoint-healthcheck` on a pilot group
-  - run one low-risk Global Shell command
-  - verify execution evidence and audit log entries
-
-## Go-Live Validation for 50+ Agents
-
-- Connectivity success rate target:
-  - >=95% on pilot batch before fleet-wide rollout
-- Validate:
-  - action queue throughput under expected concurrency
-  - circuit breaker behavior under memory pressure
-  - no false "running forever" executions
-  - SCA rescan loop updates vulnerability status as expected
-- Roll out in phases:
-  - pilot group -> department group -> full fleet
-
-## Appliance Packaging Path
-
-For customer handover (Wazuh-style VM appliance), use artifacts in `deploy/appliance`:
-
-- `deploy/appliance/docker-compose.appliance.yml`
-- `deploy/appliance/.env.appliance.template`
-- `deploy/appliance/install.sh`
-- `deploy/appliance/install.ps1`
-- `deploy/appliance/upgrade.sh`
-- `deploy/appliance/upgrade.ps1`
-- `deploy/appliance/build-local-images.sh`
-- `deploy/appliance/build-local-images.ps1`
-- `deploy/appliance/export-images.sh`
-- `deploy/appliance/export-images.ps1`
-- `deploy/appliance/import-images.sh`
-- `deploy/appliance/import-images.ps1`
-- `deploy/appliance/README.md`
-- `deploy/appliance/OVA_BUILD_BLUEPRINT.md`
-
-This keeps demo/dev workflow untouched while enabling customer installation without source-code operations.
-
-GitHub distribution path:
-
-- Release page: `https://github.com/<owner>/<repo>/releases/latest`
-- Customer downloads installer zip from release assets and runs `setup.cmd` / `setup.sh`.
-- Automation workflow: `.github/workflows/release-appliance.yml`
-- Safe publish checklist: `docs/SAFE_GITHUB_PUBLISH.md`
+- Keep deployment single-tenant in internal network/VPN.
+- Continue using appliance packaging path in `deploy/appliance`.
+- Keep safe publish workflow from `docs/SAFE_GITHUB_PUBLISH.md`.

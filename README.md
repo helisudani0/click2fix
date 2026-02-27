@@ -3,6 +3,26 @@
 Click2Fix is a SOC operations and response platform for Wazuh-managed environments.  
 It gives IT/security teams one console for triage, response, remote command execution, verification, and audit evidence.
 
+## Current Release
+
+- Stable release line: `v1.0.2`
+- Deployment model: appliance installer + Docker images (GHCR)
+
+## What's New in v1.0.2
+
+- IOC enrichment hardening:
+  - stronger extraction and normalization path for enrichment inputs
+  - improved confidence handling and feed-backed scoring behavior
+- MITRE ATT&CK mapping hardening:
+  - deeper mapping logic with better SOC-oriented technique coverage
+  - improved alert-to-MITRE persistence behavior for downstream analysis
+- Alert summary and recommendations hardening:
+  - tighter summary/recommendation generation for analyst triage use
+  - improved signal quality handling in analytics outputs
+- Planning docs aligned for next upgrade execution:
+  - finalized v1.1 upgrade plan in `docs/VNEXT_IMPLEMENTATION_BLUEPRINT.md`
+  - finalized v1.1 roadmap in `docs/REQUESTED_IMPROVEMENTS_ROADMAP.md`
+
 ## What Click2Fix Does
 
 - Ingests and operationalizes Wazuh alerts, vulnerabilities, and agent data.
@@ -12,6 +32,7 @@ It gives IT/security teams one console for triage, response, remote command exec
 - Supports scheduler-driven jobs (health checks, recurring operations).
 - Preserves forensic integrity workflows and chain-of-custody evidence handling.
 - Keeps governance visibility through approvals, audit logs, changes, and case tracking.
+- Includes appliance control workflows for first-time setup, reconfigure, start/stop/restart, logs, and upgrade.
 
 ## How It Works
 
@@ -53,6 +74,8 @@ Customer flow:
 4. Provide Wazuh, Indexer, and endpoint connector credentials when prompted
 5. Access UI on the deployed host IP/port
 
+After first setup, running `setup.cmd` / `setup.sh` opens the Control Center for lifecycle operations.
+
 ### 2. Developer/Local Stack
 
 From `docker/`:
@@ -89,13 +112,13 @@ Required configuration (environment-driven):
 
 - Appliance install/upgrade: `deploy/appliance/README.md`
 - OVA packaging blueprint: `deploy/appliance/OVA_BUILD_BLUEPRINT.md`
-- vNext implementation blueprint (detailed planning): `docs/VNEXT_IMPLEMENTATION_BLUEPRINT.md`
+- v1.1 final upgrade plan: `docs/VNEXT_IMPLEMENTATION_BLUEPRINT.md`
+- v1.1 execution roadmap: `docs/REQUESTED_IMPROVEMENTS_ROADMAP.md`
 - Safe GitHub publish checklist: `docs/SAFE_GITHUB_PUBLISH.md`
-- Requested improvements roadmap: `docs/REQUESTED_IMPROVEMENTS_ROADMAP.md`
 
 ## Release Status
 
-- Latest release: `v1.0.1`
+- Latest release: `v1.0.2`
 - Published images:
   - `ghcr.io/helisudani0/click2fix-backend:<version>`
   - `ghcr.io/helisudani0/click2fix-frontend:<version>`

@@ -1,67 +1,92 @@
-Click2Fix Requested Improvements Roadmap (v1.1)
-Purpose
-This document captures all features and improvements requested for the next implementation phases to transform Click2Fix into a production-grade SOAR platform.
-Global Decisions (Requested)
-dry_run control will use request JSON (dry_run: true|false) in v1.
-No X-Dry-Run header in v1 (single control path, no precedence ambiguity).
-Docker Governance: Use both reservation and limit settings.
-Environment-Driven: Docker limits must be tunable via .env to support different fleet sizes (50 vs 500 agents).
-Requested Feature Backlog
-1. Closed-Loop Remediation Verification
-Feature Name: Post-Action Verification Loop
-Logic: Automatically trigger follow-up verification after successful remediation.
-Workflow: If patch-windows or package-update succeeds, the backend triggers sca-rescan via Wazuh API.
-Resilience Nuance: Implement Exponential Back-off during the check phase to allow the Wazuh Manager time to process the scan results without flooding the API.
-Goal: Move vulnerabilities from Active to Solved in Indexer without manual re-check.
-2. Custom Threat Intel Enrichment (Built from Scratch)
-Feature Name: Proprietary IOC Enrichment Engine
-Logic: Replace stubs with custom connector logic to free community intel feeds (AlienVault OTX / Abuse.ch).
-Workflow: Extract IOCs (IP/Hash) during ingestion, query feeds via raw requests, and store normalized scores.
-Goal: Show risk scores to analysts before the remediation click path.
-3. Forensic Integrity and Chain of Custody
-Feature Name: Automated Evidence Hashing & Integrity Sweeps
-Logic: Compute SHA-256 at ingest; verify on lock/download.
-Advanced Nuance: Implement a "Periodic Integrity Sweep" via the scheduler to re-verify stored hashes against DB records to detect "Bit Rot" or unauthorized file changes.
-Goal: Provide defensible digital chain of custody for legal/compliance auditability.
-4. Policy-Based Scheduler (Health Check)
-Feature Name: Fleet Health-Check Policy
-Logic: Complete scheduler API for recurring policy jobs.
-Workflow: Run endpoint-healthcheck every 6–12 hours across the fleet.
-Goal: Shift from reactive-only operations to proactive fleet maintenance.
-5. Infrastructure Governance & Resilience
-Feature Name: Resource-Constrained Orchestration
-Logic: Add CPU/memory reservations and limits for all core services (db, backend, frontend).
-Resilience Nuance: Implement a "Circuit Breaker" in the ThreadPoolExecutor. If system memory exceeds 90% of the defined Docker limit, pause new task ingestion to prevent an OOM (Out of Memory) crash.
-Goal: Ensure platform stability during high-concurrency (60-worker) execution windows.
-6. Playbook Dry-Run Mode
-Feature Name: Execution Simulation (Change Management)
-Logic: Simulation mode with no endpoint-side effects.
-Audit Requirement: Log audit event as playbook_simulated including actor, targets, and resolved plan.
-Goal: Give admins a safe pre-flight guardrail before bulk updates.
-7. Performance Tuning (Connection Pooling)
-Feature Name: Persistent API Session Management
-Logic: Refactor WazuhClient and IndexerClient to use requests.Session().
-Workflow: Reuse TCP connections (Keep-Alive) to lower per-request latency during bulk runs.
-8. Cross-Platform Parity (Linux Support)
-Feature Name: Multi-OS Connector Enablement
-Logic: Enable code-ready Linux endpoint paths (e.g., firewall-drop, patch-linux).
-Goal: Operational cross-platform coverage and stronger platform credibility for the Irish market.
-Recommended Delivery Order
-Docker resource governance + Circuit Breaker (Stability first).
-Session pooling in Wazuh/Indexer clients.
-Playbook dry-run + playbook_simulated audit.
-Closed-loop remediation verification (with Exponential Back-off).
-Scheduler endpoint completion and health-check policy.
-Forensic hash/verification chain (with Periodic Integrity Sweeps).
-IOC enrichment connector replacement.
-Linux connector enablement and validation.
+# Click2Fix v1.1 Execution Roadmap (Final)
 
-## Next Update Priorities
+This roadmap is the execution companion to `docs/VNEXT_IMPLEMENTATION_BLUEPRINT.md`.
+It defines release sequencing, ownership focus, and hard release gates.
 
-Before enabling broader vNext feature expansion, the next release focus is:
+## Release Objective
 
-1. Tighten IOC enrichment quality and confidence handling.
-2. Add SOC-grade MITRE ATT&CK mapping depth and coverage.
-3. Tighten alert summaries and recommendations to improve accuracy and analyst usefulness.
+Ship v1.1 as a SOC-grade decision and response upgrade focused on:
 
-After these are stabilized, delivery continues with the planned next-version scope in `docs/VNEXT_IMPLEMENTATION_BLUEPRINT.md`.
+1. Better triage quality.
+2. Better incident operations.
+3. Safer and verifiable automation.
+4. Better reliability under scale.
+
+## Workstream Priorities
+
+## P0: SOC Signal Quality
+
+- Tighten IOC enrichment quality and confidence handling.
+- Add SOC-grade MITRE ATT&CK mapping depth and multi-mapping support.
+- Tighten alert summaries and recommendations for analyst decision support.
+
+## P1: Incident and Governance Layer
+
+- Incident correlation and grouping.
+- Incident assignment and SLA state tracking.
+- Trusted automation context classification and alert correlation.
+
+## P1: Response Correctness
+
+- Dry-run contract (`dry_run` JSON only) + simulation audit events.
+- Closed-loop remediation verification with freshness checks and backoff.
+- Reliable long-running execution state semantics.
+
+## P2: Resilience and Platform Operations
+
+- Docker resource governance + backend circuit breaker.
+- Wazuh/Indexer session pooling and retry/backoff tuning.
+- Scheduler completion (health-check + integrity sweep).
+- Linux connector parity hardening.
+
+## Sequenced Delivery
+
+1. P0 SOC Signal Quality
+2. P1 Incident and Governance Layer
+3. P1 Response Correctness
+4. P2 Resilience and Platform Operations
+
+## Definition of Done per Workstream
+
+### P0 Done
+
+- IOC, MITRE, and summary outputs are context-aware and operationally useful.
+- Analysts can triage top recurring alert families without fallback to raw-only interpretation.
+
+### P1 Incident/Governance Done
+
+- Related alerts are correlated into incident records.
+- Incidents have owner/priority/status/SLA fields and auditable assignment changes.
+- Automation context classification is visible and queryable.
+
+### P1 Response Done
+
+- Dry-run paths never execute endpoint-side change.
+- Verification outcomes persist as verified/not_verified/stale_scan.
+- Long-running tasks do not report false failure when still in-progress.
+
+### P2 Done
+
+- Platform remains stable under planned concurrency profile.
+- Circuit breaker and scheduler behaviors are observable and auditable.
+
+## Release Gates (Must Pass)
+
+- SOC quality gate: improved summary/recommendation fidelity for target alert families.
+- Safety gate: dry-run and verification correctness validated end-to-end.
+- Governance gate: full audit trace for high-risk actions and incident handoffs.
+- Scale gate: no recurring OOM/queue stall under stress test baseline.
+
+## KPI Tracking for v1.1
+
+- MTTR trend versus v1.0 baseline.
+- Analyst touches per incident.
+- False-positive escalation rate.
+- Verified remediation completion rate.
+- Incident queue SLA compliance.
+
+## Notes
+
+- This roadmap intentionally prioritizes cyber operations value over patch-only workflows.
+- Patch/remediation remains supported, but not the primary product identity.
+- For full technical scope, data model, and API details use `docs/VNEXT_IMPLEMENTATION_BLUEPRINT.md`.

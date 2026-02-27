@@ -86,13 +86,21 @@ const explainError = (stderr, stdout) => {
   return "";
 };
 
-export const buildHumanReadableOutput = (stdout, stderr) => {
+export const buildHumanReadableOutput = (stdout, stderr, options = {}) => {
   const cleanStdout = extractReadableOutput(stdout);
   const cleanStderr = extractReadableOutput(stderr);
   const detail = cleanStderr || cleanStdout;
-  if (!detail) return "";
+  if (!detail) {
+    const normalizedStatus = String(options?.status || "").trim().toUpperCase();
+    if (normalizedStatus === "SUCCESS") {
+      return "Command completed successfully with no output. If this was a filter/query command, no matching results were returned.";
+    }
+    if (["FAILED", "ERROR", "KILLED"].includes(normalizedStatus)) {
+      return "Command failed with no output. Check Endpoint Issues and Execution Steps for details.";
+    }
+    return "";
+  }
   const explanation = explainError(stderr, stdout);
   if (!explanation) return detail;
   return `${explanation}\n\nDetails:\n${detail}`;
 };
-

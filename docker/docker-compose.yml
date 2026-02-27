@@ -90,6 +90,7 @@ services:
       - backend
     environment:
       - CHOKIDAR_USEPOLLING=true
+      - VITE_APP_VERSION=${APP_VERSION:-dev}
     deploy:
       resources:
         reservations:

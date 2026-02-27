@@ -80,6 +80,7 @@ services:
       - "${C2F_FRONTEND_PORT:-5173}:5173"
     environment:
       CHOKIDAR_USEPOLLING: "true"
+      VITE_APP_VERSION: ${C2F_IMAGE_TAG:-latest}
     mem_reservation: "${FRONTEND_MEMORY_RESERVATION:-256M}"
     mem_limit: "${FRONTEND_MEMORY_LIMIT:-512M}"
     cpus: "${FRONTEND_CPU_LIMIT:-1.00}"

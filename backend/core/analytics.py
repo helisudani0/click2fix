@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ipaddress
 import json
 from math import sqrt
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 from sqlalchemy import text
 
@@ -52,6 +54,14 @@ _EXECUTION_HINTS = {
     "mimikatz",
     "malware",
 }
+
+_GENERIC_PROCESS_EVENT_HINTS = {
+    "a process was created",
+    "new process has been created",
+    "process creation",
+}
+
+_NETWORK_IOC_TYPES = {"ip", "domain", "url"}
 
 
 @dataclass
@@ -283,6 +293,70 @@ def _to_ioc_objects(ioc_rows: List[List[Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+def _unique_ioc_count(ioc_objects: List[Dict[str, Any]]) -> int:
+    keys = {
+        f"{str(ioc.get('ioc_type') or '').lower()}::{str(ioc.get('ioc') or '').strip().lower()}"
+        for ioc in ioc_objects
+        if str(ioc.get("ioc") or "").strip()
+    }
+    return len(keys)
+
+
+def _ioc_score(ioc: Dict[str, Any]) -> int:
+    return _safe_int(ioc.get("score"), 0)
+
+
+def _ioc_verdict(ioc: Dict[str, Any]) -> str:
+    return str(ioc.get("verdict") or "").strip().lower()
+
+
+def _is_internal_network_ioc(ioc: Dict[str, Any]) -> bool:
+    ioc_type = str(ioc.get("ioc_type") or "").strip().lower()
+    value = str(ioc.get("ioc") or "").strip()
+    if not ioc_type or not value:
+        return False
+
+    if ioc_type == "ip":
+        try:
+            ip_obj = ipaddress.ip_address(value)
+            return bool(
+                ip_obj.is_private
+                or ip_obj.is_loopback
+                or ip_obj.is_link_local
+                or ip_obj.is_reserved
+                or ip_obj.is_multicast
+                or ip_obj.is_unspecified
+            )
+        except Exception:
+            return False
+
+    if ioc_type == "domain":
+        host = value.lower().strip(".")
+    elif ioc_type == "url":
+        try:
+            host = (urlsplit(value).hostname or "").lower().strip(".")
+        except Exception:
+            host = ""
+    else:
+        return False
+
+    if not host:
+        return False
+    if host in {"localhost", "localdomain"}:
+        return True
+    if host.endswith((".local", ".lan", ".home", ".internal")):
+        return True
+    return False
+
+
+def _is_high_conf_ioc(ioc: Dict[str, Any]) -> bool:
+    return _ioc_score(ioc) >= 85 or _ioc_verdict(ioc) == "malicious"
+
+
+def _is_suspicious_ioc(ioc: Dict[str, Any]) -> bool:
+    return _ioc_score(ioc) >= 55 or _ioc_verdict(ioc) in {"suspicious", "malicious"}
+
+
 def _derive_impact(
     rule_level: Optional[int],
     tactics: List[str],
@@ -374,11 +448,10 @@ def alert_summary(alert_id: str) -> Dict:
         )
 
         has_high_ioc = any(
-            ioc.get("score", 0) >= 85 or ioc.get("verdict") == "malicious" for ioc in ioc_objects
+            _is_high_conf_ioc(ioc) for ioc in ioc_objects
         )
         has_suspicious_ioc = any(
-            ioc.get("score", 0) >= 55 or ioc.get("verdict") in {"suspicious", "malicious"}
-            for ioc in ioc_objects
+            _is_suspicious_ioc(ioc) for ioc in ioc_objects
         )
 
         rule_24h = 0
@@ -425,11 +498,12 @@ def alert_summary(alert_id: str) -> Dict:
             root_cause = f"Recurring detections on agent {agent_id} suggest persistent host-specific issues."
 
         mitre_text = ", ".join(techniques[:2]) if techniques else "none"
+        unique_ioc_count = _unique_ioc_count(ioc_objects)
         summary_parts = [
             f"Alert {alert_id_value} on agent {agent_name or agent_id}",
             f"triggered rule '{rule_desc or rule_id}' (level {rule_level}).",
             f"MITRE mapping: {mitre_text}.",
-            f"IOC indicators: {len(ioc_objects)}.",
+            f"IOC indicators: {unique_ioc_count}.",
         ]
         if has_high_ioc:
             summary_parts.append("Threat intel corroborates malicious activity.")
@@ -489,15 +563,38 @@ def remediation_suggestions(
     rule_l = str(rule_text or "").lower()
     tactic_l = {str(t or "").lower() for t in (tactics or [])}
     ioc_items = iocs or []
+    level = _safe_int(rule_level, 0)
 
-    has_network_ioc = any(ioc.get("ioc_type") in {"ip", "domain", "url"} for ioc in ioc_items)
-    has_high_ioc = any(
-        ioc.get("score", 0) >= 85 or ioc.get("verdict") == "malicious" for ioc in ioc_items
+    high_iocs = [ioc for ioc in ioc_items if _is_high_conf_ioc(ioc)]
+    suspicious_iocs = [ioc for ioc in ioc_items if _is_suspicious_ioc(ioc)]
+    network_iocs = [ioc for ioc in ioc_items if str(ioc.get("ioc_type") or "").lower() in _NETWORK_IOC_TYPES]
+    suspicious_network_iocs = [
+        ioc for ioc in network_iocs if _is_suspicious_ioc(ioc) and not _is_internal_network_ioc(ioc)
+    ]
+    high_conf_network_iocs = [
+        ioc for ioc in network_iocs if _is_high_conf_ioc(ioc) and not _is_internal_network_ioc(ioc)
+    ]
+
+    has_high_ioc = bool(high_iocs)
+    has_high_conf_network_ioc = bool(high_conf_network_iocs)
+    has_suspicious_network_ioc = bool(suspicious_network_iocs)
+    is_generic_low_sev_process_event = (
+        level > 0
+        and level <= 4
+        and any(hint in rule_l for hint in _GENERIC_PROCESS_EVENT_HINTS)
+        and not has_high_ioc
+        and "credential access" not in tactic_l
+        and "command and control" not in tactic_l
     )
 
     def add(candidate: str) -> None:
         if candidate in available and candidate not in suggestions:
             suggestions.append(candidate)
+
+    if is_generic_low_sev_process_event:
+        for candidate in ("endpoint-healthcheck", "ioc-scan", "sca-rescan"):
+            add(candidate)
+        return suggestions[:3] if suggestions else actions[:2]
 
     if any(hint in rule_l for hint in _AUTH_HINTS) or "credential access" in tactic_l:
         for candidate in ("disable-account", "ioc-scan", "threat-hunt-persistence"):
@@ -507,8 +604,11 @@ def remediation_suggestions(
         for candidate in ("kill-process", "quarantine-file", "malware-scan"):
             add(candidate)
 
-    if has_network_ioc or "command and control" in tactic_l:
+    if has_high_conf_network_ioc or ("command and control" in tactic_l and level >= 8):
         for candidate in ("firewall-drop", "host-deny", "route-null", "win-route-null"):
+            add(candidate)
+    elif has_suspicious_network_ioc and level >= 10:
+        for candidate in ("firewall-drop", "host-deny"):
             add(candidate)
 
     if "vulnerability" in rule_l or "cve" in rule_l or "sca" in rule_l or "patch" in rule_l:

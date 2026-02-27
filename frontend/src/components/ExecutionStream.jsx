@@ -1051,8 +1051,12 @@ export default function ExecutionStream({ executionId }) {
     : "";
   const showScanReport = Boolean(selectedTarget && isScanAction);
   const selectedTargetCleanOutput = useMemo(
-    () => buildHumanReadableOutput(selectedTarget?.stdout || "", selectedTarget?.stderr || ""),
-    [selectedTarget?.stdout, selectedTarget?.stderr]
+    () => buildHumanReadableOutput(
+      selectedTarget?.stdout || "",
+      selectedTarget?.stderr || "",
+      { status: selectedTarget?.status || "" }
+    ),
+    [selectedTarget?.stdout, selectedTarget?.stderr, selectedTarget?.status]
   );
 
   const endpointIssues = useMemo(

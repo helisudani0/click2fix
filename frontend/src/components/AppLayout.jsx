@@ -7,6 +7,11 @@ import api, {
 } from "../api/client";
 import { APP_TIMEZONE_LABEL } from "../utils/time";
 
+const RAW_APP_VERSION = String(import.meta.env.VITE_APP_VERSION || "").trim();
+const UI_APP_VERSION = RAW_APP_VERSION
+  ? (RAW_APP_VERSION.toLowerCase().startsWith("v") ? RAW_APP_VERSION : `v${RAW_APP_VERSION}`)
+  : "dev";
+
 const ROUTE_LABELS = {
   "/": "Dashboard",
   "/alerts": "Alerts",
@@ -182,8 +187,13 @@ export default function AppLayout() {
         </nav>
 
         <div className="sidebar-footer">
-          <div className="status-dot" />
-          <span>{user ? `${user.username} - ${user.role}` : "Connected"}</span>
+          <div className="footer-status">
+            <div className="status-dot" />
+            <span>{user ? `${user.username} - ${user.role}` : "Connected"}</span>
+          </div>
+          <div className="footer-version">
+            Version <span className="version-pill">{UI_APP_VERSION}</span>
+          </div>
         </div>
       </aside>
 

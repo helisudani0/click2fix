@@ -255,7 +255,7 @@ const normalizeExecutions = (rows) => {
       const latestStdout = row?.latest_stdout || "";
       const latestStderr = row?.latest_stderr || "";
       const cleanOutputPreview = summarizeConsolePreview(
-        buildHumanReadableOutput(latestStdout, latestStderr),
+        buildHumanReadableOutput(latestStdout, latestStderr, { status: row?.status || "" }),
         220
       );
       const rawOutputPreview = summarizeRawPreview(latestStderr || latestStdout, 220);

@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
+import threading
+import time
+from pathlib import Path
 from typing import Any, Dict, List
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 
 _TECHNIQUE_ID_RE = re.compile(r"T\d{4}(?:\.\d{3})?", re.IGNORECASE)
@@ -25,11 +32,35 @@ _TACTIC_CANONICAL = {
 }
 
 _SOURCE_PRIORITY = {
+    "official_stix": 6,
     "native_mitre": 5,
     "rule_id_map": 4,
     "keyword_heuristic": 3,
     "group_heuristic": 2,
     "severity_fallback": 1,
+}
+
+_DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+_OFFICIAL_STIX_CACHE_PATH = Path(
+    os.getenv("C2F_MITRE_STIX_CACHE", str(_DATA_DIR / "mitre-enterprise-attack.json"))
+)
+_OFFICIAL_STIX_URL = os.getenv(
+    "C2F_MITRE_STIX_URL",
+    "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json",
+).strip()
+_OFFICIAL_STIX_REFRESH_SECONDS = max(
+    3600,
+    int(os.getenv("C2F_MITRE_STIX_REFRESH_SECONDS", "86400")),
+)
+_OFFICIAL_STIX_TIMEOUT_SECONDS = max(
+    2,
+    int(os.getenv("C2F_MITRE_STIX_TIMEOUT_SECONDS", "8")),
+)
+_OFFICIAL_STIX_ENABLED = os.getenv("C2F_MITRE_STIX_ENABLED", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
 }
 
 _RULE_ID_MAP: Dict[str, List[Dict[str, Any]]] = {
@@ -196,6 +227,140 @@ _KEYWORD_HEURISTICS: List[Dict[str, Any]] = [
         ],
     },
 ]
+
+
+class _OfficialMitreCatalog:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._loaded_at = 0.0
+        self._entries: Dict[str, Dict[str, Any]] = {}
+
+    def lookup(self, technique_id: str) -> Dict[str, Any] | None:
+        tid = _normalize_technique_id(technique_id)
+        if not tid:
+            return None
+        self._ensure_loaded()
+        return self._entries.get(tid)
+
+    def _ensure_loaded(self) -> None:
+        now = time.time()
+        if self._entries and (now - self._loaded_at) < _OFFICIAL_STIX_REFRESH_SECONDS:
+            return
+        with self._lock:
+            now = time.time()
+            if self._entries and (now - self._loaded_at) < _OFFICIAL_STIX_REFRESH_SECONDS:
+                return
+            cache_entries = self._load_from_cache()
+            if cache_entries:
+                self._entries = cache_entries
+                self._loaded_at = now
+            if not _OFFICIAL_STIX_ENABLED:
+                if not self._entries:
+                    self._loaded_at = now
+                return
+            fresh = self._download_and_parse()
+            if fresh:
+                self._entries = fresh
+                self._loaded_at = time.time()
+            elif not self._entries:
+                # Avoid hammering the network on every alert when source is temporarily unreachable.
+                self._loaded_at = now
+
+    def _load_from_cache(self) -> Dict[str, Dict[str, Any]]:
+        try:
+            if not _OFFICIAL_STIX_CACHE_PATH.exists():
+                return {}
+            payload = json.loads(_OFFICIAL_STIX_CACHE_PATH.read_text(encoding="utf-8"))
+            return self._parse_catalog(payload)
+        except Exception:
+            return {}
+
+    def _download_and_parse(self) -> Dict[str, Dict[str, Any]]:
+        if not _OFFICIAL_STIX_URL:
+            return {}
+        try:
+            req = Request(
+                _OFFICIAL_STIX_URL,
+                headers={
+                    "User-Agent": "click2fix-mitre-mapper/1.0",
+                    "Accept": "application/json",
+                },
+            )
+            with urlopen(req, timeout=_OFFICIAL_STIX_TIMEOUT_SECONDS) as response:
+                body = response.read()
+            payload = json.loads(body.decode("utf-8"))
+            parsed = self._parse_catalog(payload)
+            if not parsed:
+                return {}
+            self._persist_cache(payload)
+            return parsed
+        except (URLError, TimeoutError, ValueError, OSError):
+            return {}
+
+    def _persist_cache(self, payload: Dict[str, Any]) -> None:
+        try:
+            _OFFICIAL_STIX_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                delete=False,
+                dir=str(_OFFICIAL_STIX_CACHE_PATH.parent),
+                suffix=".tmp",
+            ) as handle:
+                json.dump(payload, handle)
+                temp_path = Path(handle.name)
+            temp_path.replace(_OFFICIAL_STIX_CACHE_PATH)
+        except Exception:
+            return
+
+    def _parse_catalog(self, payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        objects = payload.get("objects") if isinstance(payload, dict) else None
+        if not isinstance(objects, list):
+            return {}
+        catalog: Dict[str, Dict[str, Any]] = {}
+        for obj in objects:
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("type") != "attack-pattern":
+                continue
+            if obj.get("revoked") or obj.get("x_mitre_deprecated"):
+                continue
+            ext_refs = obj.get("external_references")
+            if not isinstance(ext_refs, list):
+                continue
+            technique_id = ""
+            for ref in ext_refs:
+                if not isinstance(ref, dict):
+                    continue
+                source_name = str(ref.get("source_name") or "").strip().lower()
+                external_id = _normalize_technique_id(ref.get("external_id"))
+                if source_name == "mitre-attack" and external_id:
+                    technique_id = external_id
+                    break
+            if not technique_id:
+                continue
+            name = str(obj.get("name") or "").strip()
+            kill_chain_phases = obj.get("kill_chain_phases")
+            tactics: List[str] = []
+            if isinstance(kill_chain_phases, list):
+                for phase in kill_chain_phases:
+                    if not isinstance(phase, dict):
+                        continue
+                    if str(phase.get("kill_chain_name") or "").strip().lower() != "mitre-attack":
+                        continue
+                    phase_name = str(phase.get("phase_name") or "").strip().replace("-", " ")
+                    tactic = _normalize_tactic(phase_name)
+                    if tactic and tactic not in tactics:
+                        tactics.append(tactic)
+            catalog[technique_id] = {
+                "technique_id": technique_id,
+                "technique": name or technique_id,
+                "tactics": tactics,
+            }
+        return catalog
+
+
+_OFFICIAL_CATALOG = _OfficialMitreCatalog()
 
 
 def _as_list(value: Any) -> List[Any]:
@@ -390,6 +555,48 @@ def _add_keyword_candidates(alert_text: str, out: List[Dict[str, Any]]) -> None:
                 out.append(candidate)
 
 
+def _add_explicit_technique_candidates(alert_text: str, out: List[Dict[str, Any]]) -> None:
+    explicit_ids = {_normalize_technique_id(match) for match in _TECHNIQUE_ID_RE.findall(alert_text or "")}
+    explicit_ids = {tid for tid in explicit_ids if tid}
+    for technique_id in sorted(explicit_ids):
+        details = _OFFICIAL_CATALOG.lookup(technique_id)
+        if not details:
+            continue
+        tactics = details.get("tactics") or [""]
+        for tactic in tactics:
+            candidate = _candidate(
+                tactic=tactic,
+                technique=details.get("technique", ""),
+                technique_id=technique_id,
+                confidence=98,
+                source="official_stix",
+            )
+            if candidate:
+                out.append(candidate)
+
+
+def _add_official_catalog_candidates(existing: List[Dict[str, Any]], out: List[Dict[str, Any]]) -> None:
+    for item in existing:
+        technique_id = _normalize_technique_id(item.get("technique_id"))
+        if not technique_id:
+            continue
+        details = _OFFICIAL_CATALOG.lookup(technique_id)
+        if not details:
+            continue
+        base_conf = max(80, int(item.get("confidence", 0)))
+        tactics = details.get("tactics") or [item.get("tactic", "")]
+        for tactic in tactics[:2]:
+            candidate = _candidate(
+                tactic=tactic,
+                technique=details.get("technique", ""),
+                technique_id=technique_id,
+                confidence=min(99, max(base_conf, 95)),
+                source="official_stix",
+            )
+            if candidate:
+                out.append(candidate)
+
+
 def _add_severity_fallback(rule_level: int, out: List[Dict[str, Any]]) -> None:
     if rule_level >= 12:
         candidate = _candidate(
@@ -463,6 +670,8 @@ class MitreMapper:
         if groups:
             _add_group_candidates(groups, candidates)
         _add_keyword_candidates(text_blob, candidates)
+        _add_explicit_technique_candidates(text_blob, candidates)
+        _add_official_catalog_candidates(list(candidates), candidates)
         if not candidates and rule_level > 0:
             _add_severity_fallback(rule_level, candidates)
 

@@ -6,11 +6,13 @@ import api, {
   getLegacyToken
 } from "../api/client";
 import { APP_TIMEZONE_LABEL } from "../utils/time";
-import { UI_APP_VERSION } from "../utils/appVersion";
+import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
 const ROUTE_LABELS = {
   "/": "Dashboard",
   "/alerts": "Alerts",
+  "/sca-fleet": "SCA Fleet",
+  "/incidents": "Incidents",
   "/vulnerabilities": "Vulnerabilities",
   "/analytics": "Analytics",
   "/agents": "Agents",
@@ -22,15 +24,17 @@ const ROUTE_LABELS = {
   "/scheduler": "Scheduler",
   "/cases": "Cases",
   "/changes": "Changes",
+  "/governance": "Governance",
   "/audit": "Audit Log",
   "/orgs": "Org Admin",
 };
 
 const PRIORITY_LINKS = [
   { to: "/alerts", label: "Alert Triage" },
+  { to: "/sca-fleet", label: "SCA Hardening" },
+  { to: "/incidents", label: "Incident Queue" },
   { to: "/approvals", label: "Approval Queue" },
   { to: "/executions", label: "Execution Monitor" },
-  { to: "/cases", label: "Case Desk" },
 ];
 
 const NAV_SECTIONS = [
@@ -39,6 +43,8 @@ const NAV_SECTIONS = [
     links: [
       { to: "/", label: "Command Overview", end: true },
       { to: "/alerts", label: "Alerts" },
+      { to: "/sca-fleet", label: "SCA Fleet" },
+      { to: "/incidents", label: "Incidents" },
       { to: "/agents", label: "Agents" },
       { to: "/vulnerabilities", label: "Vulnerabilities" },
       { to: "/analytics", label: "Analytics" },
@@ -58,6 +64,7 @@ const NAV_SECTIONS = [
   {
     title: "Governance",
     links: [
+      { to: "/governance", label: "Automation Context" },
       { to: "/cases", label: "Cases" },
       { to: "/changes", label: "Changes" },
       { to: "/audit", label: "Audit Log" },
@@ -71,6 +78,7 @@ export default function AppLayout() {
   const location = useLocation();
   const [user, setUser] = useState(null);
   const [search, setSearch] = useState("");
+  const [appVersion, setAppVersion] = useState(UI_APP_VERSION);
 
   useEffect(() => {
     let active = true;
@@ -97,6 +105,23 @@ export default function AppLayout() {
           return;
         }
         if (active) setUser(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .get("/system/version")
+      .then((res) => {
+        if (!active) return;
+        setAppVersion(resolveDisplayVersion(res?.data?.version));
+      })
+      .catch(() => {
+        if (!active) return;
+        setAppVersion(UI_APP_VERSION);
       });
     return () => {
       active = false;
@@ -139,6 +164,14 @@ export default function AppLayout() {
     navigate(`/alerts?query=${encodeURIComponent(term)}`);
   };
 
+  const openOpsConsole = () => {
+    if (typeof window === "undefined") return;
+    const token = String(getLegacyToken() || "").trim();
+    const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
+    const opsUrl = `${window.location.origin}/ops${tokenQuery}`;
+    window.open(opsUrl, "_blank", "noopener,noreferrer");
+  };
+
   return (
     <div className="app-layout">
 
@@ -148,7 +181,7 @@ export default function AppLayout() {
           <div>
             <div className="brand-title">Click2Fix</div>
             <div className="brand-subtitle">SOC Operations Platform</div>
-            <div className="brand-version">Version {UI_APP_VERSION}</div>
+            <div className="brand-version">Version {appVersion}</div>
           </div>
         </div>
 
@@ -182,6 +215,9 @@ export default function AppLayout() {
             </div>
           ))}
         </nav>
+        <button type="button" className="nav-link ops-link-btn" onClick={openOpsConsole}>
+          Backend Ops
+        </button>
 
         <div className="sidebar-footer">
           <div className="footer-status">
@@ -189,7 +225,7 @@ export default function AppLayout() {
             <span>{user ? `${user.username} - ${user.role}` : "Connected"}</span>
           </div>
           <div className="footer-version">
-            Version <span className="version-pill">{UI_APP_VERSION}</span>
+            Version <span className="version-pill">{appVersion}</span>
           </div>
         </div>
       </aside>
@@ -211,7 +247,7 @@ export default function AppLayout() {
           </div>
           <div className="topbar-right">
             <div className="topbar-version" title="Current frontend version">
-              {UI_APP_VERSION}
+              {appVersion}
             </div>
             <div className="topbar-shortcuts" aria-label="Quick navigation">
               <NavLink to="/alerts" className={({ isActive }) => `topbar-shortcut${isActive ? " active" : ""}`}>

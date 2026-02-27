@@ -266,6 +266,13 @@ p {
   transition: border-color var(--motion-base), background var(--motion-base), color var(--motion-base), transform var(--motion-fast);
 }
 
+.ops-link-btn {
+  width: 100%;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
 .nav-link::before {
   content: "";
   width: 4px;

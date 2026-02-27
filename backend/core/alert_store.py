@@ -57,17 +57,20 @@ def store_alerts(alerts: Iterable[dict]) -> int:
                 if mitre_matches:
                     primary_mitre = mitre_matches[0]
 
-                for match in mitre_matches:
+                for rank_idx, match in enumerate(mitre_matches, start=1):
                     tactic = str(match.get("tactic") or "").strip()
                     technique = str(match.get("technique") or "").strip()
                     technique_id = str(match.get("technique_id") or "").strip().upper()
+                    confidence = int(match.get("confidence") or 0)
+                    source = str(match.get("source") or "").strip() or None
                     if not tactic and not technique and not technique_id:
                         continue
 
-                    exists = db.execute(
+                    existing = db.execute(
                         text(
                             """
-                            SELECT 1 FROM mitre_alerts
+                            SELECT id, confidence, source, mapping_rank
+                            FROM mitre_alerts
                             WHERE alert_id=:alert_id
                               AND COALESCE(technique_id, '')=:technique_id
                               AND COALESCE(tactic, '')=:tactic
@@ -82,15 +85,53 @@ def store_alerts(alerts: Iterable[dict]) -> int:
                             "technique": technique,
                         },
                     ).fetchone()
-                    if exists:
+                    if existing:
+                        existing_id = existing[0]
+                        try:
+                            existing_confidence = int(existing[1] or 0)
+                        except Exception:
+                            existing_confidence = 0
+                        existing_source = str(existing[2] or "").strip() or None
+                        try:
+                            existing_rank = int(existing[3]) if existing[3] is not None else None
+                        except Exception:
+                            existing_rank = None
+
+                        merged_confidence = max(existing_confidence, confidence)
+                        merged_source = existing_source or source
+                        if existing_rank is not None and existing_rank > 0:
+                            merged_rank = min(existing_rank, rank_idx)
+                        else:
+                            merged_rank = rank_idx
+
+                        if (
+                            merged_confidence != existing_confidence
+                            or merged_source != existing_source
+                            or merged_rank != existing_rank
+                        ):
+                            db.execute(
+                                text(
+                                    """
+                                    UPDATE mitre_alerts
+                                    SET confidence=:confidence, source=:source, mapping_rank=:mapping_rank
+                                    WHERE id=:id
+                                    """
+                                ),
+                                {
+                                    "id": existing_id,
+                                    "confidence": merged_confidence,
+                                    "source": merged_source,
+                                    "mapping_rank": merged_rank,
+                                },
+                            )
                         continue
 
                     db.execute(
                         text(
                             """
                             INSERT INTO mitre_alerts
-                            (alert_id, tactic, technique, technique_id)
-                            VALUES (:alert_id, :tactic, :technique, :technique_id)
+                            (alert_id, tactic, technique, technique_id, confidence, source, mapping_rank)
+                            VALUES (:alert_id, :tactic, :technique, :technique_id, :confidence, :source, :mapping_rank)
                             """
                         ),
                         {
@@ -98,6 +139,9 @@ def store_alerts(alerts: Iterable[dict]) -> int:
                             "tactic": tactic,
                             "technique": technique,
                             "technique_id": technique_id,
+                            "confidence": confidence,
+                            "source": source,
+                            "mapping_rank": rank_idx,
                         },
                     )
             except Exception as exc:

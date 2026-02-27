@@ -8,11 +8,14 @@ const Dashboard = lazy(() => import("./components/Dashboard"));
 const Agents = lazy(() => import("./pages/Agents"));
 const Actions = lazy(() => import("./pages/Actions"));
 const Alerts = lazy(() => import("./pages/Alerts"));
+const ScaFleet = lazy(() => import("./pages/ScaFleet"));
 const Vulnerabilities = lazy(() => import("./pages/Vulnerabilities"));
 const Playbooks = lazy(() => import("./pages/Playbooks"));
 const Approvals = lazy(() => import("./pages/Approvals"));
 const Executions = lazy(() => import("./pages/Executions"));
 const Cases = lazy(() => import("./pages/Cases"));
+const Incidents = lazy(() => import("./pages/Incidents"));
+const Governance = lazy(() => import("./pages/Governance"));
 const Scheduler = lazy(() => import("./pages/Scheduler"));
 const OrgAdmin = lazy(() => import("./pages/OrgAdmin"));
 const Analytics = lazy(() => import("./pages/Analytics"));
@@ -34,12 +37,15 @@ export default function App() {
             <Route path="/actions" element={<Actions />} />
             <Route path="/global-shell" element={<GlobalShell />} />
             <Route path="/alerts" element={<Alerts />} />
+            <Route path="/sca-fleet" element={<ScaFleet />} />
+            <Route path="/incidents" element={<Incidents />} />
             <Route path="/vulnerabilities" element={<Vulnerabilities />} />
             <Route path="/playbooks" element={<Playbooks />} />
             <Route path="/approvals" element={<Approvals />} />
             <Route path="/executions" element={<Executions />} />
             <Route path="/scheduler" element={<Scheduler />} />
             <Route path="/cases" element={<Cases />} />
+            <Route path="/governance" element={<Governance />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/audit" element={<Audit />} />
             <Route path="/changes" element={<Changes />} />

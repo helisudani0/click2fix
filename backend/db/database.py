@@ -248,6 +248,171 @@ case_timeline = Table(
     Column("created_at", DateTime, server_default=func.now()),
 )
 
+incidents = Table(
+    "incidents",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("title", String),
+    Column("summary", Text),
+    Column("status", String, server_default=text("'open'")),
+    Column("priority", String, server_default=text("'medium'")),
+    Column("owner", String),
+    Column("due_at", DateTime),
+    Column("escalation_state", String, server_default=text("'normal'")),
+    Column("correlation_key", String),
+    Column("first_event_time", DateTime),
+    Column("last_event_time", DateTime),
+    Column("alert_count", Integer, server_default=text("0")),
+    Column("org_id", Integer),
+    Column("created_by", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+)
+
+incident_alerts = Table(
+    "incident_alerts",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("incident_id", Integer),
+    Column("alert_id", String),
+    Column("agent_id", String),
+    Column("tactic", String),
+    Column("identity", String),
+    Column("matched_signals", Text),
+    Column("created_at", DateTime, server_default=func.now()),
+)
+
+incident_assignments = Table(
+    "incident_assignments",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("incident_id", Integer),
+    Column("previous_owner", String),
+    Column("new_owner", String),
+    Column("changed_by", String),
+    Column("note", Text),
+    Column("created_at", DateTime, server_default=func.now()),
+)
+
+incident_sla_events = Table(
+    "incident_sla_events",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("incident_id", Integer),
+    Column("event_type", String),
+    Column("detail", Text),
+    Column("actor", String),
+    Column("created_at", DateTime, server_default=func.now()),
+)
+
+execution_context = Table(
+    "execution_context",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("execution_id", Integer),
+    Column("action_id", String),
+    Column("actor", String),
+    Column("target", String),
+    Column("started_at", DateTime),
+    Column("finished_at", DateTime),
+    Column("classification", String),
+    Column("reason", Text),
+    Column("context_json", Text),
+    Column("org_id", Integer),
+    Column("created_by", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+    UniqueConstraint("execution_id", name="uq_execution_context_execution_id"),
+)
+
+automation_context_profiles = Table(
+    "automation_context_profiles",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("name", String),
+    Column("description", Text),
+    Column("enabled", Boolean, server_default=text("true")),
+    Column("classification", String, server_default=text("'review_required'")),
+    Column("profile_json", Text),
+    Column("org_id", Integer),
+    Column("created_by", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+)
+
+alert_execution_correlation = Table(
+    "alert_execution_correlation",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("execution_id", Integer),
+    Column("alert_id", String),
+    Column("agent_id", String),
+    Column("classification", String),
+    Column("confidence", Integer),
+    Column("reason", Text),
+    Column("matched_profile_ids", Text),
+    Column("org_id", Integer),
+    Column("created_by", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+    UniqueConstraint("execution_id", "alert_id", name="uq_alert_execution_correlation_exec_alert"),
+)
+
+ioc_enrichment_records = Table(
+    "ioc_enrichment_records",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("alert_id", String),
+    Column("ioc", String),
+    Column("ioc_type", String),
+    Column("source", String),
+    Column("score", Integer),
+    Column("confidence", Integer),
+    Column("verdict", String),
+    Column("evidence_json", Text),
+    Column("observed_at", DateTime),
+    Column("org_id", Integer),
+    Column("created_by", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+    UniqueConstraint("alert_id", "ioc", "ioc_type", "source", name="uq_ioc_enrichment_records_key"),
+)
+
+forensic_integrity_sweeps = Table(
+    "forensic_integrity_sweeps",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("status", String),
+    Column("checked", Integer, server_default=text("0")),
+    Column("evidence_checked", Integer, server_default=text("0")),
+    Column("attachment_checked", Integer, server_default=text("0")),
+    Column("mismatches", Integer, server_default=text("0")),
+    Column("missing_files", Integer, server_default=text("0")),
+    Column("summary_json", Text),
+    Column("org_id", Integer),
+    Column("created_by", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+)
+
+detection_tuning_suggestions = Table(
+    "detection_tuning_suggestions",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("rule_id", String),
+    Column("rule_description", String),
+    Column("tactic", String),
+    Column("suggestion", Text),
+    Column("confidence", Integer),
+    Column("status", String, server_default=text("'open'")),
+    Column("source", String),
+    Column("context_json", Text),
+    Column("org_id", Integer),
+    Column("created_by", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+)
+
 case_attachments = Table(
     "case_attachments",
     metadata,
@@ -299,6 +464,10 @@ mitre_alerts = Table(
     Column("tactic", String),
     Column("technique", String),
     Column("technique_id", String),
+    Column("confidence", Integer),
+    Column("source", String),
+    Column("mapping_rank", Integer),
+    Column("created_at", DateTime, server_default=func.now()),
 )
 
 audit_logs = Table(
@@ -492,6 +661,314 @@ def init():
     else:
         allow_demo_users = str(allow_demo_users_env).strip().lower() in {"1", "true", "yes", "on"}
     with engine.begin() as conn:
+        # Best-effort schema evolution for existing deployments that already
+        # have mitre_alerts without confidence/source metadata columns.
+        try:
+            conn.execute(text("ALTER TABLE mitre_alerts ADD COLUMN IF NOT EXISTS confidence INTEGER"))
+            conn.execute(text("ALTER TABLE mitre_alerts ADD COLUMN IF NOT EXISTS source VARCHAR"))
+            conn.execute(text("ALTER TABLE mitre_alerts ADD COLUMN IF NOT EXISTS mapping_rank INTEGER"))
+            conn.execute(
+                text(
+                    "ALTER TABLE mitre_alerts ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+        except Exception:
+            # Keep startup resilient if backend is pointed to a restricted/legacy DB.
+            pass
+
+        # Best-effort schema evolution for incident operations tables introduced in v1.1.
+        try:
+            conn.execute(text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS title VARCHAR"))
+            conn.execute(text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS summary TEXT"))
+            conn.execute(text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'open'"))
+            conn.execute(text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS priority VARCHAR DEFAULT 'medium'"))
+            conn.execute(text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS owner VARCHAR"))
+            conn.execute(text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS due_at TIMESTAMP WITHOUT TIME ZONE"))
+            conn.execute(
+                text(
+                    "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS escalation_state "
+                    "VARCHAR DEFAULT 'normal'"
+                )
+            )
+            conn.execute(text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS correlation_key VARCHAR"))
+            conn.execute(
+                text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS first_event_time TIMESTAMP WITHOUT TIME ZONE")
+            )
+            conn.execute(
+                text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS last_event_time TIMESTAMP WITHOUT TIME ZONE")
+            )
+            conn.execute(text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS alert_count INTEGER DEFAULT 0"))
+            conn.execute(text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS org_id INTEGER"))
+            conn.execute(text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS created_by VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+
+            conn.execute(text("ALTER TABLE incident_alerts ADD COLUMN IF NOT EXISTS incident_id INTEGER"))
+            conn.execute(text("ALTER TABLE incident_alerts ADD COLUMN IF NOT EXISTS alert_id VARCHAR"))
+            conn.execute(text("ALTER TABLE incident_alerts ADD COLUMN IF NOT EXISTS agent_id VARCHAR"))
+            conn.execute(text("ALTER TABLE incident_alerts ADD COLUMN IF NOT EXISTS tactic VARCHAR"))
+            conn.execute(text("ALTER TABLE incident_alerts ADD COLUMN IF NOT EXISTS identity VARCHAR"))
+            conn.execute(text("ALTER TABLE incident_alerts ADD COLUMN IF NOT EXISTS matched_signals TEXT"))
+            conn.execute(
+                text(
+                    "ALTER TABLE incident_alerts ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+
+            conn.execute(text("ALTER TABLE incident_assignments ADD COLUMN IF NOT EXISTS incident_id INTEGER"))
+            conn.execute(text("ALTER TABLE incident_assignments ADD COLUMN IF NOT EXISTS previous_owner VARCHAR"))
+            conn.execute(text("ALTER TABLE incident_assignments ADD COLUMN IF NOT EXISTS new_owner VARCHAR"))
+            conn.execute(text("ALTER TABLE incident_assignments ADD COLUMN IF NOT EXISTS changed_by VARCHAR"))
+            conn.execute(text("ALTER TABLE incident_assignments ADD COLUMN IF NOT EXISTS note TEXT"))
+            conn.execute(
+                text(
+                    "ALTER TABLE incident_assignments ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+
+            conn.execute(text("ALTER TABLE incident_sla_events ADD COLUMN IF NOT EXISTS incident_id INTEGER"))
+            conn.execute(text("ALTER TABLE incident_sla_events ADD COLUMN IF NOT EXISTS event_type VARCHAR"))
+            conn.execute(text("ALTER TABLE incident_sla_events ADD COLUMN IF NOT EXISTS detail TEXT"))
+            conn.execute(text("ALTER TABLE incident_sla_events ADD COLUMN IF NOT EXISTS actor VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE incident_sla_events ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+        except Exception:
+            pass
+
+        # Best-effort schema evolution for governance/context tables introduced in v1.1.
+        try:
+            conn.execute(text("ALTER TABLE execution_context ADD COLUMN IF NOT EXISTS execution_id INTEGER"))
+            conn.execute(text("ALTER TABLE execution_context ADD COLUMN IF NOT EXISTS action_id VARCHAR"))
+            conn.execute(text("ALTER TABLE execution_context ADD COLUMN IF NOT EXISTS actor VARCHAR"))
+            conn.execute(text("ALTER TABLE execution_context ADD COLUMN IF NOT EXISTS target VARCHAR"))
+            conn.execute(text("ALTER TABLE execution_context ADD COLUMN IF NOT EXISTS started_at TIMESTAMP WITHOUT TIME ZONE"))
+            conn.execute(text("ALTER TABLE execution_context ADD COLUMN IF NOT EXISTS finished_at TIMESTAMP WITHOUT TIME ZONE"))
+            conn.execute(text("ALTER TABLE execution_context ADD COLUMN IF NOT EXISTS classification VARCHAR"))
+            conn.execute(text("ALTER TABLE execution_context ADD COLUMN IF NOT EXISTS reason TEXT"))
+            conn.execute(text("ALTER TABLE execution_context ADD COLUMN IF NOT EXISTS context_json TEXT"))
+            conn.execute(text("ALTER TABLE execution_context ADD COLUMN IF NOT EXISTS org_id INTEGER"))
+            conn.execute(text("ALTER TABLE execution_context ADD COLUMN IF NOT EXISTS created_by VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE execution_context ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE execution_context ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+
+            conn.execute(text("ALTER TABLE automation_context_profiles ADD COLUMN IF NOT EXISTS name VARCHAR"))
+            conn.execute(text("ALTER TABLE automation_context_profiles ADD COLUMN IF NOT EXISTS description TEXT"))
+            conn.execute(text("ALTER TABLE automation_context_profiles ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT TRUE"))
+            conn.execute(
+                text(
+                    "ALTER TABLE automation_context_profiles "
+                    "ADD COLUMN IF NOT EXISTS classification VARCHAR DEFAULT 'review_required'"
+                )
+            )
+            conn.execute(text("ALTER TABLE automation_context_profiles ADD COLUMN IF NOT EXISTS profile_json TEXT"))
+            conn.execute(text("ALTER TABLE automation_context_profiles ADD COLUMN IF NOT EXISTS org_id INTEGER"))
+            conn.execute(text("ALTER TABLE automation_context_profiles ADD COLUMN IF NOT EXISTS created_by VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE automation_context_profiles ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE automation_context_profiles ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+
+            conn.execute(text("ALTER TABLE alert_execution_correlation ADD COLUMN IF NOT EXISTS execution_id INTEGER"))
+            conn.execute(text("ALTER TABLE alert_execution_correlation ADD COLUMN IF NOT EXISTS alert_id VARCHAR"))
+            conn.execute(text("ALTER TABLE alert_execution_correlation ADD COLUMN IF NOT EXISTS agent_id VARCHAR"))
+            conn.execute(text("ALTER TABLE alert_execution_correlation ADD COLUMN IF NOT EXISTS classification VARCHAR"))
+            conn.execute(text("ALTER TABLE alert_execution_correlation ADD COLUMN IF NOT EXISTS confidence INTEGER"))
+            conn.execute(text("ALTER TABLE alert_execution_correlation ADD COLUMN IF NOT EXISTS reason TEXT"))
+            conn.execute(text("ALTER TABLE alert_execution_correlation ADD COLUMN IF NOT EXISTS matched_profile_ids TEXT"))
+            conn.execute(text("ALTER TABLE alert_execution_correlation ADD COLUMN IF NOT EXISTS org_id INTEGER"))
+            conn.execute(text("ALTER TABLE alert_execution_correlation ADD COLUMN IF NOT EXISTS created_by VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE alert_execution_correlation ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE alert_execution_correlation ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+
+            conn.execute(text("ALTER TABLE ioc_enrichment_records ADD COLUMN IF NOT EXISTS alert_id VARCHAR"))
+            conn.execute(text("ALTER TABLE ioc_enrichment_records ADD COLUMN IF NOT EXISTS ioc VARCHAR"))
+            conn.execute(text("ALTER TABLE ioc_enrichment_records ADD COLUMN IF NOT EXISTS ioc_type VARCHAR"))
+            conn.execute(text("ALTER TABLE ioc_enrichment_records ADD COLUMN IF NOT EXISTS source VARCHAR"))
+            conn.execute(text("ALTER TABLE ioc_enrichment_records ADD COLUMN IF NOT EXISTS score INTEGER"))
+            conn.execute(text("ALTER TABLE ioc_enrichment_records ADD COLUMN IF NOT EXISTS confidence INTEGER"))
+            conn.execute(text("ALTER TABLE ioc_enrichment_records ADD COLUMN IF NOT EXISTS verdict VARCHAR"))
+            conn.execute(text("ALTER TABLE ioc_enrichment_records ADD COLUMN IF NOT EXISTS evidence_json TEXT"))
+            conn.execute(text("ALTER TABLE ioc_enrichment_records ADD COLUMN IF NOT EXISTS observed_at TIMESTAMP WITHOUT TIME ZONE"))
+            conn.execute(text("ALTER TABLE ioc_enrichment_records ADD COLUMN IF NOT EXISTS org_id INTEGER"))
+            conn.execute(text("ALTER TABLE ioc_enrichment_records ADD COLUMN IF NOT EXISTS created_by VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE ioc_enrichment_records ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE ioc_enrichment_records ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+
+            conn.execute(text("ALTER TABLE forensic_integrity_sweeps ADD COLUMN IF NOT EXISTS status VARCHAR"))
+            conn.execute(text("ALTER TABLE forensic_integrity_sweeps ADD COLUMN IF NOT EXISTS checked INTEGER DEFAULT 0"))
+            conn.execute(
+                text("ALTER TABLE forensic_integrity_sweeps ADD COLUMN IF NOT EXISTS evidence_checked INTEGER DEFAULT 0")
+            )
+            conn.execute(
+                text("ALTER TABLE forensic_integrity_sweeps ADD COLUMN IF NOT EXISTS attachment_checked INTEGER DEFAULT 0")
+            )
+            conn.execute(
+                text("ALTER TABLE forensic_integrity_sweeps ADD COLUMN IF NOT EXISTS mismatches INTEGER DEFAULT 0")
+            )
+            conn.execute(
+                text("ALTER TABLE forensic_integrity_sweeps ADD COLUMN IF NOT EXISTS missing_files INTEGER DEFAULT 0")
+            )
+            conn.execute(text("ALTER TABLE forensic_integrity_sweeps ADD COLUMN IF NOT EXISTS summary_json TEXT"))
+            conn.execute(text("ALTER TABLE forensic_integrity_sweeps ADD COLUMN IF NOT EXISTS org_id INTEGER"))
+            conn.execute(text("ALTER TABLE forensic_integrity_sweeps ADD COLUMN IF NOT EXISTS created_by VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE forensic_integrity_sweeps ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE forensic_integrity_sweeps ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+
+            conn.execute(text("ALTER TABLE detection_tuning_suggestions ADD COLUMN IF NOT EXISTS rule_id VARCHAR"))
+            conn.execute(
+                text("ALTER TABLE detection_tuning_suggestions ADD COLUMN IF NOT EXISTS rule_description VARCHAR")
+            )
+            conn.execute(text("ALTER TABLE detection_tuning_suggestions ADD COLUMN IF NOT EXISTS tactic VARCHAR"))
+            conn.execute(text("ALTER TABLE detection_tuning_suggestions ADD COLUMN IF NOT EXISTS suggestion TEXT"))
+            conn.execute(text("ALTER TABLE detection_tuning_suggestions ADD COLUMN IF NOT EXISTS confidence INTEGER"))
+            conn.execute(
+                text("ALTER TABLE detection_tuning_suggestions ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'open'")
+            )
+            conn.execute(text("ALTER TABLE detection_tuning_suggestions ADD COLUMN IF NOT EXISTS source VARCHAR"))
+            conn.execute(text("ALTER TABLE detection_tuning_suggestions ADD COLUMN IF NOT EXISTS context_json TEXT"))
+            conn.execute(text("ALTER TABLE detection_tuning_suggestions ADD COLUMN IF NOT EXISTS org_id INTEGER"))
+            conn.execute(text("ALTER TABLE detection_tuning_suggestions ADD COLUMN IF NOT EXISTS created_by VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE detection_tuning_suggestions ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE detection_tuning_suggestions ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+        except Exception:
+            pass
+
+        try:
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents (status)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_incidents_owner ON incidents (owner)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_incidents_due_at ON incidents (due_at)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_incidents_org_id ON incidents (org_id)"))
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_incident_alerts_incident_alert "
+                    "ON incident_alerts (incident_id, alert_id)"
+                )
+            )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_incident_alerts_alert_id ON incident_alerts (alert_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_incident_assignments_incident_id ON incident_assignments (incident_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_incident_sla_events_incident_id ON incident_sla_events (incident_id)"))
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_execution_context_execution_id "
+                    "ON execution_context (execution_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_automation_context_profiles_org_enabled "
+                    "ON automation_context_profiles (org_id, enabled)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_execution_correlation_exec_alert "
+                    "ON alert_execution_correlation (execution_id, alert_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_alert_execution_correlation_execution_id "
+                    "ON alert_execution_correlation (execution_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_alert_execution_correlation_alert_id "
+                    "ON alert_execution_correlation (alert_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ioc_enrichment_records_key "
+                    "ON ioc_enrichment_records (alert_id, ioc, ioc_type, source)"
+                )
+            )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ioc_enrichment_records_alert_id ON ioc_enrichment_records (alert_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_forensic_integrity_sweeps_created_at ON forensic_integrity_sweeps (created_at)"))
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_detection_tuning_suggestions_status "
+                    "ON detection_tuning_suggestions (status)"
+                )
+            )
+        except Exception:
+            pass
+
         org_id = conn.execute(
             text("SELECT id FROM orgs ORDER BY id LIMIT 1")
         ).scalar()

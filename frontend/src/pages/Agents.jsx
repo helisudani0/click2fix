@@ -97,6 +97,22 @@ const severityClass = (level) => {
   return "success";
 };
 
+const normalizeScaResult = (value) => {
+  const token = String(value || "").trim().toLowerCase().replace(/_/g, " ");
+  if (["pass", "passed", "ok", "success"].includes(token)) return "passed";
+  if (["fail", "failed", "error"].includes(token)) return "failed";
+  if (["not applicable", "n/a", "na", "invalid"].includes(token)) return "not applicable";
+  return token || "unknown";
+};
+
+const scaResultClass = (value) => {
+  const result = normalizeScaResult(value);
+  if (result === "passed") return "success";
+  if (result === "failed") return "failed";
+  if (result === "not applicable") return "pending";
+  return "neutral";
+};
+
 const formatAgentId = (raw) => {
   if (raw === null || raw === undefined) return "";
   if (typeof raw === "number") return String(raw).padStart(3, "0");
@@ -250,6 +266,11 @@ export default function Agents() {
   const [scaItems, setScaItems] = useState([]);
   const [scaSource, setScaSource] = useState("");
   const [scaError, setScaError] = useState("");
+  const [scaPolicies, setScaPolicies] = useState([]);
+  const [scaRecommendations, setScaRecommendations] = useState([]);
+  const [scaTelemetry, setScaTelemetry] = useState({});
+  const [scaCheckFilter, setScaCheckFilter] = useState("failed");
+  const [scaCheckSearch, setScaCheckSearch] = useState("");
   const [agentAlerts, setAgentAlerts] = useState([]);
   const [detailError, setDetailError] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -357,7 +378,12 @@ export default function Agents() {
       getAgentEvents(agentId, 24),
       getAgentMitre(agentId),
       getAgentFim(agentId, 50),
-      getAgentSca(agentId, 5),
+      getAgentSca(agentId, {
+        limit: 200,
+        includeChecks: true,
+        checksLimit: 20000,
+        recommendationLimit: 40,
+      }),
       getAlerts("", 50, { agentId, agentOnly: true }),
     ])
       .then((results) => {
@@ -406,9 +432,15 @@ export default function Agents() {
           return right - left;
         });
         setFimEvents(fimItems);
-        setScaItems(Array.isArray(scaRes.data?.items) ? scaRes.data.items : []);
-        setScaSource(scaRes.data?.source || "");
-        setScaError(scaRes.data?.error || readError(6) || "");
+        const scaPayload = scaRes.data || {};
+        setScaItems(Array.isArray(scaPayload?.items) ? scaPayload.items : []);
+        setScaPolicies(Array.isArray(scaPayload?.policies) ? scaPayload.policies : []);
+        setScaRecommendations(Array.isArray(scaPayload?.recommendations) ? scaPayload.recommendations : []);
+        setScaTelemetry(scaPayload?.telemetry_context && typeof scaPayload.telemetry_context === "object"
+          ? scaPayload.telemetry_context
+          : {});
+        setScaSource(scaPayload?.source || "");
+        setScaError(scaPayload?.error || readError(6) || "");
         setAgentAlerts(normalizeAlerts(alertRes.data).sort(byNewestAlert));
 
         const criticalError = readError(0) || readError(1);
@@ -425,6 +457,9 @@ export default function Agents() {
         setMitreTactics([]);
         setFimEvents([]);
         setScaItems([]);
+        setScaPolicies([]);
+        setScaRecommendations([]);
+        setScaTelemetry({});
       })
       .finally(() => {
         if (withLoading && selectedAgentRef.current === agentId) {
@@ -437,6 +472,10 @@ export default function Agents() {
     if (!selectedAgentId) {
       setDetailLoading(false);
       setAgentDetail(null);
+      setScaItems([]);
+      setScaPolicies([]);
+      setScaRecommendations([]);
+      setScaTelemetry({});
       return;
     }
     setDetailError(null);
@@ -952,10 +991,13 @@ export default function Agents() {
   }, [mitreTactics]);
 
   const complianceRows = useMemo(() => {
-    const rows = Array.isArray(scaItems) ? scaItems : [];
+    const rows = Array.isArray(scaPolicies) && scaPolicies.length
+      ? scaPolicies
+      : (Array.isArray(scaItems) ? scaItems : []);
     return rows.map((row, idx) => {
       const policy =
         toDisplay(
+          row?.policy_name ||
           row?.policy?.name ||
           row?.policy_name ||
           row?.name ||
@@ -974,6 +1016,7 @@ export default function Agents() {
         row?.fail ||
         row?.failed ||
         row?.checks_failed ||
+        row?.checks_summary?.failed ||
         row?.result?.fail ||
         0;
       const notApplicable =
@@ -981,6 +1024,7 @@ export default function Agents() {
         row?.invalid ||
         row?.not_applicable ||
         row?.checks_not_applicable ||
+        row?.checks_summary?.not_applicable ||
         0;
       const score =
         row?.summary?.score ||
@@ -1009,9 +1053,8 @@ export default function Agents() {
         const da = parseWazuhTimestamp(a.endScan);
         const db = parseWazuhTimestamp(b.endScan);
         return (db?.getTime() || 0) - (da?.getTime() || 0);
-      })
-      .slice(0, 5);
-  }, [scaItems]);
+      });
+  }, [scaItems, scaPolicies]);
 
   const complianceSummary = useMemo(() => {
     if (!complianceRows.length) {
@@ -1027,6 +1070,64 @@ export default function Agents() {
       endScan: latest.endScan,
     };
   }, [complianceRows]);
+
+  const scaChecks = useMemo(() => {
+    if (!Array.isArray(scaPolicies) || scaPolicies.length === 0) return [];
+    const rows = [];
+    scaPolicies.forEach((policy) => {
+      const checks = Array.isArray(policy?.checks) ? policy.checks : [];
+      checks.forEach((check, idx) => {
+        rows.push({
+          key: `${policy?.policy_id || policy?.policy_name || "policy"}-${check?.id || idx + 1}-${idx}`,
+          policyId: policy?.policy_id || "",
+          policyName: toDisplay(policy?.policy_name || policy?.name || policy?.policy_id, "Policy"),
+          id: toDisplay(check?.id || check?.check_id, String(idx + 1)),
+          title: toDisplay(check?.title || check?.name, `Check ${idx + 1}`),
+          result: normalizeScaResult(check?.result || check?.status),
+          reason: toDisplay(check?.reason, ""),
+          description: toDisplay(check?.description, ""),
+          remediation: toDisplay(check?.remediation, ""),
+        });
+      });
+    });
+    return rows;
+  }, [scaPolicies]);
+
+  const scaChecksSummary = useMemo(() => {
+    const summary = { passed: 0, failed: 0, notApplicable: 0, unknown: 0, total: 0 };
+    scaChecks.forEach((check) => {
+      const result = normalizeScaResult(check?.result);
+      if (result === "passed") summary.passed += 1;
+      else if (result === "failed") summary.failed += 1;
+      else if (result === "not applicable") summary.notApplicable += 1;
+      else summary.unknown += 1;
+    });
+    summary.total = summary.passed + summary.failed + summary.notApplicable + summary.unknown;
+    return summary;
+  }, [scaChecks]);
+
+  const filteredScaChecks = useMemo(() => {
+    const filterValue = normalizeScaResult(scaCheckFilter);
+    const query = String(scaCheckSearch || "").trim().toLowerCase();
+    return scaChecks.filter((check) => {
+      const result = normalizeScaResult(check?.result);
+      if (filterValue !== "all" && result !== filterValue) return false;
+      if (!query) return true;
+      const haystack = [
+        check?.policyName,
+        check?.policyId,
+        check?.id,
+        check?.title,
+        check?.reason,
+        check?.description,
+        check?.remediation,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [scaCheckFilter, scaCheckSearch, scaChecks]);
 
   const recommendations = useMemo(() => {
     const names = new Set((actions || []).map((a) => a.id));
@@ -1652,6 +1753,153 @@ export default function Agents() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid-2">
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <h3>SCA Hardening Priorities</h3>
+              <p className="muted">Failed checks ranked from this agent's alerts, vulnerabilities, FIM, and MITRE context.</p>
+            </div>
+            <span className="chip">Top {scaRecommendations.length}</span>
+          </div>
+          <div className="grid-4 mb-12">
+            <div className="stat-card">
+              <div className="stat-label">High Alerts</div>
+              <div className="stat-value">{toNumber(scaTelemetry?.alerts_high, 0)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Critical Vulns</div>
+              <div className="stat-value">{toNumber(scaTelemetry?.vulnerabilities_critical, 0)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">FIM Events</div>
+              <div className="stat-value">{toNumber(scaTelemetry?.fim_events, 0)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Failed Checks</div>
+              <div className="stat-value">{scaChecksSummary.failed}</div>
+            </div>
+          </div>
+          {scaRecommendations.length === 0 ? (
+            <div className="empty-state">No ranked failed checks available for this agent yet.</div>
+          ) : (
+            <div className="list">
+              {scaRecommendations.map((rec) => (
+                <div key={`${rec.policy_id || rec.policy_name}-${rec.check_id}-${rec.rank}`} className="list-item">
+                  <div className="list-item split">
+                    <div>
+                      <strong>
+                        #{toDisplay(rec.rank)} | {toDisplay(rec.policy_name)} | Check {toDisplay(rec.check_id)}
+                      </strong>
+                      <div className="meta-line">{toDisplay(rec.title)}</div>
+                    </div>
+                    <span className={`status-pill ${riskClass(rec.priority)}`}>
+                      {toDisplay(rec.priority)}
+                    </span>
+                  </div>
+                  <div className="meta-line mt-6">{toDisplay(rec.reason)}</div>
+                  {rec.remediation && (
+                    <div className="meta-line mt-6">
+                      Remediation: {toDisplay(rec.remediation)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <h3>Full SCA Checks</h3>
+              <p className="muted">All checks from all policy snapshots for this agent.</p>
+            </div>
+            <span className="chip">Total {scaChecksSummary.total}</span>
+          </div>
+          <div className="page-actions mb-12">
+            <select
+              className="input"
+              value={scaCheckFilter}
+              onChange={(e) => setScaCheckFilter(e.target.value)}
+            >
+              <option value="failed">Failed only</option>
+              <option value="passed">Passed only</option>
+              <option value="not applicable">Not applicable</option>
+              <option value="unknown">Unknown</option>
+              <option value="all">All</option>
+            </select>
+            <input
+              className="input"
+              value={scaCheckSearch}
+              onChange={(e) => setScaCheckSearch(e.target.value)}
+              placeholder="Search check ID, title, remediation, policy"
+            />
+          </div>
+          <div className="grid-4 mb-12">
+            <div className="stat-card">
+              <div className="stat-label">Passed</div>
+              <div className="stat-value">{scaChecksSummary.passed}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Failed</div>
+              <div className="stat-value">{scaChecksSummary.failed}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Not Applicable</div>
+              <div className="stat-value">{scaChecksSummary.notApplicable}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Unknown</div>
+              <div className="stat-value">{scaChecksSummary.unknown}</div>
+            </div>
+          </div>
+          <div className="table-scroll">
+            <table className="table compact">
+              <thead>
+                <tr>
+                  <th>Policy</th>
+                  <th>Check</th>
+                  <th>Result</th>
+                  <th>Title</th>
+                  <th>Reason</th>
+                  <th>Remediation</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredScaChecks.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="text-center">
+                      No checks match this filter.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredScaChecks.slice(0, 600).map((check) => (
+                    <tr key={check.key}>
+                      <td>{toDisplay(check.policyName)}</td>
+                      <td>{toDisplay(check.id)}</td>
+                      <td>
+                        <span className={`status-pill ${scaResultClass(check.result)}`}>
+                          {toDisplay(check.result)}
+                        </span>
+                      </td>
+                      <td>{toDisplay(check.title)}</td>
+                      <td>{toDisplay(check.reason, "-")}</td>
+                      <td>{toDisplay(check.remediation, "-")}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          {filteredScaChecks.length > 600 && (
+            <div className="meta-line mt-8">
+              Showing first 600 checks. Refine filter/search to narrow results.
             </div>
           )}
         </div>

@@ -8,6 +8,7 @@ from sqlalchemy import text
 
 from core.audit import log_audit
 from core.settings import SETTINGS
+from core.time_utils import utc_now_naive
 from db.database import connect
 
 ATTACHMENTS_ROOT = (
@@ -231,6 +232,42 @@ def run_integrity_sweep(max_items: int = 2000) -> Dict[str, Any]:
         "ok": mismatches == 0,
         "issues": issues[:200],
     }
+
+    try:
+        sweep_db = connect()
+        try:
+            now = utc_now_naive()
+            sweep_db.execute(
+                text(
+                    """
+                    INSERT INTO forensic_integrity_sweeps
+                    (status, checked, evidence_checked, attachment_checked, mismatches, missing_files,
+                     summary_json, org_id, created_by, created_at, updated_at)
+                    VALUES
+                    (:status, :checked, :evidence_checked, :attachment_checked, :mismatches, :missing_files,
+                     :summary_json, :org_id, :created_by, :created_at, :updated_at)
+                    """
+                ),
+                {
+                    "status": "ok" if summary["ok"] else "drift_detected",
+                    "checked": int(summary["checked"]),
+                    "evidence_checked": int(summary["evidence_checked"]),
+                    "attachment_checked": int(summary["attachment_checked"]),
+                    "mismatches": int(summary["mismatches"]),
+                    "missing_files": int(summary["missing_files"]),
+                    "summary_json": str(summary),
+                    "org_id": None,
+                    "created_by": "scheduler",
+                    "created_at": now,
+                    "updated_at": now,
+                },
+            )
+            sweep_db.commit()
+        finally:
+            sweep_db.close()
+    except Exception:
+        # Keep sweep execution resilient even if summary persistence is unavailable.
+        pass
 
     log_audit(
         "integrity_sweep_completed",

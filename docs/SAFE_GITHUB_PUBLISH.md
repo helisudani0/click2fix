@@ -74,11 +74,11 @@ git remote add origin https://github.com/<owner>/<repo>.git
 git push -u origin main
 ```
 
-## 7. Publish first customer release
+## 7. Publish release tag (example: v1.1.0)
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 Then share:

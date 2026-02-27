@@ -600,6 +600,7 @@
         sessionUser: null,
         responseCommands: [],
         openApiEntries: [],
+        accessToken: "",
       };
       const OPS_TIMEZONE = "Asia/Kolkata";
 
@@ -665,6 +666,17 @@
         const escaped = String(name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const match = document.cookie.match(new RegExp(`(?:^|; )${escaped}=([^;]*)`));
         return match ? decodeURIComponent(match[1]) : "";
+      }
+
+      function bootstrapTokenFromQuery() {
+        try {
+          const url = new URL(window.location.href);
+          const token = String(url.searchParams.get("token") || "").trim();
+          if (!token) return;
+          state.accessToken = token;
+          url.searchParams.delete("token");
+          window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+        } catch {}
       }
 
       function applyCsrfHeader(headers, method) {
@@ -743,6 +755,9 @@
 
       async function apiFetch(path, options = {}) {
         const headers = { ...(options.headers || {}) };
+        if (state.accessToken && !headers.Authorization) {
+          headers.Authorization = `Bearer ${state.accessToken}`;
+        }
         applyCsrfHeader(headers, options.method || "GET");
         const response = await fetch(path, { ...options, headers, credentials: "same-origin" });
         if (response.status === 401 && path !== "/api/auth/me") {
@@ -1471,6 +1486,7 @@
       });
 
       setUserInfo();
+      bootstrapTokenFromQuery();
       loadOpenApi();
       refreshSession().finally(loadAll);
     </script>

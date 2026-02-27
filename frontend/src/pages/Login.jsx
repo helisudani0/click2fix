@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api, { decodeLegacyTokenPayload, getLegacyToken, setLegacyToken } from "../api/client";
-import { UI_APP_VERSION } from "../utils/appVersion";
+import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -10,6 +10,7 @@ export default function Login() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [ssoLoading, setSsoLoading] = useState(false);
+  const [appVersion, setAppVersion] = useState(UI_APP_VERSION);
 
   useEffect(() => {
     let active = true;
@@ -37,6 +38,23 @@ export default function Login() {
       active = false;
     };
   }, [navigate]);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .get("/system/version")
+      .then((res) => {
+        if (!active) return;
+        setAppVersion(resolveDisplayVersion(res?.data?.version));
+      })
+      .catch(() => {
+        if (!active) return;
+        setAppVersion(UI_APP_VERSION);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -69,7 +87,7 @@ export default function Login() {
           <div>
             <div className="brand-title">Click2Fix</div>
             <div className="brand-subtitle">SOAR Console</div>
-            <div className="brand-version">Version {UI_APP_VERSION}</div>
+            <div className="brand-version">Version {appVersion}</div>
           </div>
         </div>
 

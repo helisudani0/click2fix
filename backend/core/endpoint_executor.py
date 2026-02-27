@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from fastapi import HTTPException
 from sqlalchemy import text
 
+from core.audit import log_audit
 from core.indexer_client import IndexerClient
 from core.settings import SETTINGS
 
@@ -128,6 +129,7 @@ class EndpointExecutor:
             ),
         )
         self.circuit_breaker_memory_limit_bytes = self._resolve_memory_limit_bytes()
+        self._circuit_breaker_last_state = "unknown"
 
         self.windows_cfg = {
             "enabled": _bool(
@@ -470,31 +472,82 @@ class EndpointExecutor:
         if snapshot is None:
             return
         threshold = float(self.circuit_breaker_threshold_percent)
-        if snapshot["usage_percent"] < threshold:
-            return
 
-        started = time.time()
-        pause_emitted = False
-        while snapshot["usage_percent"] >= threshold:
-            if not pause_emitted and event_sink:
+        def _emit_circuit_breaker_state(state: str, message: str, current_snapshot: Dict[str, float]) -> None:
+            previous_state = str(getattr(self, "_circuit_breaker_last_state", "unknown") or "unknown")
+            if previous_state == state:
+                return
+            self._circuit_breaker_last_state = state
+            status_map = {
+                "normal": "NORMAL",
+                "throttle": "THROTTLE",
+                "pause_ingest": "PAUSED",
+                "resume_ingest": "RESUMED",
+            }
+            if event_sink:
                 try:
                     event_sink(
                         {
                             "type": "circuit_breaker",
                             "step": "endpoint",
-                            "status": "PAUSED",
-                            "stdout": (
-                                f"Pausing new target ingestion for action={action_id}: "
-                                f"memory usage {snapshot['usage_percent']:.1f}% "
-                                f"(threshold {threshold:.1f}%)"
-                            ),
+                            "state": state,
+                            "previous_state": previous_state,
+                            "status": status_map.get(state, "INFO"),
+                            "stdout": message,
                             "stderr": "",
+                            "usage_percent": current_snapshot.get("usage_percent"),
+                            "threshold_percent": threshold,
                         }
                     )
                 except Exception:
                     pass
-                pause_emitted = True
+            try:
+                log_audit(
+                    "circuit_breaker_state_transition",
+                    actor="system",
+                    entity_type="orchestration",
+                    entity_id=str(action_id),
+                    detail=(
+                        f"from={previous_state}; to={state}; usage={current_snapshot.get('usage_percent', 0):.1f}; "
+                        f"threshold={threshold:.1f}; message={message}"
+                    ),
+                    org_id=None,
+                    ip_address=None,
+                )
+            except Exception:
+                pass
 
+        if snapshot["usage_percent"] < threshold:
+            if snapshot["usage_percent"] >= max(0.0, threshold - 5.0):
+                _emit_circuit_breaker_state(
+                    "throttle",
+                    (
+                        f"Memory pressure approaching threshold for action={action_id}: "
+                        f"{snapshot['usage_percent']:.1f}% / {threshold:.1f}%"
+                    ),
+                    snapshot,
+                )
+            else:
+                _emit_circuit_breaker_state(
+                    "normal",
+                    (
+                        f"Memory pressure normal for action={action_id}: "
+                        f"{snapshot['usage_percent']:.1f}% / {threshold:.1f}%"
+                    ),
+                    snapshot,
+                )
+            return
+
+        started = time.time()
+        _emit_circuit_breaker_state(
+            "pause_ingest",
+            (
+                f"Pausing new target ingestion for action={action_id}: "
+                f"memory usage {snapshot['usage_percent']:.1f}% (threshold {threshold:.1f}%)"
+            ),
+            snapshot,
+        )
+        while snapshot["usage_percent"] >= threshold:
             if (time.time() - started) >= float(self.circuit_breaker_max_pause_seconds):
                 raise HTTPException(
                     status_code=503,
@@ -510,19 +563,12 @@ class EndpointExecutor:
             if snapshot is None:
                 break
 
-        if pause_emitted and event_sink:
-            try:
-                event_sink(
-                    {
-                        "type": "circuit_breaker",
-                        "step": "endpoint",
-                        "status": "RESUMED",
-                        "stdout": f"Resumed target ingestion for action={action_id}",
-                        "stderr": "",
-                    }
-                )
-            except Exception:
-                pass
+        if snapshot is not None:
+            _emit_circuit_breaker_state(
+                "resume_ingest",
+                f"Resumed target ingestion for action={action_id}",
+                snapshot,
+            )
 
     def _windows_action_script_path(self, action_id: str) -> str:
         safe = str(action_id or "action").strip().lower().replace("/", "-").replace("\\", "-")

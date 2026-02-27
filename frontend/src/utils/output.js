@@ -1,3 +1,4 @@
+/* eslint-disable no-control-regex */
 const ANSI_ESCAPE_RE = /\x1B\[[0-9;]*[A-Za-z]/g;
 const SPINNER_LINE_RE = /^[-\\|/\s]+$/;
 const PROGRESS_BAR_RE = /^[\s\u2580-\u259F]+(?:\d{1,3}%|[\d.,]+\s*(KB|MB|GB)\s*\/\s*[\d.,]+\s*(KB|MB|GB))?$/i;
@@ -92,10 +93,17 @@ export const buildHumanReadableOutput = (stdout, stderr, options = {}) => {
   const detail = cleanStderr || cleanStdout;
   if (!detail) {
     const normalizedStatus = String(options?.status || "").trim().toUpperCase();
+    const targetOk = options?.ok;
     if (normalizedStatus === "SUCCESS") {
       return "Command completed successfully with no output. If this was a filter/query command, no matching results were returned.";
     }
     if (["FAILED", "ERROR", "KILLED"].includes(normalizedStatus)) {
+      return "Command failed with no output. Check Endpoint Issues and Execution Steps for details.";
+    }
+    if (targetOk === true) {
+      return "Command completed successfully with no output. If this was a filter/query command, no matching results were returned.";
+    }
+    if (targetOk === false) {
       return "Command failed with no output. Check Endpoint Issues and Execution Steps for details.";
     }
     return "";

@@ -344,6 +344,14 @@ export default function Analytics() {
                   <div className="muted">{alertSummary.rule || "n/a"}</div>
                 </div>
                 <div className="list-item">
+                  <div>Primary MITRE</div>
+                  <div className="muted">
+                    {alertSummary.mitre?.primary
+                      ? `${alertSummary.mitre.primary.tactic || "Unknown"} / ${alertSummary.mitre.primary.technique_id || alertSummary.mitre.primary.technique || "Unknown"} (confidence ${alertSummary.mitre.primary.confidence ?? 0}%)${alertSummary.mitre.primary.source ? ` via ${alertSummary.mitre.primary.source}` : ""}`
+                      : "n/a"}
+                  </div>
+                </div>
+                <div className="list-item">
                   <div>Impact</div>
                   <div className="muted">{alertSummary.impact || "n/a"}</div>
                 </div>
@@ -363,11 +371,25 @@ export default function Analytics() {
                 </div>
                 <div className="list-item">
                   <div>IOC Matches</div>
-                  <div className="muted">{(alertSummary.iocs || []).length} indicators</div>
+                  <div className="muted">
+                    {alertSummary.ioc_summary?.unique_indicators ?? (alertSummary.iocs || []).length} unique
+                    {alertSummary.ioc_summary?.high_confidence_indicators ? ` | ${alertSummary.ioc_summary.high_confidence_indicators} high confidence` : ""}
+                  </div>
                 </div>
                 <div className="list-item">
                   <div>Event Time</div>
                   <div className="muted">{formatWazuhTimestamp(alertSummary.event_time) || "n/a"}</div>
+                </div>
+                <div className="list-item">
+                  <div>Top IOC(s)</div>
+                  <div className="muted">
+                    {Array.isArray(alertSummary.ioc_summary?.top_indicators) && alertSummary.ioc_summary.top_indicators.length
+                      ? alertSummary.ioc_summary.top_indicators
+                          .slice(0, 3)
+                          .map((ioc) => `${ioc.ioc || "unknown"} (${ioc.ioc_type || "unknown"}, ${ioc.score ?? 0})`)
+                          .join(" | ")
+                      : "n/a"}
+                  </div>
                 </div>
               </div>
             </div>

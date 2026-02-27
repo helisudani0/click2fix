@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 # Import all routers including websocket streams
-from api import actions, agents, alerts, approvals, audit, auth, cases, changes, dashboard, executions, orgs, playbooks, remediation, scheduler, system, vulnerabilities, ioc, analytics, integration, ops, forensics, ws, ws_exec
+from api import actions, agents, alerts, analytics, approvals, audit, auth, cases, changes, dashboard, executions, forensics, governance, incidents, integration, ioc, ops, orgs, playbooks, remediation, scheduler, system, vulnerabilities, ws, ws_exec
 from core.http_security import (
     CSRFMiddleware,
     InMemoryRateLimitMiddleware,
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Click2Fix SOAR API",
     description="Wazuh Vulnerability & Incident Response Orchestration",
-    version="1.0.0"
+    version="1.1.0"
 )
 
 
@@ -184,6 +184,8 @@ app.include_router(system.router, prefix="/api", tags=["System"])
 app.include_router(vulnerabilities.router, prefix="/api", tags=["Vulnerabilities"])
 app.include_router(ioc.router, prefix="/api", tags=["IOC"])
 app.include_router(analytics.router, prefix="/api", tags=["Analytics"])
+app.include_router(incidents.router, prefix="/api", tags=["Incidents"])
+app.include_router(governance.router, prefix="/api", tags=["Governance"])
 app.include_router(integration.router, prefix="/api", tags=["Integration"])
 app.include_router(forensics.router, prefix="/api", tags=["Forensics"])
 app.include_router(orgs.router, prefix="/api", tags=["Orgs"])

@@ -13,8 +13,8 @@ def analytics_overview(user=Depends(current_user)):
 
 
 @router.get("/kill-chain")
-def analytics_kill_chain(case_id: int | None = None, user=Depends(current_user)):
-    return kill_chain(case_id)
+def analytics_kill_chain(case_id: int | None = None, hours: int = 24, user=Depends(current_user)):
+    return kill_chain(case_id, hours=hours)
 
 
 @router.get("/alert/{alert_id}")

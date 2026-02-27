@@ -170,8 +170,20 @@ export const getAgentEvents = (agentId, hours = 24) =>
 export const getAgentFim = (agentId, limit = 50) =>
   api.get(`/agents/${agentId}/fim`, { params: { limit } });
 export const getAgentMitre = (agentId) => api.get(`/agents/${agentId}/mitre`);
-export const getAgentSca = (agentId, limit = 10) =>
-  api.get(`/agents/${agentId}/sca`, { params: { limit } });
+export const getAgentSca = (agentId, options = {}) => {
+  const params = {};
+  if (typeof options === "number") {
+    params.limit = options;
+  } else if (options && typeof options === "object") {
+    if (options.limit) params.limit = options.limit;
+    if (typeof options.includeChecks === "boolean") params.include_checks = options.includeChecks;
+    if (options.checksLimit) params.checks_limit = options.checksLimit;
+    if (options.recommendationLimit) params.recommendation_limit = options.recommendationLimit;
+  }
+  return api.get(`/agents/${agentId}/sca`, { params: Object.keys(params).length ? params : undefined });
+};
+export const getFleetScaHardening = (params = {}) =>
+  api.get("/agents/sca/fleet", { params });
 export const getPlaybooks = () => api.get("/playbooks");
 export const getPlaybook = (name) => api.get(`/playbooks/${name}`);
 export const generatePlaybook = (payload) => api.post("/playbooks/generate", payload);
@@ -185,6 +197,30 @@ export const getKillChain = (caseId) =>
 export const getAlertSummary = (alertId) => api.get(`/analytics/alert/${alertId}`);
 export const getHourlyVolume = (hours = 72) =>
   api.get("/analytics/hourly", { params: { hours } });
+export const correlateIncidents = (payload = {}) =>
+  api.post("/incidents/correlate", payload);
+export const getIncidents = (params = {}) =>
+  api.get("/incidents", { params });
+export const updateIncident = (incidentId, payload = {}) =>
+  api.patch(`/incidents/${incidentId}`, payload);
+export const assignIncident = (incidentId, payload = {}) =>
+  api.post(`/incidents/${incidentId}/assign`, payload);
+export const createAutomationContextProfile = (payload = {}) =>
+  api.post("/governance/automation-context/profiles", payload);
+export const getAutomationContextProfiles = (params = {}) =>
+  api.get("/governance/automation-context/profiles", { params });
+export const validateAutomationContext = (payload = {}) =>
+  api.post("/governance/automation-context/validate", payload);
+export const getCorrelatedExecutionAlerts = (executionId, params = {}) =>
+  api.get("/governance/alerts/correlated", {
+    params: { execution_id: executionId, ...params },
+  });
+export const getSchedulerJobs = () => api.get("/scheduler/jobs");
+export const createSchedulerJob = (payload = {}) => api.post("/scheduler/jobs", payload);
+export const updateSchedulerJob = (jobId, payload = {}) =>
+  api.patch(`/scheduler/jobs/${jobId}`, payload);
+export const runSchedulerJobNow = (jobId) =>
+  api.post(`/scheduler/jobs/${jobId}/run-now`);
 export const getAudit = (params) => api.get("/audit", { params });
 export const getChanges = (params) => api.get("/changes", { params });
 export const createChange = (payload) => api.post("/changes", payload);

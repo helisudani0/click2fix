@@ -1,3 +1,5 @@
+import os
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
 
@@ -152,6 +154,29 @@ def _safe_settings() -> dict:
         },
         "approval_policy": approval_policy,
     }
+
+
+def _normalize_version_label(raw: str | None) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    if text.lower() in {"latest", "dev"}:
+        return text.lower()
+    return text if text.lower().startswith("v") else f"v{text}"
+
+
+@router.get("/version")
+def system_version():
+    candidates = [
+        os.getenv("C2F_IMAGE_TAG"),
+        os.getenv("APP_VERSION"),
+        os.getenv("CLICK2FIX_VERSION"),
+        os.getenv("VITE_APP_VERSION"),
+    ]
+    version = next((v for v in (_normalize_version_label(x) for x in candidates) if v), "")
+    if not version:
+        version = _normalize_version_label(os.getenv("IMAGE_TAG")) or "dev"
+    return {"version": version, "source": "env"}
 
 
 @router.get("/overview")

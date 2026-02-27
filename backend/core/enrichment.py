@@ -13,6 +13,7 @@ from requests.adapters import HTTPAdapter
 from sqlalchemy import text
 
 from core.settings import SETTINGS
+from core.time_utils import utc_now_naive
 from db.database import connect
 
 _IPV4_RE = re.compile(
@@ -40,6 +41,13 @@ _HASH_HINTS = {"hash", "sha256", "sha1", "md5", "checksum", "filehash"}
 _DOMAIN_HINTS = {"domain", "hostname", "dns", "query", "fqdn"}
 _URL_HINTS = {"url", "uri", "request", "link"}
 
+_VERDICT_RANK = {
+    "unknown": 0,
+    "low_confidence": 1,
+    "suspicious": 2,
+    "malicious": 3,
+}
+
 
 def _to_bool(value: Any, default: bool = False) -> bool:
     if isinstance(value, bool):
@@ -54,6 +62,13 @@ def _to_bool(value: Any, default: bool = False) -> bool:
 def _to_int(value: Any, default: int) -> int:
     try:
         return int(value)
+    except Exception:
+        return default
+
+
+def _to_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
     except Exception:
         return default
 
@@ -73,6 +88,14 @@ def _verdict_from_score(score: int) -> str:
     if score > 0:
         return "low_confidence"
     return "unknown"
+
+
+def _preferred_verdict(existing: Any, incoming: Any) -> str:
+    existing_text = str(existing or "unknown").strip().lower() or "unknown"
+    incoming_text = str(incoming or "unknown").strip().lower() or "unknown"
+    if _VERDICT_RANK.get(incoming_text, 0) > _VERDICT_RANK.get(existing_text, 0):
+        return incoming_text
+    return existing_text
 
 
 def _walk_values(value: Any, path: str = "") -> Iterable[tuple[str, Any]]:
@@ -187,6 +210,11 @@ class IOCEnricher:
         self.otx_base = str(cfg.get("otx_base_url", "https://otx.alienvault.com")).rstrip("/")
         self.abuse_base = str(cfg.get("abuse_ch_base_url", "https://threatfox-api.abuse.ch")).rstrip("/")
         self.otx_api_key = os.getenv("OTX_API_KEY", str(cfg.get("otx_api_key", "") or "")).strip()
+        configured_weights = cfg.get("source_weights", {}) if isinstance(cfg.get("source_weights"), dict) else {}
+        self.source_weights = {
+            "alienvault_otx": max(0.1, _to_float(configured_weights.get("alienvault_otx", 0.95), 0.95)),
+            "abuse_ch_threatfox": max(0.1, _to_float(configured_weights.get("abuse_ch_threatfox", 1.0), 1.0)),
+        }
         self.session = requests.Session()
         adapter = HTTPAdapter(pool_connections=20, pool_maxsize=100, max_retries=2)
         self.session.mount("https://", adapter)
@@ -388,7 +416,19 @@ class IOCEnricher:
             scores = [int(item.get("score") or 0) for item in findings]
             max_score = max(scores)
             avg_score = int(round(sum(scores) / max(1, len(scores))))
-            combined_score = int(round((max_score * 0.7) + (avg_score * 0.3)))
+            weighted_sum = 0.0
+            weight_total = 0.0
+            for item in findings:
+                source = str(item.get("source") or "").strip()
+                score = int(item.get("score") or 0)
+                weight = float(self.source_weights.get(source, 1.0))
+                weighted_sum += score * weight
+                weight_total += weight
+            weighted_avg = int(round(weighted_sum / weight_total)) if weight_total > 0 else avg_score
+            corroboration_bonus = min(10, max(0, (len(findings) - 1) * 4))
+            combined_score = int(
+                round((max_score * 0.45) + (weighted_avg * 0.45) + (corroboration_bonus * 0.10))
+            )
             findings.append(
                 {
                     "source": "normalized_combined",
@@ -398,6 +438,13 @@ class IOCEnricher:
                         "sources": [item.get("source") for item in findings],
                         "max_score": max_score,
                         "avg_score": avg_score,
+                        "weighted_avg": weighted_avg,
+                        "source_weights": {
+                            source: self.source_weights.get(source, 1.0)
+                            for source in [item.get("source") for item in findings]
+                            if source
+                        },
+                        "corroboration_bonus": corroboration_bonus,
                     },
                 }
             )
@@ -412,6 +459,7 @@ class IOCEnricher:
         iocs = self.extract(alert)
         db = connect()
         try:
+            observed_at = utc_now_naive()
             for ioc_type, values in iocs.items():
                 for ioc in values:
                     findings = self._enrich_indicator(ioc, ioc_type)
@@ -419,10 +467,10 @@ class IOCEnricher:
                         source = str(finding.get("source") or "").strip()
                         if not source:
                             continue
-                        exists = db.execute(
+                        existing = db.execute(
                             text(
                                 """
-                                SELECT 1
+                                SELECT id, score, verdict, details
                                 FROM ioc_enrichments
                                 WHERE alert_id=:alert_id
                                   AND ioc=:ioc
@@ -438,26 +486,98 @@ class IOCEnricher:
                                 "source": source,
                             },
                         ).fetchone()
-                        if exists:
-                            continue
-                        db.execute(
-                            text(
-                                """
-                                INSERT INTO ioc_enrichments
-                                (alert_id, ioc, ioc_type, source, score, verdict, details)
-                                VALUES (:alert_id, :ioc, :ioc_type, :source, :score, :verdict, :details)
-                                """
-                            ),
-                            {
-                                "alert_id": alert_id,
-                                "ioc": ioc,
-                                "ioc_type": ioc_type,
-                                "source": source,
-                                "score": int(finding.get("score") or 0),
-                                "verdict": str(finding.get("verdict") or "unknown"),
-                                "details": _safe_json(finding.get("details") or {}),
-                            },
-                        )
+                        score = int(finding.get("score") or 0)
+                        verdict = str(finding.get("verdict") or "unknown")
+                        details = _safe_json(finding.get("details") or {})
+                        effective_score = score
+                        effective_verdict = verdict
+                        if existing:
+                            existing_id = existing[0]
+                            existing_score = _to_int(existing[1], 0)
+                            existing_verdict = str(existing[2] or "unknown")
+                            existing_details = str(existing[3] or "")
+                            merged_score = max(existing_score, score)
+                            merged_verdict = _preferred_verdict(existing_verdict, verdict)
+                            effective_score = merged_score
+                            effective_verdict = merged_verdict
+                            if (
+                                merged_score != existing_score
+                                or merged_verdict != existing_verdict
+                                or (details and details != existing_details)
+                            ):
+                                db.execute(
+                                    text(
+                                        """
+                                        UPDATE ioc_enrichments
+                                        SET score=:score, verdict=:verdict, details=:details
+                                        WHERE id=:id
+                                        """
+                                    ),
+                                    {
+                                        "id": existing_id,
+                                        "score": merged_score,
+                                        "verdict": merged_verdict,
+                                        "details": details,
+                                    },
+                                )
+                        else:
+                            db.execute(
+                                text(
+                                    """
+                                    INSERT INTO ioc_enrichments
+                                    (alert_id, ioc, ioc_type, source, score, verdict, details)
+                                    VALUES (:alert_id, :ioc, :ioc_type, :source, :score, :verdict, :details)
+                                    """
+                                ),
+                                {
+                                    "alert_id": alert_id,
+                                    "ioc": ioc,
+                                    "ioc_type": ioc_type,
+                                    "source": source,
+                                    "score": score,
+                                    "verdict": verdict,
+                                    "details": details,
+                                },
+                            )
+                        try:
+                            db.execute(
+                                text(
+                                    """
+                                    INSERT INTO ioc_enrichment_records
+                                    (alert_id, ioc, ioc_type, source, score, confidence, verdict, evidence_json,
+                                     observed_at, org_id, created_by, created_at, updated_at)
+                                    VALUES
+                                    (:alert_id, :ioc, :ioc_type, :source, :score, :confidence, :verdict, :evidence_json,
+                                     :observed_at, :org_id, :created_by, :created_at, :updated_at)
+                                    ON CONFLICT (alert_id, ioc, ioc_type, source)
+                                    DO UPDATE SET
+                                        score=EXCLUDED.score,
+                                        confidence=EXCLUDED.confidence,
+                                        verdict=EXCLUDED.verdict,
+                                        evidence_json=EXCLUDED.evidence_json,
+                                        observed_at=EXCLUDED.observed_at,
+                                        updated_at=EXCLUDED.updated_at
+                                    """
+                                ),
+                                {
+                                    "alert_id": alert_id,
+                                    "ioc": ioc,
+                                    "ioc_type": ioc_type,
+                                    "source": source,
+                                    "score": int(effective_score),
+                                    "confidence": int(effective_score),
+                                    "verdict": effective_verdict,
+                                    "evidence_json": details,
+                                    "observed_at": observed_at,
+                                    "org_id": None,
+                                    "created_by": "system",
+                                    "created_at": observed_at,
+                                    "updated_at": observed_at,
+                                },
+                            )
+                        except Exception:
+                            # Keep enrichment resilient even if v1.1 mirror table is unavailable.
+                            pass
             db.commit()
         finally:
             db.close()

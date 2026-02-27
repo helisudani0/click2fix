@@ -51,6 +51,7 @@ const normalizeTarget = (row) => {
       agent_name: "",
       target_ip: "",
       platform: "",
+      status: "",
       ok: false,
       status_code: 0,
       stdout: "",
@@ -61,11 +62,16 @@ const normalizeTarget = (row) => {
       scan_report_content: null,
     };
   }
+  const rawStatus = String(row.status || "").trim();
+  const normalizedStatus = rawStatus
+    ? rawStatus.toUpperCase()
+    : (row.ok === true ? "SUCCESS" : row.ok === false ? "FAILED" : "");
   return {
     agent_id: String(row.agent_id || row.agent || ""),
     agent_name: String(row.agent_name || ""),
     target_ip: String(row.target_ip || row.ip || ""),
     platform: String(row.platform || ""),
+    status: normalizedStatus,
     ok: Boolean(row.ok),
     status_code: Number(row.status_code || 0),
     stdout: String(row.stdout || ""),
@@ -890,17 +896,7 @@ export default function ExecutionStream({ executionId }) {
       activeSocket = executionSocket(executionId);
 
       activeSocket.onopen = () => {
-        const wasReconnect = reconnectAttempts > 0;
         reconnectAttempts = 0;
-        setEvents((prev) => [
-          ...prev,
-          normalizeStep({
-            step: "ws",
-            status: "SUCCESS",
-            stdout: wasReconnect ? "reconnected" : "connected",
-            stderr: "",
-          }),
-        ]);
       };
 
       activeSocket.onmessage = e => {
@@ -970,17 +966,6 @@ export default function ExecutionStream({ executionId }) {
         if (e.code === 1000 || e.code === 1001) {
           return;
         }
-
-        const closeDetail = `websocket closed (code=${e.code}${e.reason ? `, reason=${e.reason}` : ""})`;
-        setEvents((prev) => [
-          ...prev,
-          normalizeStep({
-            step: "ws",
-            status: "FAILED",
-            stdout: "",
-            stderr: closeDetail,
-          }),
-        ]);
 
         if (e.code === 4401 || e.code === 4403) {
           return;
@@ -1054,9 +1039,9 @@ export default function ExecutionStream({ executionId }) {
     () => buildHumanReadableOutput(
       selectedTarget?.stdout || "",
       selectedTarget?.stderr || "",
-      { status: selectedTarget?.status || "" }
+      { status: selectedTarget?.status || "", ok: selectedTarget?.ok }
     ),
-    [selectedTarget?.stdout, selectedTarget?.stderr, selectedTarget?.status]
+    [selectedTarget?.stdout, selectedTarget?.stderr, selectedTarget?.status, selectedTarget?.ok]
   );
 
   const endpointIssues = useMemo(

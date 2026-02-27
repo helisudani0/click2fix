@@ -605,6 +605,66 @@ def create_job(
     return {"id": job_id}
 
 
+def update_job(
+    job_id: int,
+    *,
+    name: Optional[str] = None,
+    playbook: Optional[str] = None,
+    target: Optional[str] = None,
+    cron: Optional[str] = None,
+    enabled: Optional[bool] = None,
+    require_approval: Optional[bool] = None,
+) -> Dict[str, Any]:
+    db = connect()
+    try:
+        row = db.execute(
+            text(
+                """
+                SELECT id, org_id
+                FROM scheduled_jobs
+                WHERE id=:id
+                """
+            ),
+            {"id": int(job_id)},
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Scheduled job not found")
+        org_id = row[1]
+
+        updates: Dict[str, Any] = {}
+        if name is not None:
+            updates["name"] = str(name).strip() or "Scheduled Policy"
+        if playbook is not None:
+            updates["playbook"] = str(playbook).strip()
+        if target is not None:
+            updates["target"] = str(target).strip() or "all"
+        if cron is not None:
+            cron_value = str(cron).strip()
+            _parse_cron(cron_value)
+            updates["cron"] = cron_value
+        if enabled is not None:
+            updates["enabled"] = bool(enabled)
+        if require_approval is not None:
+            updates["require_approval"] = bool(require_approval)
+
+        if updates:
+            set_sql = ", ".join(f"{column}=:{column}" for column in updates.keys())
+            db.execute(
+                text(f"UPDATE scheduled_jobs SET {set_sql} WHERE id=:id"),
+                {"id": int(job_id), **updates},
+            )
+            db.commit()
+    finally:
+        db.close()
+
+    sync_policy_jobs()
+    rows = _list_db_jobs(org_id=org_id)
+    for row_item in rows:
+        if int(row_item["id"]) == int(job_id):
+            return row_item
+    return {"id": int(job_id)}
+
+
 def set_job_enabled(job_id: int, enabled: Optional[bool] = None) -> Dict[str, Any]:
     db = connect()
     try:

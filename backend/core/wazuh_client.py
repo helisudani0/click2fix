@@ -315,6 +315,31 @@ class WazuhClient:
                 continue
         return []
 
+    def get_agent_sca_checks(self, agent_id: str, policy_id: str, limit: int = 10000):
+        # Full SCA checks for a specific policy on an agent.
+        norm = self._normalize_agent_id(agent_id)
+        policy = str(policy_id or "").strip()
+        if not policy:
+            return []
+        last_error: HTTPException | None = None
+        endpoints = [
+            f"/sca/{norm}/checks/{policy}",
+        ]
+        for path in endpoints:
+            try:
+                return self._request(
+                    "GET",
+                    path,
+                    params={"limit": limit},
+                    timeout=self.short_timeout,
+                )
+            except HTTPException as exc:
+                last_error = exc
+                continue
+        if last_error:
+            raise last_error
+        return []
+
     def _extract_agent_items(self, data):
         if isinstance(data, dict):
             return (

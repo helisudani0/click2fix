@@ -43,6 +43,78 @@ set_env() {
   mv "$tmp" "$file"
 }
 
+port_in_use() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn "sport = :${port}" 2>/dev/null | awk 'NR>1 {found=1} END {exit(found?0:1)}'
+    return $?
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1
+    return $?
+  fi
+  if command -v netstat >/dev/null 2>&1; then
+    netstat -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "(^|[:.])${port}$"
+    return $?
+  fi
+  return 1
+}
+
+port_owned_by_container() {
+  local port="$1"
+  local container="$2"
+  local ports
+  ports="$(docker ps --filter "name=^${container}$" --format '{{.Ports}}' 2>/dev/null | head -n 1 || true)"
+  [[ -n "${ports}" ]] && grep -Eq "[:.]${port}->" <<< "${ports}"
+}
+
+find_free_port() {
+  local start_port="$1"
+  local max_tries="${2:-200}"
+  local candidate="$start_port"
+  local i
+  for ((i=0; i<max_tries; i++)); do
+    if ! port_in_use "${candidate}"; then
+      echo "${candidate}"
+      return 0
+    fi
+    candidate=$((candidate + 1))
+  done
+  return 1
+}
+
+normalize_port() {
+  local raw="$1"
+  local fallback="$2"
+  if [[ "${raw}" =~ ^[0-9]+$ ]] && (( raw > 0 && raw < 65536 )); then
+    echo "${raw}"
+  else
+    echo "${fallback}"
+  fi
+}
+
+resolve_port_conflict() {
+  local requested_port
+  requested_port="$(normalize_port "$1" "0")"
+  local container_name="$2"
+  local label="$3"
+  if [[ "${requested_port}" == "0" ]]; then
+    echo "ERROR: invalid ${label} port value." >&2
+    exit 1
+  fi
+  if ! port_in_use "${requested_port}" || port_owned_by_container "${requested_port}" "${container_name}"; then
+    echo "${requested_port}"
+    return 0
+  fi
+  local new_port
+  new_port="$(find_free_port $((requested_port + 1)))" || {
+    echo "ERROR: ${label} port ${requested_port} is busy and no free fallback was found." >&2
+    exit 1
+  }
+  echo "Port ${requested_port} is in use. Reassigning ${label} to ${new_port}." >&2
+  echo "${new_port}"
+}
+
 show_diagnostics() {
   echo
   echo "---- docker compose ps ----" >&2
@@ -177,6 +249,8 @@ current_jwt_secret="$(get_env JWT_SECRET "${ENV_FILE}")"
 prompt_value "Public host or static IP for UI access" "${current_public_host:-$(detect_public_host)}" public_host
 prompt_value "Frontend port" "${current_frontend_port:-5173}" frontend_port
 prompt_value "Backend port" "${current_backend_port:-8000}" backend_port
+current_db_port="$(get_env C2F_DB_PORT "${ENV_FILE}")"
+[[ -n "${current_db_port}" ]] || current_db_port="5432"
 
 prompt_value "Wazuh manager URL (include https:// and port)" "${current_wazuh_url:-https://WAZUH_MANAGER_IP:55000}" wazuh_url
 prompt_value "Wazuh API user" "${current_wazuh_user:-c2f_api}" wazuh_user
@@ -232,6 +306,10 @@ if [[ ${#admin_password} -lt 8 ]]; then
   exit 1
 fi
 
+backend_port="$(resolve_port_conflict "$(normalize_port "${backend_port}" "8000")" "c2f-backend" "backend")"
+frontend_port="$(resolve_port_conflict "$(normalize_port "${frontend_port}" "5173")" "c2f-frontend" "frontend")"
+db_port="$(resolve_port_conflict "$(normalize_port "${current_db_port}" "5432")" "c2f-db" "db host")"
+
 trusted_hosts="localhost,127.0.0.1,*.localhost,backend,frontend,c2f-backend,c2f-frontend,${public_host}"
 cors_origins="http://${public_host}:${frontend_port}"
 
@@ -239,6 +317,7 @@ set_env APP_BRAND "${app_brand}" "${ENV_FILE}"
 set_env C2F_PUBLIC_HOST "${public_host}" "${ENV_FILE}"
 set_env C2F_FRONTEND_PORT "${frontend_port}" "${ENV_FILE}"
 set_env C2F_BACKEND_PORT "${backend_port}" "${ENV_FILE}"
+set_env C2F_DB_PORT "${db_port}" "${ENV_FILE}"
 set_env C2F_TRUSTED_HOSTS "${trusted_hosts}" "${ENV_FILE}"
 set_env C2F_CORS_ORIGINS "${cors_origins}" "${ENV_FILE}"
 set_env WAZUH_URL "${wazuh_url}" "${ENV_FILE}"

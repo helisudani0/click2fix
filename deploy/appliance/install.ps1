@@ -112,6 +112,68 @@ function New-StrongSecret {
   return ([Convert]::ToBase64String($buffer)).TrimEnd("=")
 }
 
+function Parse-PortOrDefault {
+  param(
+    [string]$RawValue,
+    [int]$DefaultPort
+  )
+  $parsed = 0
+  if ([int]::TryParse($RawValue, [ref]$parsed) -and $parsed -gt 0 -and $parsed -lt 65536) {
+    return $parsed
+  }
+  return $DefaultPort
+}
+
+function Test-PortInUse {
+  param([int]$Port)
+  try {
+    $listeners = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop
+    return ($null -ne ($listeners | Select-Object -First 1))
+  } catch {
+    return $false
+  }
+}
+
+function Test-PortOwnedByContainer {
+  param(
+    [int]$Port,
+    [string]$ContainerName
+  )
+  $ports = & docker ps --filter "name=^$ContainerName$" --format "{{.Ports}}" 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $ports) { return $false }
+  $joined = ($ports | Select-Object -First 1)
+  return [regex]::IsMatch($joined, "[:.]$Port->")
+}
+
+function Find-FreePort {
+  param(
+    [int]$StartPort,
+    [int]$MaxTries = 200
+  )
+  $candidate = $StartPort
+  for ($i = 0; $i -lt $MaxTries; $i++) {
+    if (-not (Test-PortInUse -Port $candidate)) {
+      return $candidate
+    }
+    $candidate++
+  }
+  throw "No free port found starting at $StartPort after $MaxTries attempts."
+}
+
+function Resolve-PortConflict {
+  param(
+    [int]$RequestedPort,
+    [string]$ContainerName,
+    [string]$Label
+  )
+  if (-not (Test-PortInUse -Port $RequestedPort) -or (Test-PortOwnedByContainer -Port $RequestedPort -ContainerName $ContainerName)) {
+    return $RequestedPort
+  }
+  $newPort = Find-FreePort -StartPort ($RequestedPort + 1)
+  Write-Host "Port $RequestedPort is in use. Reassigning $Label to $newPort." -ForegroundColor Yellow
+  return $newPort
+}
+
 function Invoke-NativeChecked {
   param(
     [string]$FilePath,
@@ -184,6 +246,7 @@ if ([string]::IsNullOrWhiteSpace($currentPublicHost)) { $currentPublicHost = $de
 $publicHost = Read-Value "Public host or static IP for UI access" $currentPublicHost
 $frontendPort = Read-Value "Frontend port" (Get-EnvValue $envPath "C2F_FRONTEND_PORT")
 $backendPort = Read-Value "Backend port" (Get-EnvValue $envPath "C2F_BACKEND_PORT")
+$dbPort = Get-EnvValue $envPath "C2F_DB_PORT"
 
 $wazuhUrl = Read-Value "Wazuh manager URL (include https:// and port)" (Get-EnvValue $envPath "WAZUH_URL")
 $wazuhUser = Read-Value "Wazuh API user" (Get-EnvValue $envPath "WAZUH_USER")
@@ -226,6 +289,10 @@ if ($adminPassword.Length -lt 8) {
   throw "Initial admin password must be at least 8 characters."
 }
 
+$frontendPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $frontendPort -DefaultPort 5173) -ContainerName "c2f-frontend" -Label "frontend"
+$backendPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $backendPort -DefaultPort 8000) -ContainerName "c2f-backend" -Label "backend"
+$dbPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $dbPort -DefaultPort 5432) -ContainerName "c2f-db" -Label "db host"
+
 $trustedHosts = "localhost,127.0.0.1,*.localhost,backend,frontend,c2f-backend,c2f-frontend,$publicHost"
 $corsOrigins = "http://$publicHost`:$frontendPort"
 
@@ -233,6 +300,7 @@ Set-EnvValue -Path $envPath -Key "APP_BRAND" -Value $appBrand
 Set-EnvValue -Path $envPath -Key "C2F_PUBLIC_HOST" -Value $publicHost
 Set-EnvValue -Path $envPath -Key "C2F_FRONTEND_PORT" -Value $frontendPort
 Set-EnvValue -Path $envPath -Key "C2F_BACKEND_PORT" -Value $backendPort
+Set-EnvValue -Path $envPath -Key "C2F_DB_PORT" -Value $dbPort
 Set-EnvValue -Path $envPath -Key "C2F_TRUSTED_HOSTS" -Value $trustedHosts
 Set-EnvValue -Path $envPath -Key "C2F_CORS_ORIGINS" -Value $corsOrigins
 Set-EnvValue -Path $envPath -Key "WAZUH_URL" -Value $wazuhUrl

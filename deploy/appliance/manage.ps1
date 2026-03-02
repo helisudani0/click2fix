@@ -37,6 +37,32 @@ function Get-EnvValue {
   return ($line -replace "^\s*$Key=", "")
 }
 
+function Set-EnvValue {
+  param(
+    [string]$Path,
+    [string]$Key,
+    [string]$Value
+  )
+  if (-not (Test-Path $Path)) {
+    New-Item -ItemType File -Path $Path | Out-Null
+  }
+  $lines = Get-Content -Path $Path -ErrorAction SilentlyContinue
+  $found = $false
+  $updated = @()
+  foreach ($line in $lines) {
+    if ($line -match "^\s*$Key=") {
+      $updated += "$Key=$Value"
+      $found = $true
+    } else {
+      $updated += $line
+    }
+  }
+  if (-not $found) {
+    $updated += "$Key=$Value"
+  }
+  Set-Content -Path $Path -Value $updated
+}
+
 function Test-PortInUse {
   param([int]$Port)
   try {

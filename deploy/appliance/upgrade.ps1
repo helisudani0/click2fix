@@ -9,6 +9,19 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $envPath = Join-Path $scriptDir $EnvFile
 $composePath = Join-Path $scriptDir $ComposeFile
 
+function Invoke-NativeChecked {
+  param(
+    [string]$FilePath,
+    [string[]]$Arguments = @(),
+    [string]$FailureMessage = "Command failed."
+  )
+  & $FilePath @Arguments
+  $exitCode = $LASTEXITCODE
+  if ($exitCode -ne 0) {
+    throw "$FailureMessage Exit code: $exitCode"
+  }
+}
+
 function Get-EnvValue {
   param(
     [string]$Path,
@@ -131,7 +144,7 @@ function Resolve-PortConflicts {
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   throw "Docker is not installed."
 }
-docker compose version | Out-Null
+Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "version") -FailureMessage "Docker Compose plugin is required."
 
 if (-not (Test-Path $envPath)) {
   throw "Missing $envPath. Run install.ps1 first."
@@ -140,10 +153,10 @@ if (-not (Test-Path $envPath)) {
 Resolve-PortConflicts -EnvPath $envPath
 
 Write-Host "Pulling configured images..."
-docker compose --env-file $envPath -f $composePath pull
+Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "pull") -FailureMessage "Failed to pull images."
 
 Write-Host "Applying upgrade..."
-docker compose --env-file $envPath -f $composePath up -d
+Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "up", "-d") -FailureMessage "Failed to apply upgrade."
 
 Write-Host "Upgrade complete."
 Write-Host "Check status:"

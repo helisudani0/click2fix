@@ -272,3 +272,5 @@ export const getExecutions = (params = {}, options = {}) => {
 
   return writePromiseCache(executionsCache, key, request, cached);
 };
+export const suggestGlobalShellCommand = (payload) =>
+  api.post("/actions/global-shell/assist", payload);

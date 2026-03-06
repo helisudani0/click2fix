@@ -1,16 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import ExecutionStream from "../components/ExecutionStream";
 import Pager from "../components/Pager";
-import { closeVulnerabilityLocal, getActions, getAgents, getAgentGroups, getVulnerabilities, runAction } from "../api/wazuh";
+import { getAgents, getAgentGroups, getVulnerabilities } from "../api/wazuh";
 import { formatWazuhTimestamp } from "../utils/time";
 
 const SEVERITIES = ["critical", "high", "medium", "low"];
-const PLAN_MODES = {
-  auto: "Auto",
-  recommended: "Recommended",
-  optional: "Optional",
-};
+const INITIAL_FETCH_LIMIT = 2500;
+const FETCH_LIMIT_MAX = 20000;
 
 const normalizeAgents = (data) => {
   if (Array.isArray(data)) return data;
@@ -27,6 +22,12 @@ const formatAgentId = (value) => {
   return /^[0-9]+$/.test(raw) && raw.length < 3 ? raw.padStart(3, "0") : raw;
 };
 
+const titleCase = (value) => {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return "-";
+  return text[0].toUpperCase() + text.slice(1);
+};
+
 const severityClass = (value) => {
   const key = String(value || "").toLowerCase();
   if (key === "critical" || key === "high") return "failed";
@@ -35,152 +36,86 @@ const severityClass = (value) => {
   return "neutral";
 };
 
-const titleCase = (value) => {
-  const text = String(value || "").trim().toLowerCase();
-  if (!text) return "-";
-  return text[0].toUpperCase() + text.slice(1);
-};
-
-const compactList = (items = []) => {
-  const list = Array.isArray(items) ? items : [];
-  return list.join(", ");
-};
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const INITIAL_FETCH_LIMIT = 2500;
-const FETCH_LIMIT_MAX = 20000;
-const UPDATE_ACTION_IDS = new Set([
-  "package-update",
-  "software-install-upgrade",
-  "fleet-software-update",
-  "patch-windows",
-  "windows-os-update",
-  "patch-linux",
-]);
-
-const extractMetricValue = (text, key) => {
-  const source = String(text || "");
-  const match = source.match(new RegExp(`\\b${key}=([^\\s\\r\\n]+)`, "i"));
-  return match ? String(match[1] || "").trim() : "";
-};
-
-const extractMetricInt = (text, key) => {
-  const raw = extractMetricValue(text, key);
-  if (!raw) return null;
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isNaN(parsed) ? null : parsed;
-};
-
-const isUpdateAction = (actionId) => UPDATE_ACTION_IDS.has(String(actionId || "").trim().toLowerCase());
-
-const isUpdateRowSuccessful = (row, allowWaitingReboot = true) => {
-  if (!row?.ok) return false;
-  const stdout = String(row?.stdout || "");
-  const outcome = extractMetricValue(stdout, "outcome").toUpperCase();
-  const failed = extractMetricInt(stdout, "updates_failed");
-  const remaining = extractMetricInt(stdout, "updates_remaining");
-  const unresolved = extractMetricInt(stdout, "updates_unresolved");
-  const waitingReboot = allowWaitingReboot && outcome === "WAITING_REBOOT";
-  const outcomeOk = outcome === "SUCCESS" || waitingReboot;
-  const failedOk = failed === null || failed === 0;
-  const remainingOk = remaining === null || remaining === 0;
-  const unresolvedOk = unresolved === null || unresolved === 0;
-  return outcomeOk && failedOk && remainingOk && unresolvedOk;
-};
-
-const isVerifiedUpdateStep = (actionId, runResponse) => {
-  const action = String(actionId || "").trim().toLowerCase();
-  if (!isUpdateAction(action)) return false;
-  const result = runResponse?.data?.result;
-  const rows = Array.isArray(result?.results) ? result.results : [];
-  if (!rows.length) return false;
-  return rows.every((row) => isUpdateRowSuccessful(row, false));
-};
-
-const extractExecutionIdFromError = (err) => {
-  const direct = err?.response?.data?.execution_id;
-  if (direct !== undefined && direct !== null && String(direct).trim()) return String(direct).trim();
-  const detail = String(err?.response?.data?.detail || err?.message || "");
-  const match = detail.match(/\bexecution_id=(\d+)\b/i);
-  return match ? match[1] : "";
-};
-
-const isRunSuccessful = (actionId, runResponse) => {
-  const payload = runResponse?.data || {};
-  const status = String(payload?.status || "").trim().toUpperCase();
-  if (status && status !== "SUCCESS") return false;
-  const result = payload?.result;
-  if (!result || typeof result !== "object") return true;
-  if (typeof result.ok === "boolean") {
-    if (!result.ok) return false;
-    if (!Array.isArray(result.results)) return true;
+const toDisplay = (value, fallback = "-") => {
+  if (value === null || value === undefined || value === "") return fallback;
+  if (Array.isArray(value)) {
+    const list = value.map((item) => toDisplay(item, "")).filter(Boolean);
+    return list.length ? list.join(", ") : fallback;
   }
-  if (Array.isArray(result.results) && result.results.length) {
-    if (!result.results.every((row) => Boolean(row?.ok))) return false;
-    if (isUpdateAction(actionId)) {
-      return result.results.every((row) => isUpdateRowSuccessful(row, true));
-    }
-    return true;
-  }
-  if (isUpdateAction(actionId)) return false;
-  return true;
-};
-
-const formatArgs = (args) => {
-  if (!args || typeof args !== "object") return "-";
-  const entries = Object.entries(args).filter((entry) => {
-    const value = entry[1];
-    return value !== undefined && value !== null && String(value).trim() !== "";
-  });
-  if (!entries.length) return "-";
-  return entries.map(([key, value]) => `${key}=${value}`).join(", ");
-};
-
-const buildExecutionPlan = (rows, pickSteps) => {
-  const stepPicker =
-    typeof pickSteps === "function"
-      ? pickSteps
-      : (row) => (Array.isArray(row?.remediation?.steps) ? row.remediation.steps : []);
-  const planMap = new Map();
-  (rows || []).forEach((row) => {
-    const rowId = String(row?.id || row?.cve || row?.title || "").trim();
-    const rowSteps = stepPicker(row);
-    rowSteps.forEach((step) => {
-      const actionId = String(step?.action_id || "").trim();
-      const args = step?.args && typeof step.args === "object" ? step.args : {};
-      const agentIds = Array.isArray(step?.agent_ids)
-        ? step.agent_ids.map((id) => String(id || "").trim()).filter(Boolean)
-        : [];
-      const mode = String(step?.mode || "auto");
-      if (!actionId || !agentIds.length) return;
-      const key = `${actionId}|${JSON.stringify(args)}`;
-      if (!planMap.has(key)) {
-        planMap.set(key, {
-          action_id: actionId,
-          args,
-          agent_ids: new Set(),
-          vulnerability_ids: new Set(),
-          modes: new Set(),
-        });
+  if (typeof value === "object") {
+    for (const key of ["name", "label", "id", "title", "text", "value"]) {
+      if (value[key] !== null && value[key] !== undefined && typeof value[key] !== "object") {
+        return String(value[key]);
       }
-      const entry = planMap.get(key);
-      agentIds.forEach((id) => entry.agent_ids.add(id));
-      if (rowId) entry.vulnerability_ids.add(rowId);
-      if (mode) entry.modes.add(mode);
-    });
-  });
+    }
+    return fallback;
+  }
+  return String(value);
+};
 
-  return Array.from(planMap.values()).map((entry) => ({
-    action_id: entry.action_id,
-    args: entry.args,
-    agent_ids: Array.from(entry.agent_ids).sort(),
-    vulnerability_ids: Array.from(entry.vulnerability_ids),
-    modes: Array.from(entry.modes),
-  }));
+const compactList = (items = [], limit = 6) => {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (!list.length) return "-";
+  if (list.length <= limit) return list.join(", ");
+  return `${list.slice(0, limit).join(", ")} +${list.length - limit} more`;
+};
+
+const containsAny = (text, markers) => {
+  const haystack = String(text || "").toLowerCase();
+  return markers.some((marker) => haystack.includes(String(marker || "").toLowerCase()));
+};
+
+const deriveIndicators = (row) => {
+  const blob = [
+    row?.title,
+    row?.rationale,
+    row?.cwe_reference,
+    row?.scanner_reference,
+    ...(Array.isArray(row?.references) ? row.references : []),
+  ].join(" ");
+  const indicators = [];
+  if (containsAny(blob, ["known exploited vulnerabilities", "known-exploited-vulnerabilities", "cisa.gov/known-exploited", "kev"])) {
+    indicators.push("KEV");
+  }
+  if (containsAny(blob, ["remote code execution", "rce", "unauthenticated", "internet", "network"])) {
+    indicators.push("Remote exploit");
+  }
+  if (containsAny(blob, ["privilege escalation", "local privilege escalation", "elevate privileges", "lpe"])) {
+    indicators.push("Priv-esc");
+  }
+  if (containsAny(`${row?.package?.source || ""} ${row?.package?.condition || ""} ${row?.package?.name || ""}`, ["os", "windows update", "linux kernel", "kernel", "kb"])) {
+    indicators.push("OS-level");
+  }
+  return indicators;
+};
+
+const buildWazuhDetail = (row) => {
+  if (!row || typeof row !== "object") return {};
+  return {
+    id: row.id,
+    cve: row.cve,
+    title: row.title,
+    severity: row.severity,
+    score: row.score,
+    package: row.package || {},
+    classification: row.classification,
+    type: row.type,
+    rationale: row.rationale,
+    cwe_reference: row.cwe_reference,
+    assigner: row.assigner,
+    status: row.status,
+    published: row.published,
+    updated: row.updated,
+    last_seen: row.last_seen,
+    references: Array.isArray(row.references) ? row.references : [],
+    scanner_reference: row.scanner_reference,
+    affected_count: row.affected_count,
+    affected_agents: Array.isArray(row.affected_agents) ? row.affected_agents : [],
+    analyst_indicators: deriveIndicators(row),
+  };
 };
 
 export default function Vulnerabilities() {
-  const navigate = useNavigate();
   const [agents, setAgents] = useState([]);
   const [groups, setGroups] = useState([]);
   const [targetMode, setTargetMode] = useState("fleet");
@@ -188,11 +123,8 @@ export default function Vulnerabilities() {
   const [targetAgentIds, setTargetAgentIds] = useState([]);
   const [agentSearch, setAgentSearch] = useState("");
   const [selectedSeverities, setSelectedSeverities] = useState([...SEVERITIES]);
-  const [justification, setJustification] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
-  const [fixingKey, setFixingKey] = useState("");
-  const [rowFixingId, setRowFixingId] = useState("");
   const [items, setItems] = useState([]);
   const [summary, setSummary] = useState({
     critical: 0,
@@ -210,21 +142,20 @@ export default function Vulnerabilities() {
     medium: [],
     low: [],
   });
-  const [activeExecutionId, setActiveExecutionId] = useState(null);
   const [source, setSource] = useState("-");
   const [error, setError] = useState("");
   const [liveEnabled, setLiveEnabled] = useState(true);
-  const [availableActionIds, setAvailableActionIds] = useState([]);
   const [feedPage, setFeedPage] = useState(1);
   const [feedPageSize, setFeedPageSize] = useState(50);
   const [fetchLimit, setFetchLimit] = useState(INITIAL_FETCH_LIMIT);
-  const [truncated, setTruncated] = useState(false);
   const [queryLimit, setQueryLimit] = useState(INITIAL_FETCH_LIMIT);
+  const [truncated, setTruncated] = useState(false);
+  const [selectedVulnerabilityId, setSelectedVulnerabilityId] = useState("");
 
   const loadAgents = useCallback(async () => {
     try {
-      const res = await getAgents(undefined, { limit: 5000 });
-      const list = normalizeAgents(res.data).map((row) => ({
+      const response = await getAgents(undefined, { limit: 5000 });
+      const list = normalizeAgents(response.data).map((row) => ({
         id: formatAgentId(row.id || row.agent_id),
         name: String(row.name || row.hostname || row.id || row.agent_id || "-"),
         status: String(row.status || "unknown"),
@@ -240,24 +171,13 @@ export default function Vulnerabilities() {
 
   const loadGroups = useCallback(async () => {
     try {
-      const res = await getAgentGroups();
-      const raw = Array.isArray(res.data) ? res.data : [];
-      setGroups(raw.map((group) => String(group.name || group.id || group)).filter(Boolean));
+      const response = await getAgentGroups();
+      const list = Array.isArray(response.data) ? response.data : [];
+      setGroups(
+        list.map((group) => String(group.name || group.id || group).trim()).filter(Boolean)
+      );
     } catch {
       setGroups([]);
-    }
-  }, []);
-
-  const loadActions = useCallback(async () => {
-    try {
-      const res = await getActions();
-      const list = Array.isArray(res?.data) ? res.data : [];
-      const ids = list
-        .map((row) => String(row?.id || "").trim().toLowerCase())
-        .filter(Boolean);
-      setAvailableActionIds(Array.from(new Set(ids)));
-    } catch {
-      setAvailableActionIds([]);
     }
   }, []);
 
@@ -272,23 +192,22 @@ export default function Vulnerabilities() {
       return targetAgentIds.length ? { agent_ids: targetAgentIds.join(",") } : null;
     }
     return {};
-  }, [targetMode, targetValue, targetAgentIds]);
+  }, [targetAgentIds, targetMode, targetValue]);
 
   const loadVulns = useCallback(async () => {
     const scope = buildScopeParams();
     if (scope === null) {
       setStatus("Choose a valid target before loading vulnerabilities.");
-      setTruncated(false);
+      setItems([]);
       return;
     }
 
-      setLoading(true);
-      setStatus("");
-      setError("");
-      try {
-      const params = { ...scope, limit: fetchLimit };
-      const res = await getVulnerabilities(params);
-      const payload = res.data || {};
+    setLoading(true);
+    setStatus("");
+    setError("");
+    try {
+      const response = await getVulnerabilities({ ...scope, limit: fetchLimit });
+      const payload = response.data || {};
       setItems(Array.isArray(payload.items) ? payload.items : []);
       setSummary({
         critical: Number(payload.summary?.critical || 0),
@@ -306,10 +225,10 @@ export default function Vulnerabilities() {
         medium: Array.isArray(payload.target_agents?.medium) ? payload.target_agents.medium : [],
         low: Array.isArray(payload.target_agents?.low) ? payload.target_agents.low : [],
       });
-      setTruncated(Boolean(payload.truncated));
-      setQueryLimit(Number(payload.query_limit || fetchLimit));
       setSource(String(payload.source || "-"));
       setError(String(payload.error || ""));
+      setTruncated(Boolean(payload.truncated));
+      setQueryLimit(Number(payload.query_limit || fetchLimit));
     } catch (err) {
       setItems([]);
       setSummary({
@@ -325,7 +244,6 @@ export default function Vulnerabilities() {
       setTargetAgents({ critical: [], high: [], medium: [], low: [] });
       setSource("-");
       setError(err.response?.data?.detail || err.message || "Failed to load vulnerabilities.");
-      setStatus("");
       setTruncated(false);
       setQueryLimit(fetchLimit);
     } finally {
@@ -336,8 +254,7 @@ export default function Vulnerabilities() {
   useEffect(() => {
     loadAgents();
     loadGroups();
-    loadActions();
-  }, [loadAgents, loadGroups, loadActions]);
+  }, [loadAgents, loadGroups]);
 
   useEffect(() => {
     loadVulns();
@@ -352,437 +269,61 @@ export default function Vulnerabilities() {
   }, [liveEnabled, loadVulns]);
 
   const filteredAgents = useMemo(() => {
-    const q = agentSearch.trim().toLowerCase();
-    if (!q) return agents.slice(0, 80);
+    const query = agentSearch.trim().toLowerCase();
+    if (!query) return agents.slice(0, 80);
     return agents
-      .filter((agent) => {
-        return (
-          String(agent.id).toLowerCase().includes(q) ||
-          String(agent.name).toLowerCase().includes(q) ||
-          String(agent.group).toLowerCase().includes(q)
-        );
-      })
+      .filter((agent) =>
+        agent.id.toLowerCase().includes(query)
+        || agent.name.toLowerCase().includes(query)
+        || agent.group.toLowerCase().includes(query)
+      )
       .slice(0, 80);
-  }, [agents, agentSearch]);
+  }, [agentSearch, agents]);
+
+  const filteredItems = useMemo(() => {
+    const allowed = new Set(selectedSeverities.map((value) => String(value).toLowerCase()));
+    return items.filter((row) => allowed.has(String(row?.severity || "").toLowerCase()));
+  }, [items, selectedSeverities]);
 
   useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(items.length / feedPageSize));
+    const totalPages = Math.max(1, Math.ceil(filteredItems.length / feedPageSize));
     if (feedPage > totalPages) {
       setFeedPage(totalPages);
     }
-  }, [items.length, feedPage, feedPageSize]);
+  }, [feedPage, feedPageSize, filteredItems.length]);
+
+  useEffect(() => {
+    if (!filteredItems.length) {
+      if (selectedVulnerabilityId) setSelectedVulnerabilityId("");
+      return;
+    }
+    const stillPresent = filteredItems.some((row) => String(row?.id || "") === String(selectedVulnerabilityId || ""));
+    if (!stillPresent) {
+      setSelectedVulnerabilityId(String(filteredItems[0]?.id || ""));
+    }
+  }, [filteredItems, selectedVulnerabilityId]);
 
   const pagedItems = useMemo(() => {
     const start = (feedPage - 1) * feedPageSize;
-    return items.slice(start, start + feedPageSize);
-  }, [items, feedPage, feedPageSize]);
+    return filteredItems.slice(start, start + feedPageSize);
+  }, [feedPage, feedPageSize, filteredItems]);
 
-  const selectedRowsForPlan = useMemo(() => {
-    const selected = new Set(selectedSeverities.map((value) => String(value).toLowerCase()));
-    return (items || []).filter((row) => selected.has(String(row?.severity || "").toLowerCase()));
-  }, [items, selectedSeverities]);
-
-  const availableActionSet = useMemo(
-    () => new Set((availableActionIds || []).map((id) => String(id || "").toLowerCase())),
-    [availableActionIds]
+  const selectedItem = useMemo(
+    () => filteredItems.find((row) => String(row?.id || "") === String(selectedVulnerabilityId || "")) || filteredItems[0] || null,
+    [filteredItems, selectedVulnerabilityId]
   );
 
-  const filterExecutableSteps = useCallback(
-    (steps) => {
-      const list = Array.isArray(steps) ? steps : [];
-      if (!availableActionSet.size) return list;
-      return list.filter((step) =>
-        availableActionSet.has(String(step?.action_id || "").trim().toLowerCase())
-      );
-    },
-    [availableActionSet]
-  );
-
-  const autoPlan = useMemo(
-    () => filterExecutableSteps(buildExecutionPlan(selectedRowsForPlan)),
-    [selectedRowsForPlan, filterExecutableSteps]
-  );
-
-  const recommendedPlan = useMemo(
-    () =>
-      filterExecutableSteps(buildExecutionPlan(selectedRowsForPlan, (row) => {
-        const remediation = row?.remediation || {};
-        return [
-          ...(Array.isArray(remediation.verification_steps) ? remediation.verification_steps : []),
-          ...(Array.isArray(remediation.investigation_steps) ? remediation.investigation_steps : []),
-        ];
-      })),
-    [selectedRowsForPlan, filterExecutableSteps]
-  );
-
-  const optionalPlan = useMemo(
-    () =>
-      filterExecutableSteps(buildExecutionPlan(selectedRowsForPlan, (row) =>
-        Array.isArray(row?.remediation?.optional_steps) ? row.remediation.optional_steps : []
-      )),
-    [selectedRowsForPlan, filterExecutableSteps]
-  );
-
-  const fallbackPlan = useMemo(
-    () =>
-      filterExecutableSteps(buildExecutionPlan(selectedRowsForPlan, (row) =>
-        Array.isArray(row?.remediation?.fallback_steps) ? row.remediation.fallback_steps : []
-      )),
-    [selectedRowsForPlan, filterExecutableSteps]
-  );
-
-  const manualSteps = useMemo(() => {
-    const set = new Set();
-    selectedRowsForPlan.forEach((row) => {
-      const list = Array.isArray(row?.remediation?.manual_steps) ? row.remediation.manual_steps : [];
-      list.forEach((step) => {
-        const text = String(step || "").trim();
-        if (text) set.add(text);
-      });
-    });
-    return Array.from(set);
-  }, [selectedRowsForPlan]);
-
-  const manualOnlyCount = useMemo(
-    () =>
-      selectedRowsForPlan.filter((row) => {
-        const remediation = row?.remediation || {};
-        const hasAuto = Array.isArray(remediation.steps) && remediation.steps.length > 0;
-        const coverage = String(remediation.coverage || "").toLowerCase();
-        return !hasAuto || coverage === "manual" || coverage === "investigate-first";
-      }).length,
-    [selectedRowsForPlan]
-  );
-
-  const executePlanSteps = useCallback(
-    async (steps, justificationText) => {
-      const executionIds = [];
-      const runs = [];
-      const errors = [];
-      for (const step of steps) {
-        const payload = {
-          action_id: step.action_id,
-          agent_ids: step.agent_ids,
-          args: step.args,
-          justification: justification.trim() || justificationText,
-        };
-        try {
-          const res = await runAction(payload);
-          const executionId = res?.data?.execution_id || null;
-          if (executionId) {
-            executionIds.push(executionId);
-            setActiveExecutionId(executionId);
-          }
-          const ok = isRunSuccessful(step.action_id, res);
-          if (!ok) errors.push(`${step.action_id}: execution reported failed/partial result.`);
-          runs.push({ actionId: step.action_id, response: res, ok, error: ok ? "" : "execution failed" });
-        } catch (err) {
-          const executionId = extractExecutionIdFromError(err);
-          if (executionId) {
-            executionIds.push(executionId);
-            setActiveExecutionId(executionId);
-          }
-          const msg = String(err?.response?.data?.detail || err?.message || "execution failed");
-          errors.push(`${step.action_id}: ${msg}`);
-          runs.push({ actionId: step.action_id, response: null, ok: false, error: msg });
-        }
-      }
-      return {
-        runs,
-        executionIds,
-        failures: runs.filter((run) => !run.ok).length,
-        errors,
-        total: steps.length,
-      };
-    },
-    [justification]
+  const wazuhDetailJson = useMemo(
+    () => JSON.stringify(buildWazuhDetail(selectedItem), null, 2),
+    [selectedItem]
   );
 
   const toggleSeverity = (severity) => {
-    setSelectedSeverities((prev) => {
-      if (prev.includes(severity)) return prev.filter((value) => value !== severity);
-      return [...prev, severity];
-    });
-  };
-
-  const runFix = async (severity) => {
-    const rows = items.filter((row) => String(row?.severity || "").toLowerCase() === String(severity || "").toLowerCase());
-    const steps = filterExecutableSteps(buildExecutionPlan(rows));
-    const fallbackSteps = filterExecutableSteps(buildExecutionPlan(rows, (row) =>
-      Array.isArray(row?.remediation?.fallback_steps) ? row.remediation.fallback_steps : []
+    setSelectedSeverities((current) => (
+      current.includes(severity)
+        ? current.filter((value) => value !== severity)
+        : [...current, severity]
     ));
-    const manualCount = rows.filter((row) => !(Array.isArray(row?.remediation?.steps) && row.remediation.steps.length)).length;
-    if (!steps.length && !fallbackSteps.length) {
-      setStatus(`No auto-remediation mapped for ${severity}. Manual/investigation required for ${manualCount || rows.length} vulnerability entries.`);
-      return;
-    }
-
-    setFixingKey(severity);
-    setStatus("");
-    setActiveExecutionId(null);
-    try {
-      const executionIds = [];
-      const primary = await executePlanSteps(
-        steps,
-        `Severity remediation (${severity}) from vulnerability feed`
-      );
-      executionIds.push(...primary.executionIds);
-      let fallbackRuns = null;
-      if (primary.failures > 0 && fallbackSteps.length) {
-        fallbackRuns = await executePlanSteps(
-          fallbackSteps,
-          `Fallback remediation (${severity}) after primary step failure`
-        );
-        executionIds.push(...fallbackRuns.executionIds);
-      }
-      const allExecutionIds = Array.from(new Set(executionIds));
-      const totalFailures = primary.failures + (fallbackRuns?.failures || 0);
-      setStatus(
-        allExecutionIds.length
-          ? `Remediation started for ${severity} via ${steps.length} primary step(s)${fallbackRuns ? ` + ${fallbackSteps.length} fallback step(s)` : ""}. Runs: ${allExecutionIds.join(", ")}.${totalFailures ? ` Some runs failed (${totalFailures}); check execution output.` : ""}${manualCount ? ` Manual follow-up needed for ${manualCount} entries.` : ""}`
-          : `Remediation attempted for ${severity}.${totalFailures ? ` Failures: ${totalFailures}.` : ""}${manualCount ? ` Manual follow-up needed for ${manualCount} entries.` : ""}`
-      );
-    } catch (err) {
-      setStatus(err.response?.data?.detail || err.message || "Failed to run remediation.");
-    } finally {
-      setFixingKey("");
-    }
-  };
-
-  const runFixAllVisible = async () => {
-    const rows = items.filter((row) =>
-      selectedSeverities.includes(String(row?.severity || "").toLowerCase())
-    );
-    const steps = filterExecutableSteps(buildExecutionPlan(rows));
-    const fallbackSteps = filterExecutableSteps(buildExecutionPlan(rows, (row) =>
-      Array.isArray(row?.remediation?.fallback_steps) ? row.remediation.fallback_steps : []
-    ));
-    const manualCount = rows.filter((row) => !(Array.isArray(row?.remediation?.steps) && row.remediation.steps.length)).length;
-    if (!steps.length && !fallbackSteps.length) {
-      setStatus(`No auto-remediation steps. Manual/investigation required for ${manualCount || rows.length} entries.`);
-      return;
-    }
-    setFixingKey("all");
-    setStatus("");
-    setActiveExecutionId(null);
-    try {
-      const label = selectedSeverities.map((severity) => titleCase(severity)).join(", ");
-      const executionIds = [];
-      const primary = await executePlanSteps(
-        steps,
-        `Bulk vulnerability remediation for severities: ${label}`
-      );
-      executionIds.push(...primary.executionIds);
-      let fallbackRuns = null;
-      if (primary.failures > 0 && fallbackSteps.length) {
-        fallbackRuns = await executePlanSteps(
-          fallbackSteps,
-          `Bulk fallback vulnerability remediation for severities: ${label}`
-        );
-        executionIds.push(...fallbackRuns.executionIds);
-      }
-      const allExecutionIds = Array.from(new Set(executionIds));
-      const totalFailures = primary.failures + (fallbackRuns?.failures || 0);
-      setStatus(
-        allExecutionIds.length
-          ? `Bulk remediation started via ${steps.length} primary step(s)${fallbackRuns ? ` + ${fallbackSteps.length} fallback step(s)` : ""}. Runs: ${allExecutionIds.join(", ")}.${totalFailures ? ` Some runs failed (${totalFailures}); review execution details.` : ""}${manualCount ? ` Manual follow-up needed for ${manualCount} entries.` : ""}`
-          : `Bulk remediation attempted.${totalFailures ? ` Failures: ${totalFailures}.` : ""}${manualCount ? ` Manual follow-up needed for ${manualCount} entries.` : ""}`
-      );
-    } catch (err) {
-      setStatus(err.response?.data?.detail || err.message || "Failed to run bulk remediation.");
-    } finally {
-      setFixingKey("");
-    }
-  };
-
-  const verifyVulnerabilityCleared = useCallback(async (row, attempts = 8, intervalMs = 15000) => {
-    const agentIds = (Array.isArray(row?.affected_agents) ? row.affected_agents : [])
-      .map((agent) => formatAgentId(agent?.id))
-      .filter(Boolean);
-    if (!agentIds.length) return false;
-    const vulnId = String(row?.id || "").trim();
-    if (!vulnId) return false;
-
-    for (let i = 0; i < attempts; i += 1) {
-      try {
-        const res = await getVulnerabilities({
-          agent_ids: agentIds.join(","),
-          include_resolved: false,
-          limit: 2000,
-        });
-        const latest = Array.isArray(res?.data?.items) ? res.data.items : [];
-        const stillPresent = latest.some((item) => String(item?.id || "").trim() === vulnId);
-        if (!stillPresent) return true;
-      } catch {
-        // Best-effort verification loop; retry on transient API errors.
-      }
-      await sleep(intervalMs);
-    }
-    return false;
-  }, []);
-
-  const runFeedFix = async (row) => {
-    const remediation = row?.remediation || {};
-    const steps = filterExecutableSteps(Array.isArray(remediation.steps) ? remediation.steps : []);
-    const fallbackSteps = filterExecutableSteps(Array.isArray(remediation.fallback_steps) ? remediation.fallback_steps : []);
-    if (!steps.length && !fallbackSteps.length) {
-      const manual = Array.isArray(remediation.manual_steps) ? remediation.manual_steps : [];
-      setStatus(
-        manual.length
-          ? `No auto-remediation for this vulnerability. Manual steps: ${manual.join(" | ")}`
-          : "No mapped remediation steps for this vulnerability."
-      );
-      return;
-    }
-
-    setRowFixingId(String(row.id || ""));
-    setStatus("");
-    setActiveExecutionId(null);
-    try {
-      const title =
-        row?.cve
-        || (String(row?.title || "").toLowerCase() !== "vulnerability" ? row?.title : "")
-        || row?.package?.name
-        || row?.id;
-      const justificationBase = `Vulnerability remediation from feed: ${title}`;
-      const primary = await executePlanSteps(steps, justificationBase);
-      const executedSteps = [...primary.runs];
-      const executionIds = [...primary.executionIds];
-      let fallbackRuns = null;
-      if (primary.failures > 0 && fallbackSteps.length) {
-        fallbackRuns = await executePlanSteps(
-          fallbackSteps,
-          `Fallback remediation from feed: ${title}`
-        );
-        executedSteps.push(...fallbackRuns.runs);
-        executionIds.push(...fallbackRuns.executionIds);
-      }
-
-      const dedupExecutionIds = Array.from(new Set(executionIds));
-      if (dedupExecutionIds.length) {
-        setStatus(
-          `Started ${steps.length} primary step(s)${fallbackRuns ? ` + ${fallbackSteps.length} fallback step(s)` : ""} for ${row?.cve || row?.title || row?.id}. Runs: ${dedupExecutionIds.join(", ")}. Verifying vulnerability clearance...`
-        );
-        const verificationCandidates = executedSteps.filter((step) => isUpdateAction(step.actionId));
-        const endpointVerified =
-          verificationCandidates.length > 0 &&
-          verificationCandidates.every((step) => isVerifiedUpdateStep(step.actionId, step.response));
-        void (async () => {
-          const cleared = await verifyVulnerabilityCleared(row);
-          if (cleared) {
-            setStatus(
-              `Verified: ${row?.cve || row?.title || row?.id} is no longer reported for targeted endpoint(s).`
-            );
-            await loadVulns();
-            return;
-          }
-          if (endpointVerified) {
-            const closePayload = {
-              vulnerability_id: String(row?.id || "").trim(),
-              agent_ids: (Array.isArray(row?.affected_agents) ? row.affected_agents : [])
-                .map((agent) => formatAgentId(agent?.id))
-                .filter(Boolean),
-              execution_id: dedupExecutionIds[dedupExecutionIds.length - 1] || null,
-              reason: "Endpoint remediation verified by action output; Wazuh feed not yet cleared.",
-            };
-            if (closePayload.vulnerability_id && closePayload.agent_ids.length) {
-              try {
-                await closeVulnerabilityLocal(closePayload);
-                setStatus(
-                  `Endpoint remediation verified for ${row?.cve || row?.title || row?.id}. Hidden locally until Wazuh feed reflects clearance.`
-                );
-                await loadVulns();
-                return;
-              } catch {
-                // Ignore local-close failures and fall back to feed status message.
-              }
-            }
-          }
-          setStatus(
-            `Execution completed, but Wazuh still reports ${row?.cve || row?.title || row?.id}. It will remain visible until the feed confirms fix.`
-          );
-        })();
-      } else {
-        setStatus("No executable remediation steps resolved for this vulnerability.");
-      }
-    } catch (err) {
-      setStatus(err.response?.data?.detail || err.message || "Failed to run vulnerability remediation.");
-    } finally {
-      setRowFixingId("");
-    }
-  };
-
-  const buildGlobalShellPrefill = useCallback((row) => {
-    const remediation = row?.remediation && typeof row.remediation === "object" ? row.remediation : {};
-    const manualShell = remediation.manual_shell && typeof remediation.manual_shell === "object"
-      ? remediation.manual_shell
-      : null;
-    const command = String(manualShell?.command || "").trim();
-    if (!command) return null;
-
-    const explicitAgentIds = Array.isArray(manualShell?.agent_ids)
-      ? manualShell.agent_ids.map((id) => formatAgentId(id)).filter(Boolean)
-      : [];
-    const rowAgentIds = Array.isArray(row?.affected_agents)
-      ? row.affected_agents.map((agent) => formatAgentId(agent?.id)).filter(Boolean)
-      : [];
-    const agentIds = explicitAgentIds.length ? explicitAgentIds : rowAgentIds;
-    if (!agentIds.length) return null;
-    const mode = agentIds.length === 1 ? "agent" : "multi";
-    const target = mode === "agent" ? agentIds[0] : "";
-    const targetIds = mode === "multi" ? agentIds : [];
-
-    const vulnLabel = row?.cve || row?.title || row?.id || "vulnerability";
-    const reason = String(manualShell?.reason || "").trim();
-    const sourceKey = String(manualShell?.source || "").trim().toLowerCase();
-    const isAiGenerated = sourceKey === "ai-generated" || sourceKey === "ai-heuristic";
-    const modelHint = isAiGenerated
-      ? "AI-generated"
-      : "Manual";
-    const justificationText = [
-      `${modelHint} remediation from Vulnerabilities feed: ${vulnLabel}`,
-      reason,
-      justification.trim(),
-    ]
-      .filter(Boolean)
-      .join(" | ");
-
-    return {
-      shell: String(manualShell?.shell || "powershell").trim().toLowerCase() === "cmd" ? "cmd" : "powershell",
-      command,
-      targetMode: mode,
-      targetValue: target,
-      targetAgentIds: targetIds,
-      runAsSystem: Boolean(manualShell?.run_as_system),
-      verifyKb: String(manualShell?.verify_kb || "").trim(),
-      verifyMinBuild: String(manualShell?.verify_min_build || "").trim(),
-      verifyStdoutContains: String(manualShell?.verify_stdout_contains || "").trim(),
-      justification: justificationText,
-    };
-  }, [justification]);
-
-  const openManualShell = useCallback((row) => {
-    const prefill = buildGlobalShellPrefill(row);
-    if (!prefill) {
-      setStatus("No Global Shell command is available for this vulnerability (missing command or affected agent IDs).");
-      return;
-    }
-    navigate("/global-shell", {
-      state: {
-        prefill,
-        source: "vulnerabilities",
-        vulnerability: {
-          id: row?.id || "",
-          cve: row?.cve || "",
-          title: row?.title || "",
-          severity: row?.severity || "",
-        },
-      },
-    });
-  }, [buildGlobalShellPrefill, navigate]);
-
-  const loadMoreResults = () => {
-    setFetchLimit((prev) => Math.min(prev * 2, FETCH_LIMIT_MAX));
   };
 
   return (
@@ -790,295 +331,172 @@ export default function Vulnerabilities() {
       <div className="page-header">
         <div>
           <h2>Vulnerabilities</h2>
-          <p className="muted">
-            Wazuh vulnerability view with one-click remediation by severity.
-          </p>
+          <p className="muted">Analyst-first Wazuh vulnerability triage view with expanded metadata, affected assets, and reference context.</p>
         </div>
         <div className="page-actions">
           <button className="btn secondary" onClick={loadVulns} disabled={loading}>
-            {loading ? "Loading..." : "Refresh"}
-          </button>
-          <button className="btn secondary" onClick={() => setLiveEnabled((v) => !v)}>
-            Live: {liveEnabled ? "On" : "Off"}
+            {loading ? "Refreshing..." : "Refresh Feed"}
           </button>
         </div>
       </div>
 
       {status ? <div className="empty-state">{status}</div> : null}
-      {error ? <div className="empty-state">Error: {error}</div> : null}
-      {truncated ? (
-        <div className="empty-state">
-          Results are capped at {queryLimit} source records for fast response.
-          <div className="page-actions mt-8">
-            <button className="btn secondary" onClick={loadMoreResults} disabled={loading || fetchLimit >= FETCH_LIMIT_MAX}>
-              {fetchLimit >= FETCH_LIMIT_MAX ? "Max Limit Reached" : "Load More Results"}
-            </button>
-          </div>
-        </div>
-      ) : null}
+      {error ? <div className="empty-state">Feed error: {error}</div> : null}
 
       <div className="card">
         <div className="card-header">
           <div>
-            <h3>Scope & Filters</h3>
-            <p className="muted">Select endpoint scope, severities, and run remediation.</p>
+            <h3>Scope and Filters</h3>
+            <p className="muted">Scope the Wazuh vulnerability feed by agent, group, or fleet, then narrow the analyst view by severity.</p>
           </div>
         </div>
-        <div className="page-actions">
-          <select className="input" value={targetMode} onChange={(e) => setTargetMode(e.target.value)}>
-            <option value="fleet">Fleet</option>
-            <option value="group">Group</option>
-            <option value="agent">Single agent</option>
-            <option value="multi">Multiple agents</option>
-          </select>
 
-          {targetMode === "group" ? (
-            <select className="input" value={targetValue} onChange={(e) => setTargetValue(e.target.value)}>
-              <option value="">Select group</option>
-              {groups.map((group) => (
-                <option key={group} value={group}>
-                  {group}
-                </option>
-              ))}
-            </select>
-          ) : null}
-
-          {targetMode === "agent" ? (
-            <select className="input" value={targetValue} onChange={(e) => setTargetValue(e.target.value)}>
-              <option value="">Select agent</option>
-              {agents.map((agent) => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.id} - {agent.name}
-                </option>
-              ))}
-            </select>
-          ) : null}
-        </div>
-
-        {targetMode === "multi" ? (
-          <>
-            <input
-              className="input"
-              placeholder="Search agents by ID, name, or group"
-              value={agentSearch}
-              onChange={(e) => setAgentSearch(e.target.value)}
-            />
-            <div className="list">
-              {filteredAgents.map((agent) => {
-                const selected = targetAgentIds.includes(agent.id);
-                return (
-                  <button
-                    key={agent.id}
-                    className={`list-item ${selected ? "selected" : ""}`}
-                    onClick={() =>
-                      setTargetAgentIds((prev) =>
-                        prev.includes(agent.id)
-                          ? prev.filter((id) => id !== agent.id)
-                          : [...prev, agent.id]
-                      )
-                    }
-                  >
-                    <div>
-                      <strong>{agent.id}</strong> - {agent.name}
-                      <div className="muted">{agent.group || "No group"}</div>
-                    </div>
-                    <span className={`status-pill ${selected ? "success" : "neutral"}`}>
-                      {selected ? "Selected" : agent.status}
-                    </span>
-                  </button>
-                );
-              })}
+        <div className="list">
+          <div className="list-item readable">
+            <div className="muted">Target Scope</div>
+            <div className="page-actions mt-8">
+              <select className="input" value={targetMode} onChange={(event) => setTargetMode(event.target.value)}>
+                <option value="fleet">Fleet</option>
+                <option value="group">Agent group</option>
+                <option value="agent">Single agent</option>
+                <option value="multi">Multiple agents</option>
+              </select>
+              <label className="inline-check">
+                <input
+                  type="checkbox"
+                  checked={liveEnabled}
+                  onChange={(event) => setLiveEnabled(Boolean(event.target.checked))}
+                />
+                <span>Live refresh every 30s</span>
+              </label>
             </div>
-          </>
-        ) : null}
 
-        <div className="page-actions">
-          {SEVERITIES.map((severity) => (
-            <label key={severity} className="muted inline-check tight">
-              <input
-                type="checkbox"
-                checked={selectedSeverities.includes(severity)}
-                onChange={() => toggleSeverity(severity)}
-              />
-              {titleCase(severity)}
-            </label>
-          ))}
+            {targetMode === "group" ? (
+              <div className="page-actions mt-10">
+                <select className="input" value={targetValue} onChange={(event) => setTargetValue(event.target.value)}>
+                  <option value="">Select group</option>
+                  {groups.map((group) => (
+                    <option key={group} value={group}>
+                      {group}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+
+            {targetMode === "agent" ? (
+              <div className="page-actions mt-10">
+                <input
+                  className="input"
+                  value={targetValue}
+                  onChange={(event) => setTargetValue(event.target.value)}
+                  placeholder="Agent ID (example: 004)"
+                  list="vulnerabilityAgentIds"
+                />
+                <datalist id="vulnerabilityAgentIds">
+                  {agents.slice(0, 150).map((agent) => (
+                    <option key={`agent-${agent.id}`} value={agent.id}>
+                      {agent.name}
+                    </option>
+                  ))}
+                </datalist>
+              </div>
+            ) : null}
+
+            {targetMode === "multi" ? (
+              <div className="mt-10">
+                <div className="page-actions">
+                  <input
+                    className="input"
+                    placeholder="Search agents by ID, name, or group"
+                    value={agentSearch}
+                    onChange={(event) => setAgentSearch(event.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={() => setTargetAgentIds(filteredAgents.map((agent) => agent.id))}
+                  >
+                    Select Visible
+                  </button>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={() => setTargetAgentIds([])}
+                  >
+                    Clear
+                  </button>
+                </div>
+                <div className="meta-line mt-6">Selected: {targetAgentIds.length}</div>
+                <div className="list-scroll mt-10 h-240">
+                  <div className="list">
+                    {filteredAgents.map((agent) => {
+                      const selected = targetAgentIds.includes(agent.id);
+                      return (
+                        <button
+                          key={agent.id}
+                          type="button"
+                          className={`list-item ${selected ? "selected" : ""}`}
+                          onClick={() =>
+                            setTargetAgentIds((current) => (
+                              current.includes(agent.id)
+                                ? current.filter((id) => id !== agent.id)
+                                : [...current, agent.id]
+                            ))
+                          }
+                        >
+                          <div>
+                            <strong>{agent.id}</strong> - {agent.name}
+                            <div className="muted">{agent.group || "No group"}</div>
+                          </div>
+                          <span className={`status-pill ${selected ? "success" : "neutral"}`}>
+                            {selected ? "Selected" : agent.status}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="list-item readable">
+            <div className="muted">Severity Filter</div>
+            <div className="page-actions mt-8">
+              {SEVERITIES.map((severity) => (
+                <label key={severity} className="muted inline-check tight">
+                  <input
+                    type="checkbox"
+                    checked={selectedSeverities.includes(severity)}
+                    onChange={() => toggleSeverity(severity)}
+                  />
+                  {titleCase(severity)}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="list-item readable">
+            <div className="muted">Feed Window</div>
+            <div className="page-actions mt-8">
+              <span className="chip">Source: {source}</span>
+              <span className="chip">Query limit: {queryLimit}</span>
+              <span className="chip">Fetched: {items.length}</span>
+              <span className="chip">Visible: {filteredItems.length}</span>
+              {truncated ? <span className="status-pill pending">Truncated</span> : null}
+              {truncated && fetchLimit < FETCH_LIMIT_MAX ? (
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={() => setFetchLimit((current) => Math.min(FETCH_LIMIT_MAX, current * 2))}
+                >
+                  Load More From Wazuh
+                </button>
+              ) : null}
+            </div>
+          </div>
         </div>
-
-        <textarea
-          className="input"
-          placeholder="Remediation justification (optional but recommended)"
-          value={justification}
-          onChange={(e) => setJustification(e.target.value)}
-        />
-
-        <div className="page-actions">
-          <button className="btn secondary" onClick={runFixAllVisible} disabled={loading || fixingKey === "all"}>
-            {fixingKey === "all" ? "Running..." : "Fix Selected Severities"}
-          </button>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <h3>Execution Plan Preview</h3>
-            <p className="muted">
-              Preview for selected severities in current scope before running remediation.
-            </p>
-          </div>
-        </div>
-        <div className="stat-grid">
-          <div className="stat-card">
-            <div className="stat-label">Auto Steps</div>
-            <div className="stat-value">{autoPlan.length}</div>
-            <div className="stat-sub">Executable now</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Recommended</div>
-            <div className="stat-value">{recommendedPlan.length}</div>
-            <div className="stat-sub">Validation / hunt steps</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Optional</div>
-            <div className="stat-value">{optionalPlan.length}</div>
-            <div className="stat-sub">IR follow-up steps</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Fallback</div>
-            <div className="stat-value">{fallbackPlan.length}</div>
-            <div className="stat-sub">Auto on failure</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Manual Review</div>
-            <div className="stat-value">{manualOnlyCount}</div>
-            <div className="stat-sub">Vulns without full automation</div>
-          </div>
-        </div>
-
-        {autoPlan.length ? (
-          <div className="table-scroll">
-            <table className="table readable compact">
-              <thead>
-                <tr>
-                  <th>Mode</th>
-                  <th>Action</th>
-                  <th>Args</th>
-                  <th>Targets</th>
-                  <th>Mapped Vulns</th>
-                </tr>
-              </thead>
-              <tbody>
-                {autoPlan.map((step) => (
-                  <tr key={`auto-${step.action_id}-${JSON.stringify(step.args)}`}>
-                    <td>
-                      <span className="status-pill success">{PLAN_MODES.auto}</span>
-                    </td>
-                    <td>{step.action_id}</td>
-                    <td className="muted">{formatArgs(step.args)}</td>
-                    <td>{step.agent_ids.length}</td>
-                    <td>{step.vulnerability_ids.length}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="empty-state">No auto-executable steps for selected vulnerabilities.</div>
-        )}
-
-        {recommendedPlan.length ? (
-          <div className="table-scroll">
-            <table className="table readable compact">
-              <thead>
-                <tr>
-                  <th>Mode</th>
-                  <th>Action</th>
-                  <th>Args</th>
-                  <th>Targets</th>
-                  <th>Mapped Vulns</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recommendedPlan.map((step) => (
-                  <tr key={`recommended-${step.action_id}-${JSON.stringify(step.args)}`}>
-                    <td>
-                      <span className="status-pill pending">{PLAN_MODES.recommended}</span>
-                    </td>
-                    <td>{step.action_id}</td>
-                    <td className="muted">{formatArgs(step.args)}</td>
-                    <td>{step.agent_ids.length}</td>
-                    <td>{step.vulnerability_ids.length}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-
-        {optionalPlan.length ? (
-          <div className="table-scroll">
-            <table className="table readable compact">
-              <thead>
-                <tr>
-                  <th>Mode</th>
-                  <th>Action</th>
-                  <th>Args</th>
-                  <th>Targets</th>
-                  <th>Mapped Vulns</th>
-                </tr>
-              </thead>
-              <tbody>
-                {optionalPlan.map((step) => (
-                  <tr key={`optional-${step.action_id}-${JSON.stringify(step.args)}`}>
-                    <td>
-                      <span className="status-pill neutral">{PLAN_MODES.optional}</span>
-                    </td>
-                    <td>{step.action_id}</td>
-                    <td className="muted">{formatArgs(step.args)}</td>
-                    <td>{step.agent_ids.length}</td>
-                    <td>{step.vulnerability_ids.length}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-
-        {fallbackPlan.length ? (
-          <div className="table-scroll">
-            <table className="table readable compact">
-              <thead>
-                <tr>
-                  <th>Mode</th>
-                  <th>Action</th>
-                  <th>Args</th>
-                  <th>Targets</th>
-                  <th>Mapped Vulns</th>
-                </tr>
-              </thead>
-              <tbody>
-                {fallbackPlan.map((step) => (
-                  <tr key={`fallback-${step.action_id}-${JSON.stringify(step.args)}`}>
-                    <td>
-                      <span className="status-pill pending">Fallback</span>
-                    </td>
-                    <td>{step.action_id}</td>
-                    <td className="muted">{formatArgs(step.args)}</td>
-                    <td>{step.agent_ids.length}</td>
-                    <td>{step.vulnerability_ids.length}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-
-        {manualSteps.length ? (
-          <div className="empty-state">
-            Manual steps: {manualSteps.join(" | ")}
-          </div>
-        ) : null}
       </div>
 
       <div className="stat-grid">
@@ -1089,17 +507,190 @@ export default function Vulnerabilities() {
             <div className="stat-sub">
               Agents affected: {Array.isArray(targetAgents?.[severity]) ? targetAgents[severity].length : 0}
             </div>
-            <div className="page-actions">
-              <button
-                className="btn secondary"
-                onClick={() => runFix(severity)}
-                disabled={loading || fixingKey === severity}
-              >
-                {fixingKey === severity ? "Running..." : `Fix ${titleCase(severity)}`}
-              </button>
-            </div>
           </div>
         ))}
+      </div>
+
+      <div className="grid-2">
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <h3>Selected Vulnerability</h3>
+              <p className="muted">Expanded Wazuh metadata for analyst review. Automated remediation controls were removed from this view.</p>
+            </div>
+          </div>
+
+          {!selectedItem ? (
+            <div className="empty-state">No vulnerability is currently selected.</div>
+          ) : (
+            <>
+              <div>
+                <div className="page-actions">
+                  <span className={`status-pill ${severityClass(selectedItem.severity)}`}>
+                    {titleCase(selectedItem.severity)}
+                  </span>
+                  {selectedItem.score !== null && selectedItem.score !== undefined ? (
+                    <span className="chip">CVSS {selectedItem.score}</span>
+                  ) : null}
+                  <span className="chip">Status: {toDisplay(selectedItem.status)}</span>
+                  <span className="chip">Affected: {selectedItem.affected_count || 0}</span>
+                  {deriveIndicators(selectedItem).map((indicator) => (
+                    <span className="chip" key={indicator}>{indicator}</span>
+                  ))}
+                </div>
+                <h3 className="mt-10">{selectedItem.cve || selectedItem.title || "Vulnerability"}</h3>
+                <div className="meta-line mt-6">{selectedItem.title || "-"}</div>
+              </div>
+
+              <div className="kv-grid">
+                <div className="kv-row">
+                  <div className="kv-key">Package</div>
+                  <div className="kv-value">
+                    {toDisplay(selectedItem.package?.name)} {selectedItem.package?.version ? `(${selectedItem.package.version})` : ""}
+                  </div>
+                </div>
+                <div className="kv-row">
+                  <div className="kv-key">Condition</div>
+                  <div className="kv-value">{toDisplay(selectedItem.package?.condition)}</div>
+                </div>
+                <div className="kv-row">
+                  <div className="kv-key">Package Source</div>
+                  <div className="kv-value">{toDisplay(selectedItem.package?.source)}</div>
+                </div>
+                <div className="kv-row">
+                  <div className="kv-key">Classification</div>
+                  <div className="kv-value">{toDisplay(selectedItem.classification)}</div>
+                </div>
+                <div className="kv-row">
+                  <div className="kv-key">Type</div>
+                  <div className="kv-value">{toDisplay(selectedItem.type)}</div>
+                </div>
+                <div className="kv-row">
+                  <div className="kv-key">CWE</div>
+                  <div className="kv-value">{toDisplay(selectedItem.cwe_reference)}</div>
+                </div>
+                <div className="kv-row">
+                  <div className="kv-key">Assigner</div>
+                  <div className="kv-value">{toDisplay(selectedItem.assigner)}</div>
+                </div>
+                <div className="kv-row">
+                  <div className="kv-key">Published</div>
+                  <div className="kv-value">{formatWazuhTimestamp(selectedItem.published)}</div>
+                </div>
+                <div className="kv-row">
+                  <div className="kv-key">Updated</div>
+                  <div className="kv-value">{formatWazuhTimestamp(selectedItem.updated)}</div>
+                </div>
+                <div className="kv-row">
+                  <div className="kv-key">Last Seen</div>
+                  <div className="kv-value">{formatWazuhTimestamp(selectedItem.last_seen)}</div>
+                </div>
+                <div className="kv-row">
+                  <div className="kv-key">Scanner Ref</div>
+                  <div className="kv-value">{toDisplay(selectedItem.scanner_reference)}</div>
+                </div>
+              </div>
+
+              <div className="list-item readable">
+                <div className="muted">Rationale / Description</div>
+                <div className="mt-8">{toDisplay(selectedItem.rationale, "No rationale provided by Wazuh.")}</div>
+              </div>
+
+              <div className="list-item readable">
+                <div className="muted">References</div>
+                {Array.isArray(selectedItem.references) && selectedItem.references.length ? (
+                  <div className="list mt-10">
+                    {selectedItem.references.map((reference) => (
+                      <a
+                        key={reference}
+                        href={reference}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="list-item clickable readable"
+                      >
+                        {reference}
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="meta-line mt-8">No references were provided in the Wazuh record.</div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="stack-col gap-18">
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h3>Affected Assets</h3>
+                <p className="muted">Host-level context from the Wazuh feed for the selected vulnerability.</p>
+              </div>
+            </div>
+
+            {!selectedItem ? (
+              <div className="empty-state">Select a vulnerability from the feed to inspect affected assets.</div>
+            ) : (
+              <div className="table-scroll h-240">
+                <table className="table compact readable">
+                  <thead>
+                    <tr>
+                      <th>Agent</th>
+                      <th>IP</th>
+                      <th>Platform</th>
+                      <th>Group</th>
+                      <th>Status</th>
+                      <th>Local State</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(selectedItem.affected_agents || []).length === 0 ? (
+                      <tr>
+                        <td colSpan="6" className="text-center">
+                          No affected agent metadata available.
+                        </td>
+                      </tr>
+                    ) : (
+                      (selectedItem.affected_agents || []).map((agent) => (
+                        <tr key={`${selectedItem.id}-${agent.id}`}>
+                          <td>
+                            <div>{agent.id}</div>
+                            <div className="meta-line">{agent.name || "-"}</div>
+                          </td>
+                          <td>{toDisplay(agent.ip)}</td>
+                          <td>{toDisplay(agent.platform)}</td>
+                          <td>{compactList(agent.groups || [], 4)}</td>
+                          <td>{toDisplay(agent.status)}</td>
+                          <td>
+                            {agent.local_closure ? (
+                              <>
+                                <div>{toDisplay(agent.local_closure.state)}</div>
+                                <div className="meta-line">{toDisplay(agent.local_closure.reason)}</div>
+                              </>
+                            ) : (
+                              <span className="muted">Open</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h3>Wazuh Detail JSON</h3>
+                <p className="muted">Raw analyst-facing payload for the selected vulnerability after aggregation.</p>
+              </div>
+            </div>
+            <pre className="code-block">{wazuhDetailJson}</pre>
+          </div>
+        </div>
       </div>
 
       <div className="card">
@@ -1111,136 +702,91 @@ export default function Vulnerabilities() {
             </p>
           </div>
         </div>
+
         <div className="table-scroll">
           <table className="table readable compact">
             <thead>
               <tr>
-                <th>CVE / Title</th>
+                <th>Vulnerability</th>
                 <th>Severity</th>
                 <th>Package</th>
                 <th>Affected</th>
-                <th>Condition</th>
-                <th>Last Seen</th>
+                <th>Status</th>
+                <th>Timeline</th>
                 <th>References</th>
-                <th>Recommended Fix</th>
-                <th>Action</th>
               </tr>
             </thead>
             <tbody>
-              {items.length === 0 ? (
+              {pagedItems.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="muted">
+                  <td colSpan="7" className="muted">
                     No vulnerabilities in this scope/filter.
                   </td>
                 </tr>
               ) : (
                 pagedItems.map((row) => {
-                  const refs = Array.isArray(row.references) ? row.references : [];
-                  const firstRef = refs[0] || row.scanner_reference || "";
-                  const manualShell = row?.remediation?.manual_shell && typeof row.remediation.manual_shell === "object"
-                    ? row.remediation.manual_shell
-                    : null;
-                  const manualCommand = String(manualShell?.command || "").trim();
+                  const references = Array.isArray(row.references) ? row.references : [];
                   return (
-                    <tr key={row.id}>
+                    <tr
+                      key={row.id}
+                      className={`clickable ${String(selectedItem?.id || "") === String(row.id || "") ? "selected" : ""}`}
+                      onClick={() => setSelectedVulnerabilityId(String(row.id || ""))}
+                    >
                       <td>
                         <div>{row.cve || "-"}</div>
-                        <div className="muted">{row.title || "-"}</div>
+                        <div className="meta-line">{row.title || "-"}</div>
+                        <div className="meta-line">
+                          {deriveIndicators(row).join(" | ") || "No special indicators derived"}
+                        </div>
                       </td>
                       <td>
                         <span className={`status-pill ${severityClass(row.severity)}`}>
                           {titleCase(row.severity)}
                         </span>
                         {row.score !== null && row.score !== undefined ? (
-                          <div className="muted">CVSS {row.score}</div>
+                          <div className="meta-line">CVSS {row.score}</div>
                         ) : null}
                       </td>
                       <td>
-                        <div>{row.package?.name || "-"}</div>
-                        <div className="muted">{row.package?.version || "-"}</div>
+                        <div>{toDisplay(row.package?.name)}</div>
+                        <div className="meta-line">
+                          {toDisplay(row.package?.version)} | {toDisplay(row.package?.source)}
+                        </div>
+                        <div className="meta-line">{toDisplay(row.package?.condition)}</div>
                       </td>
                       <td>
                         <div>{row.affected_count || 0} agent(s)</div>
-                        <div className="muted">
+                        <div className="meta-line">
                           {compactList(
-                            (row.affected_agents || []).map(
-                              (agent) => `${agent.id}${agent.name ? `:${agent.name}` : ""}`
+                            (row.affected_agents || []).map((agent) =>
+                              `${agent.id}${agent.name ? `:${agent.name}` : ""}`
                             ),
-                            3
+                            4
                           )}
                         </div>
                       </td>
-                      <td>{row.package?.condition || "-"}</td>
-                      <td>{formatWazuhTimestamp(row.last_seen)}</td>
                       <td>
-                        {firstRef ? (
-                          <a href={firstRef} target="_blank" rel="noreferrer">
-                            Open ({refs.length || 1})
+                        <div>{toDisplay(row.status)}</div>
+                        <div className="meta-line">
+                          {toDisplay(row.classification)} | {toDisplay(row.type)}
+                        </div>
+                      </td>
+                      <td>
+                        <div>Published: {formatWazuhTimestamp(row.published)}</div>
+                        <div className="meta-line">Updated: {formatWazuhTimestamp(row.updated)}</div>
+                        <div className="meta-line">Last seen: {formatWazuhTimestamp(row.last_seen)}</div>
+                      </td>
+                      <td>
+                        {references.length ? (
+                          <a href={references[0]} target="_blank" rel="noreferrer">
+                            Open ({references.length})
                           </a>
                         ) : (
                           <span className="muted">-</span>
                         )}
-                        
-                      </td>
-                      <td>
-                        <div>{row.remediation?.summary || "-"}</div>
-                        <div className="muted">
-                          Coverage: {titleCase(
-                            row.remediation?.coverage
-                              || ((row.remediation?.steps || []).length ? "automated" : "manual")
-                          )} | Confidence:{" "}
-                          {titleCase(row.remediation?.confidence || "low")}
-                        </div>
-                        <div className="muted">
-                          Auto: {(row.remediation?.steps || []).length} | Recommended:{" "}
-                          {((row.remediation?.verification_steps || []).length +
-                            (row.remediation?.investigation_steps || []).length) || 0}{" "}
-                          | Optional: {(row.remediation?.optional_steps || []).length || 0}{" "}
-                          | Fallback: {(row.remediation?.fallback_steps || []).length || 0}
-                        </div>
-                        <div className="muted">
-                          {(row.remediation?.steps || [])
-                            .map((step) => `${step.action_id}${step.args?.package ? `(${step.args.package})` : ""}`)
-                            .join(" | ") || "No direct auto-remediation step."}
-                          {Array.isArray(row.remediation?.fallback_steps) && row.remediation.fallback_steps.length
-                            ? ` | fallback: ${row.remediation.fallback_steps.map((step) => step.action_id).join(" | ")}`
-                            : ""}
-                        </div>
-                        {manualCommand ? (
-                          <div className="muted">
-                            {(String(manualShell?.source || "").toLowerCase() === "ai-generated"
-                              || String(manualShell?.source || "").toLowerCase() === "ai-heuristic")
-                              ? "Generated operator-ready PowerShell command available in Global Shell."
-                              : "Manual Global Shell fallback available."}
-                          </div>
+                        {row.scanner_reference ? (
+                          <div className="meta-line">{row.scanner_reference}</div>
                         ) : null}
-                        {manualCommand && manualShell?.strategy ? (
-                          <div className="muted">
-                            Strategy: {String(manualShell.strategy)}
-                          </div>
-                        ) : null}
-                        {manualCommand && manualShell?.reason ? (
-                          <div className="muted">
-                            {String(manualShell.reason)}
-                          </div>
-                        ) : null}
-                      </td>
-                      <td>
-                        <button
-                          className="btn secondary"
-                          onClick={() => runFeedFix(row)}
-                          disabled={rowFixingId === String(row.id || "")}
-                        >
-                          {rowFixingId === String(row.id || "") ? "Running..." : "Fix This"}
-                        </button>
-                        <button
-                          className="btn secondary mt-8"
-                          onClick={() => openManualShell(row)}
-                          disabled={!manualCommand}
-                          title={manualCommand ? "Open Global Shell with prefilled command and targets" : "No manual shell command provided for this vulnerability"}
-                        >
-                          Manual Shell
-                        </button>
                       </td>
                     </tr>
                   );
@@ -1249,8 +795,9 @@ export default function Vulnerabilities() {
             </tbody>
           </table>
         </div>
+
         <Pager
-          total={items.length}
+          total={filteredItems.length}
           page={feedPage}
           pageSize={feedPageSize}
           onPageChange={setFeedPage}
@@ -1262,10 +809,6 @@ export default function Vulnerabilities() {
           label="vulnerabilities"
         />
       </div>
-
-      {activeExecutionId ? (
-        <ExecutionStream executionId={activeExecutionId} title={`Remediation Run #${activeExecutionId}`} />
-      ) : null}
     </div>
   );
 }

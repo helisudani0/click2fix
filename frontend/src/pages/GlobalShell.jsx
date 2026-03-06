@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import ExecutionStream from "../components/ExecutionStream";
 import Pager from "../components/Pager";
-import { getAgents, getExecutions, runGlobalShell } from "../api/wazuh";
+import { getAgents, getExecutions, runGlobalShell, suggestGlobalShellCommand } from "../api/wazuh";
 import { buildHumanReadableOutput, summarizeReadableOutput } from "../utils/output";
 import { formatWazuhTimestamp } from "../utils/time";
 
@@ -14,39 +14,28 @@ const TARGET_MODE_LABELS = {
   group: "Agent group",
   fleet: "Fleet",
 };
+const asFlag = (value, defaultValue) => {
+  if (value === undefined || value === null || value === "") return defaultValue;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return defaultValue;
+};
+const ASSIST_ENV_ENABLED = asFlag(import.meta.env.VITE_AI_REMEDIATION_ENABLED, false);
+const looksLikeAssistantUnavailable = (text) => {
+  const lowered = String(text || "").toLowerCase();
+  return (
+    lowered.includes("ai remediation is disabled")
+    || lowered.includes("unsupported ai provider")
+    || lowered.includes("requires api_key")
+  );
+};
 const WINDOWS_UPDATE_PRESET_COMMAND =
-  "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"
-  + "if(-not (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue)){"
-  + "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue | Out-Null;"
-  + "Install-Module PSWindowsUpdate -Scope AllUsers -Force -Confirm:$false -ErrorAction Stop | Out-Null"
-  + "};"
-  + "Import-Module PSWindowsUpdate -ErrorAction Stop;"
-  + "Get-WindowsUpdate -MicrosoftUpdate -AcceptAll -Install -AutoReboot -ErrorAction Stop";
+  "Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -AutoReboot";
 const WINDOWS_UPDATE_SCAN_PRESET_COMMAND =
-  "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"
-  + "if(-not (Get-Command Get-WindowsUpdate -ErrorAction SilentlyContinue)){"
-  + "Set-PSRepository -Name PSGallery -InstallationPolicy Trusted -ErrorAction SilentlyContinue | Out-Null;"
-  + "Install-Module PSWindowsUpdate -Scope AllUsers -Force -Confirm:$false -ErrorAction Stop | Out-Null"
-  + "};"
-  + "Import-Module PSWindowsUpdate -ErrorAction Stop;"
-  + "Get-WindowsUpdate -MicrosoftUpdate | Select-Object -First 60 Title,KB,Size";
+  "Get-WindowsUpdate -MicrosoftUpdate";
 const TARGETED_UPGRADE_PRESET_COMMAND =
-  "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"
-  + "$pkg='PACKAGE_HINT';$updated=$false;"
-  + "if(Get-Command winget -ErrorAction SilentlyContinue){"
-  + "& winget upgrade --id $pkg --exact --silent --accept-package-agreements --accept-source-agreements --include-unknown | Out-Host;"
-  + "if($LASTEXITCODE -eq 0){$updated=$true};"
-  + "if(-not $updated){"
-  + "& winget upgrade --query $pkg --silent --accept-package-agreements --accept-source-agreements --include-unknown | Out-Host;"
-  + "if($LASTEXITCODE -eq 0){$updated=$true}"
-  + "}"
-  + "};"
-  + "if(-not $updated -and (Get-Command choco -ErrorAction SilentlyContinue)){"
-  + "& choco upgrade $pkg -y --no-progress --limit-output | Out-Host;"
-  + "if($LASTEXITCODE -eq 0){$updated=$true}"
-  + "};"
-  + "if(-not $updated){throw ('No supported upgrade path succeeded for '+$pkg)};"
-  + "Write-Output ('Package update attempted for '+$pkg);";
+  "winget upgrade --id PACKAGE_HINT --exact";
 const UPGRADE_PRESETS = [
   {
     id: "windows-update-scan",
@@ -61,7 +50,7 @@ const UPGRADE_PRESETS = [
     label: "Windows Security Updates",
     shell: "powershell",
     runAsSystem: true,
-    description: "Install pending Windows security/OS updates.",
+    description: "Install pending Windows updates. Requires PSWindowsUpdate.",
     command: WINDOWS_UPDATE_PRESET_COMMAND,
   },
   {
@@ -70,7 +59,7 @@ const UPGRADE_PRESETS = [
     shell: "powershell",
     runAsSystem: false,
     description: "Upgrade all upgradable winget-managed packages.",
-    command: "winget upgrade --all --silent --accept-package-agreements --accept-source-agreements",
+    command: "winget upgrade --all",
   },
   {
     id: "choco-all",
@@ -78,14 +67,14 @@ const UPGRADE_PRESETS = [
     shell: "powershell",
     runAsSystem: false,
     description: "Upgrade all Chocolatey packages.",
-    command: "choco upgrade all -y --no-progress --limit-output",
+    command: "choco upgrade all -y",
   },
   {
     id: "targeted-fallback",
     label: "Targeted Package Upgrade",
     shell: "powershell",
     runAsSystem: false,
-    description: "Set PACKAGE_HINT and try winget, then Chocolatey.",
+    description: "Set PACKAGE_HINT and run a direct winget package upgrade.",
     command: TARGETED_UPGRADE_PRESET_COMMAND,
   },
 ];
@@ -290,6 +279,7 @@ const statusTone = (status) => {
 export default function GlobalShell() {
   const location = useLocation();
   const prefillAppliedRef = useRef("");
+  const assistantAutoloadRef = useRef("");
   const [agents, setAgents] = useState([]);
   const [agentsError, setAgentsError] = useState("");
   const [agentsLoading, setAgentsLoading] = useState(true);
@@ -297,6 +287,16 @@ export default function GlobalShell() {
   const [shell, setShell] = useState("powershell");
   const [command, setCommand] = useState("");
   const [runAsSystem, setRunAsSystem] = useState(false);
+  const [assistantPrompt, setAssistantPrompt] = useState("");
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantPlan, setAssistantPlan] = useState(null);
+  const [assistantEnabled, setAssistantEnabled] = useState(ASSIST_ENV_ENABLED);
+  const [assistantDisabledReason, setAssistantDisabledReason] = useState(
+    ASSIST_ENV_ENABLED ? "" : "AI assistant is temporarily disabled for this deployment."
+  );
+  const [autoRemediate, setAutoRemediate] = useState(false);
+  const [maxAttempts, setMaxAttempts] = useState(3);
+  const [vulnerabilityContext, setVulnerabilityContext] = useState(null);
   const [upgradePreset, setUpgradePreset] = useState("");
   const [verifyKb, setVerifyKb] = useState("");
   const [verifyMinBuild, setVerifyMinBuild] = useState("");
@@ -428,6 +428,9 @@ export default function GlobalShell() {
     if (typeof prefill.command === "string") {
       setCommand(prefill.command);
     }
+    if (typeof prefill.assistantPrompt === "string") {
+      setAssistantPrompt(prefill.assistantPrompt.trim());
+    }
     if (typeof prefill.verifyKb === "string") {
       setVerifyKb(prefill.verifyKb.trim());
     } else {
@@ -448,6 +451,22 @@ export default function GlobalShell() {
     } else {
       setRunAsSystem(false);
     }
+    if (typeof prefill.autoRemediate === "boolean") {
+      setAutoRemediate(prefill.autoRemediate);
+    } else {
+      setAutoRemediate(false);
+    }
+    if (prefill.maxAttempts !== undefined && prefill.maxAttempts !== null) {
+      const parsedAttempts = Number.parseInt(String(prefill.maxAttempts), 10);
+      if (!Number.isNaN(parsedAttempts)) {
+        setMaxAttempts(Math.max(1, Math.min(8, parsedAttempts)));
+      }
+    }
+    const vulnCtx =
+      (state?.vulnerabilityContext && typeof state.vulnerabilityContext === "object" ? state.vulnerabilityContext : null)
+      || (prefill?.vulnerabilityContext && typeof prefill.vulnerabilityContext === "object" ? prefill.vulnerabilityContext : null)
+      || (state?.vulnerability && typeof state.vulnerability === "object" ? state.vulnerability : null);
+    setVulnerabilityContext(vulnCtx);
     setUpgradePreset("");
     if (typeof prefill.targetValue === "string" || typeof prefill.targetValue === "number") {
       setTargetValue(String(prefill.targetValue || "").trim());
@@ -472,7 +491,7 @@ export default function GlobalShell() {
           .join(",")
       );
     }
-    setStatus("Loaded prefilled Global Shell command from vulnerability context.");
+    setStatus("Loaded prefilled Global Shell context.");
   }, [location]);
 
   const targetPickList = useMemo(() => {
@@ -578,10 +597,95 @@ export default function GlobalShell() {
     setStatus(`Loaded preset: ${preset.label}`);
   }, []);
 
+  const generateAssistantCommand = useCallback(async () => {
+    if (!assistantEnabled) {
+      setStatus(assistantDisabledReason || "AI assistant is disabled. Enter a manual command.");
+      return;
+    }
+    const prompt = assistantPrompt.trim();
+    const vulnContext = vulnerabilityContext && typeof vulnerabilityContext === "object"
+      ? vulnerabilityContext
+      : null;
+    if (!prompt && !vulnContext) {
+      setStatus("Provide an assistant prompt (or vulnerability context) to generate a command.");
+      return;
+    }
+
+    setAssistantLoading(true);
+    try {
+      const res = await suggestGlobalShellCommand({
+        shell,
+        prompt: prompt || undefined,
+        vulnerability_context: vulnContext || undefined,
+      });
+      const data = res?.data || {};
+      const plan = data?.plan && typeof data.plan === "object" ? data.plan : null;
+      const recommended = data?.recommended && typeof data.recommended === "object"
+        ? data.recommended
+        : (plan?.recommended && typeof plan.recommended === "object" ? plan.recommended : null);
+      setAssistantPlan(plan);
+      if (recommended?.command) {
+        setCommand(String(recommended.command));
+        if (typeof recommended.run_as_system === "boolean") {
+          setRunAsSystem(Boolean(recommended.run_as_system));
+        }
+        if (!verifyKb && recommended.verify_kb) {
+          setVerifyKb(String(recommended.verify_kb));
+        }
+        if (!verifyMinBuild && recommended.verify_min_build) {
+          setVerifyMinBuild(String(recommended.verify_min_build));
+        }
+        setStatus(`Assistant generated command (${String(recommended.strategy || "best-fit")}).`);
+      } else {
+        setStatus("Assistant could not infer a safe command from the provided prompt/context.");
+      }
+    } catch (err) {
+      const statusCode = Number(err?.response?.status || 0);
+      const detail = err?.response?.data?.detail;
+      const detailText = typeof detail === "string"
+        ? detail
+        : (detail?.message || detail?.error || "");
+      if (statusCode === 503 || looksLikeAssistantUnavailable(detailText || err.message)) {
+        setAssistantEnabled(false);
+        setAutoRemediate(false);
+        setAssistantPlan(null);
+        setAssistantDisabledReason(detailText || "AI assistant is currently unavailable.");
+      }
+      setStatus(detailText || err.message || "Failed to generate assistant command.");
+    } finally {
+      setAssistantLoading(false);
+    }
+  }, [assistantDisabledReason, assistantEnabled, assistantPrompt, shell, vulnerabilityContext, verifyKb, verifyMinBuild]);
+
+  useEffect(() => {
+    if (!assistantEnabled) return;
+    const prompt = assistantPrompt.trim();
+    if (!prompt) return;
+    const fingerprint = JSON.stringify({
+      prompt,
+      shell,
+      vulnerabilityContext: vulnerabilityContext || null,
+    });
+    if (assistantAutoloadRef.current === fingerprint) return;
+    assistantAutoloadRef.current = fingerprint;
+    void generateAssistantCommand();
+  }, [assistantEnabled, assistantPrompt, command, generateAssistantCommand, shell, vulnerabilityContext]);
+
+  useEffect(() => {
+    if (assistantEnabled) return;
+    setAutoRemediate(false);
+  }, [assistantEnabled]);
+
   const runFleetCommand = async () => {
     const raw = command.trim();
-    if (!raw) {
-      setStatus("Command is required.");
+    const prompt = assistantEnabled ? assistantPrompt.trim() : "";
+    const hasVulnerabilityContext = assistantEnabled && Boolean(vulnerabilityContext && typeof vulnerabilityContext === "object");
+    if (!raw && !prompt && !hasVulnerabilityContext) {
+      setStatus(
+        assistantEnabled
+          ? "Command is required (or provide an assistant prompt/context)."
+          : "Command is required while AI assistant is disabled."
+      );
       return;
     }
     if (targetMode === "agent" && !normalizedTargetValue) {
@@ -610,11 +714,17 @@ export default function GlobalShell() {
       const effectiveJustification = rawJustification.length >= 12 ? rawJustification : autoJustification;
       const payload = {
         shell,
-        command: raw,
         async: true,
         run_as_system: effectiveRunAsSystem,
         justification: effectiveJustification,
       };
+      if (raw) payload.command = raw;
+      if (prompt) payload.assistant_prompt = prompt;
+      if (hasVulnerabilityContext) payload.vulnerability_context = vulnerabilityContext;
+      if (assistantEnabled && autoRemediate) {
+        payload.auto_remediate = true;
+        payload.max_attempts = Math.max(1, Math.min(8, Number(maxAttempts) || 3));
+      }
       const verifyKbValue = verifyKb.trim();
       const verifyBuildValue = verifyMinBuild.trim();
       const verifyStdoutValue = verifyStdoutContains.trim();
@@ -823,6 +933,69 @@ export default function GlobalShell() {
                 />
                 <span className="muted">Run as SYSTEM (administrator context)</span>
               </label>
+            </div>
+
+            <div className="list-item readable">
+              <div className="muted">AI Command Assistant</div>
+              <textarea
+                className="input mt-8"
+                value={assistantPrompt}
+                onChange={(e) => setAssistantPrompt(e.target.value)}
+                rows={3}
+                placeholder="Describe the task or vulnerability fix you want (example: Upgrade Google Chrome on affected endpoints)."
+                disabled={!assistantEnabled}
+              />
+              <div className="page-actions mt-8">
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={generateAssistantCommand}
+                  disabled={!assistantEnabled || assistantLoading}
+                >
+                  {assistantLoading ? "Generating..." : "Generate Command"}
+                </button>
+              </div>
+              {!assistantEnabled ? (
+                <div className="meta-line mt-8">
+                  {assistantDisabledReason || "AI assistant is disabled for now. Use manual commands."}
+                </div>
+              ) : null}
+              {assistantPlan?.recommended?.reason ? (
+                <div className="meta-line mt-8">
+                  {String(assistantPlan.recommended.reason)}
+                </div>
+              ) : null}
+              {assistantPlan?.recommended?.strategy ? (
+                <div className="meta-line mt-8">
+                  Strategy: {String(assistantPlan.recommended.strategy)}
+                </div>
+              ) : null}
+              <label className="mt-10 page-actions" style={{ alignItems: "center", gap: "8px" }}>
+                <input
+                  type="checkbox"
+                  checked={autoRemediate}
+                  onChange={(e) => setAutoRemediate(Boolean(e.target.checked))}
+                  disabled={!assistantEnabled}
+                />
+                <span className="muted">Auto-remediate loop (retry with fallback commands)</span>
+              </label>
+              {assistantEnabled && autoRemediate ? (
+                <div className="page-actions mt-8">
+                  <input
+                    className="input"
+                    type="number"
+                    min={1}
+                    max={8}
+                    value={maxAttempts}
+                    onChange={(e) => {
+                      const parsed = Number.parseInt(e.target.value || "3", 10);
+                      if (Number.isNaN(parsed)) return;
+                      setMaxAttempts(Math.max(1, Math.min(8, parsed)));
+                    }}
+                  />
+                  <span className="muted">Max attempts (1-8)</span>
+                </div>
+              ) : null}
             </div>
 
             <div className="list-item readable">

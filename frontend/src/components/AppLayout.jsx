@@ -30,10 +30,11 @@ const ROUTE_LABELS = {
 };
 
 const PRIORITY_LINKS = [
-  { to: "/alerts", label: "Alert Triage" },
-  { to: "/sca-fleet", label: "SCA Hardening" },
-  { to: "/incidents", label: "Incident Queue" },
-  { to: "/approvals", label: "Approval Queue" },
+  { to: "/alerts", label: "Alerts" },
+  { to: "/vulnerabilities", label: "Vulnerabilities" },
+  { to: "/actions", label: "Actions" },
+  { to: "/global-shell", label: "Global Shell" },
+  { to: "/playbooks", label: "Playbooks" },
   { to: "/executions", label: "Execution Monitor" },
 ];
 

@@ -115,6 +115,66 @@ const blankPlaybook = () =>
     ],
   });
 
+const PLAYBOOK_ONLY_ACTIONS = [
+  {
+    id: "custom-os-command",
+    label: "Global Shell Command",
+    description: "Run a shell command as a playbook step using the same backend transport as Global Shell.",
+    inputs: [
+      {
+        name: "command",
+        label: "Command",
+        placeholder: "Windows: Write-Output C2F_PLAYBOOK_OK | Linux: echo C2F_PLAYBOOK_OK",
+      },
+      {
+        name: "verify_kb",
+        label: "Verify KB (Windows, optional)",
+        placeholder: "Example: KB5075912",
+      },
+      {
+        name: "verify_min_build",
+        label: "Verify Min Build (Windows, optional)",
+        placeholder: "Example: 19045.6937",
+      },
+      {
+        name: "verify_stdout_contains",
+        label: "Verify Output Contains (optional)",
+        placeholder: "Example: C2F_PLAYBOOK_OK",
+      },
+      {
+        name: "run_as_system",
+        label: "Run As SYSTEM (Windows, optional)",
+        placeholder: "true | false",
+      },
+    ],
+    category: "execution",
+    risk: "critical",
+    custom: true,
+    capabilities: {
+      supported_os: ["windows", "linux"],
+      preferred_channel: "endpoint",
+      requires_credentials: true,
+      requires_network: false,
+      timeout_seconds: 1800,
+      validation: [
+        { field: "command", required: true },
+      ],
+    },
+  },
+];
+
+const mergePlaybookActions = (items = []) => {
+  const merged = new Map();
+  [...items, ...PLAYBOOK_ONLY_ACTIONS].forEach((item) => {
+    const id = String(item?.id || "").trim();
+    if (!id) return;
+    merged.set(id, item);
+  });
+  return Array.from(merged.values()).sort((left, right) =>
+    String(left?.label || left?.id || "").localeCompare(String(right?.label || right?.id || ""))
+  );
+};
+
 const parseExcludeIds = (value) =>
   new Set(
     String(value || "")
@@ -156,7 +216,7 @@ export default function Playbooks() {
         getAgentGroups().catch(() => ({ data: [] })),
       ]);
       setPlaybooks(Array.isArray(playbookRes?.data) ? playbookRes.data : []);
-      setActions(Array.isArray(actionRes?.data) ? actionRes.data : []);
+      setActions(mergePlaybookActions(Array.isArray(actionRes?.data) ? actionRes.data : []));
       const normalizedAgents = normalizeAgents(agentRes?.data).map((row) => ({
         id: formatAgentId(row.id || row.agent_id),
         name: String(row.name || row.hostname || row.id || row.agent_id || "-"),

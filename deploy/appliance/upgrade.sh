@@ -26,6 +26,19 @@ env_get() {
   echo "${line#*=}"
 }
 
+to_bool() {
+  local raw="${1:-}"
+  local default="${2:-false}"
+  local normalized
+  normalized="$(printf '%s' "${raw}" | tr '[:upper:]' '[:lower:]' | xargs || true)"
+  case "${normalized}" in
+    1|true|yes|on) echo "true" ;;
+    0|false|no|off) echo "false" ;;
+    "") echo "${default}" ;;
+    *) echo "${default}" ;;
+  esac
+}
+
 set_env() {
   local key="$1"
   local value="$2"
@@ -138,11 +151,30 @@ resolve_port_conflicts() {
 
 resolve_port_conflicts
 
-echo "Pulling latest configured image tags..."
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" pull
+BACKEND_IMAGE="$(env_get C2F_BACKEND_IMAGE "${ENV_FILE}")"
+FRONTEND_IMAGE="$(env_get C2F_FRONTEND_IMAGE "${ENV_FILE}")"
+AGENT_MANAGER_IMAGE="$(env_get C2F_AGENT_MANAGER_IMAGE "${ENV_FILE}")"
+EVENT_INDEXER_IMAGE="$(env_get C2F_EVENT_INDEXER_IMAGE "${ENV_FILE}")"
+IMAGE_TAG="$(env_get C2F_IMAGE_TAG "${ENV_FILE}")"
+SKIP_PULL="$(to_bool "$(env_get C2F_SKIP_PULL "${ENV_FILE}")" false)"
+
+if [[ "${SKIP_PULL}" == "true" ]]; then
+  echo "C2F_SKIP_PULL=true, using local images only."
+  docker image inspect "${BACKEND_IMAGE}:${IMAGE_TAG}" >/dev/null 2>&1
+  docker image inspect "${FRONTEND_IMAGE}:${IMAGE_TAG}" >/dev/null 2>&1
+  docker image inspect "${AGENT_MANAGER_IMAGE}:${IMAGE_TAG}" >/dev/null 2>&1
+  docker image inspect "${EVENT_INDEXER_IMAGE}:${IMAGE_TAG}" >/dev/null 2>&1
+else
+  echo "Pulling latest configured image tags..."
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" pull
+fi
 
 echo "Applying upgrade..."
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d
+if [[ "${SKIP_PULL}" == "true" ]]; then
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --force-recreate agent-manager event-indexer backend frontend
+else
+  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d
+fi
 
 echo "Upgrade complete."
 echo "Check service status with:"

@@ -21,11 +21,15 @@ get_env() {
 
 BACKEND_IMAGE="$(get_env C2F_BACKEND_IMAGE click2fix-backend)"
 FRONTEND_IMAGE="$(get_env C2F_FRONTEND_IMAGE click2fix-frontend)"
+AGENT_MANAGER_IMAGE="$(get_env C2F_AGENT_MANAGER_IMAGE click2fix-agent-manager)"
+EVENT_INDEXER_IMAGE="$(get_env C2F_EVENT_INDEXER_IMAGE click2fix-event-indexer)"
 IMAGE_TAG="$(get_env C2F_IMAGE_TAG local)"
 
 docker image inspect "${BACKEND_IMAGE}:${IMAGE_TAG}" >/dev/null 2>&1
 docker image inspect "${FRONTEND_IMAGE}:${IMAGE_TAG}" >/dev/null 2>&1
+docker image inspect "${AGENT_MANAGER_IMAGE}:${IMAGE_TAG}" >/dev/null 2>&1
+docker image inspect "${EVENT_INDEXER_IMAGE}:${IMAGE_TAG}" >/dev/null 2>&1
 
 echo "Exporting images to ${OUTPUT_FILE} ..."
-docker save -o "${OUTPUT_FILE}" "${BACKEND_IMAGE}:${IMAGE_TAG}" "${FRONTEND_IMAGE}:${IMAGE_TAG}"
+docker save -o "${OUTPUT_FILE}" "${BACKEND_IMAGE}:${IMAGE_TAG}" "${FRONTEND_IMAGE}:${IMAGE_TAG}" "${AGENT_MANAGER_IMAGE}:${IMAGE_TAG}" "${EVENT_INDEXER_IMAGE}:${IMAGE_TAG}"
 echo "Export complete."

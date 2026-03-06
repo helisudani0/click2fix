@@ -148,6 +148,13 @@ cd deploy/appliance
 
 Then set `C2F_SKIP_PULL=true` in `.env.appliance` (or during installer prompt) and run installer.
 
+For later hotfixes on the same installed appliance:
+
+- rebuild updated local images with `build-local-images.ps1` / `build-local-images.sh`, or import a new tar with `import-images.ps1` / `import-images.sh`
+- keep `C2F_SKIP_PULL=true`
+- run `upgrade.ps1` / `upgrade.sh` or Control Center option `7`
+- the upgrade path will reuse local images and force-recreate app services instead of pulling from the registry
+
 ## Upgrade
 
 ```bash

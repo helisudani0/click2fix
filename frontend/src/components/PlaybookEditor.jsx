@@ -40,15 +40,43 @@ const parseArgs = (value) => {
   }
 };
 
-const buildSampleArgs = (action) => {
+const getFieldDefault = (action, field) => {
+  if (!field || typeof field !== "object") return undefined;
+  if (field.default !== undefined && field.default !== null && String(field.default) !== "") {
+    return field.default;
+  }
+  const validation = Array.isArray(action?.capabilities?.validation) ? action.capabilities.validation : [];
+  const fieldName = String(field.name || "").trim();
+  if (!fieldName) return undefined;
+  const rule = validation.find((item) => String(item?.field || "").trim() === fieldName);
+  if (!rule) return undefined;
+  if (rule.default !== undefined && rule.default !== null && String(rule.default) !== "") {
+    return rule.default;
+  }
+  return undefined;
+};
+
+const buildDefaultArgs = (action) => {
   const args = {};
+  const inputs = Array.isArray(action?.inputs) ? action.inputs : [];
+  inputs.forEach((field) => {
+    const name = String(field?.name || "").trim();
+    if (!name) return;
+    const defaultValue = getFieldDefault(action, field);
+    if (defaultValue === undefined) return;
+    args[name] = defaultValue;
+  });
+  return args;
+};
+
+const buildSampleArgs = (action) => {
+  const args = buildDefaultArgs(action);
   const inputs = Array.isArray(action?.inputs) ? action.inputs : [];
   inputs.forEach((field) => {
     if (!field || typeof field !== "object") return;
     const name = String(field.name || "").trim();
     if (!name) return;
-    if (field.default !== undefined && field.default !== null && String(field.default) !== "") {
-      args[name] = String(field.default);
+    if (name in args) {
       return;
     }
     const lowered = name.toLowerCase();
@@ -166,11 +194,10 @@ function PlaybookStepEditor({
             onChange={(event) => {
               const nextAction = event.target.value;
               const actionMeta = actions.find((item) => item.id === nextAction) || null;
-              const hasArgs = Object.keys(step.args || {}).length > 0;
               onChange(index, {
                 ...step,
                 action: nextAction,
-                args: hasArgs ? step.args : buildSampleArgs(actionMeta),
+                args: buildDefaultArgs(actionMeta),
               });
             }}
           >
@@ -230,9 +257,9 @@ function PlaybookStepEditor({
 
       <div className="page-actions mt-10">
         <button type="button" className="btn secondary" onClick={resetArgsFromAction}>
-          Load Action Defaults
+          Load Sample Args
         </button>
-        <span className="muted">Use JSON below for advanced or unsupported args.</span>
+        <span className="muted">Use sample lab values or edit the JSON below for advanced args.</span>
       </div>
 
       <div className="mt-10">
@@ -296,14 +323,14 @@ export default function PlaybookEditor({ playbook, onChange, actions = [] }) {
   };
 
   const addStep = () => {
-    const fallbackAction = actions[0] || null;
+    const fallbackAction = actions.find((item) => item.id === "endpoint-healthcheck") || actions[0] || null;
     const nextSteps = [
       ...steps,
       normalizeStep(
         {
           id: `step_${steps.length + 1}`,
           action: fallbackAction?.id || "endpoint-healthcheck",
-          args: buildSampleArgs(fallbackAction),
+          args: buildDefaultArgs(fallbackAction),
           reason: "Custom playbook step",
         },
         steps.length

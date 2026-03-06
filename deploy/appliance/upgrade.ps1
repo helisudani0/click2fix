@@ -33,6 +33,25 @@ function Get-EnvValue {
   return ($line -replace "^\s*$Key=", "")
 }
 
+function To-Bool {
+  param(
+    [string]$RawValue,
+    [bool]$Default = $false
+  )
+  if ([string]::IsNullOrWhiteSpace($RawValue)) { return $Default }
+  switch ($RawValue.Trim().ToLowerInvariant()) {
+    "1" { return $true }
+    "true" { return $true }
+    "yes" { return $true }
+    "on" { return $true }
+    "0" { return $false }
+    "false" { return $false }
+    "no" { return $false }
+    "off" { return $false }
+    default { return $Default }
+  }
+}
+
 function Set-EnvValue {
   param(
     [string]$Path,
@@ -152,11 +171,34 @@ if (-not (Test-Path $envPath)) {
 
 Resolve-PortConflicts -EnvPath $envPath
 
-Write-Host "Pulling configured images..."
-Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "pull") -FailureMessage "Failed to pull images."
+$backendImage = Get-EnvValue -Path $envPath -Key "C2F_BACKEND_IMAGE"
+$frontendImage = Get-EnvValue -Path $envPath -Key "C2F_FRONTEND_IMAGE"
+$agentManagerImage = Get-EnvValue -Path $envPath -Key "C2F_AGENT_MANAGER_IMAGE"
+$eventIndexerImage = Get-EnvValue -Path $envPath -Key "C2F_EVENT_INDEXER_IMAGE"
+$imageTag = Get-EnvValue -Path $envPath -Key "C2F_IMAGE_TAG"
+$skipPull = To-Bool -RawValue (Get-EnvValue -Path $envPath -Key "C2F_SKIP_PULL") -Default $false
+
+if ($skipPull) {
+  Write-Host "C2F_SKIP_PULL=true, using local images only."
+  foreach ($image in @(
+    "$backendImage`:$imageTag",
+    "$frontendImage`:$imageTag",
+    "$agentManagerImage`:$imageTag",
+    "$eventIndexerImage`:$imageTag"
+  )) {
+    Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", $image) -FailureMessage "Required local image not found: $image."
+  }
+} else {
+  Write-Host "Pulling configured images..."
+  Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "pull") -FailureMessage "Failed to pull images."
+}
 
 Write-Host "Applying upgrade..."
-Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "up", "-d") -FailureMessage "Failed to apply upgrade."
+$composeArgs = @("compose", "--env-file", $envPath, "-f", $composePath, "up", "-d")
+if ($skipPull) {
+  $composeArgs += @("--force-recreate", "agent-manager", "event-indexer", "backend", "frontend")
+}
+Invoke-NativeChecked -FilePath "docker" -Arguments $composeArgs -FailureMessage "Failed to apply upgrade."
 
 Write-Host "Upgrade complete."
 Write-Host "Check status:"

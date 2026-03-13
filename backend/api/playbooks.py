@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -251,6 +252,297 @@ DEFAULT_PLAYBOOKS: dict[str, dict[str, Any]] = {
 }
 
 client = WazuhClient()
+
+
+def _run_playbook_async_job(
+    *,
+    execution_id: int,
+    steps: List[Dict[str, Any]],
+    target: str,
+    resolved_agent_ids: List[str],
+    actor: str,
+    org_id: Any,
+    playbook_label: str,
+    playbook_file: str,
+    alert_id: Any,
+    request_ip: str | None,
+) -> None:
+    db = connect()
+    overall_status = "SUCCESS"
+    target_rows: Dict[str, Dict[str, Any]] = {}
+    try:
+        db.execute(
+            text(
+                """
+                UPDATE executions
+                SET status='RUNNING'
+                WHERE id=:id
+                """
+            ),
+            {"id": execution_id},
+        )
+        db.commit()
+
+        publish_event(
+            execution_id,
+            {
+                "type": "execution_started",
+                "step": "playbook",
+                "status": "RUNNING",
+                "stdout": f"playbook={playbook_label}; steps={len(steps)}; target={target}",
+                "stderr": "",
+            },
+        )
+
+        for idx, step in enumerate(steps):
+            step_id = str(step.get("id") or step.get("action") or f"step_{idx+1}")
+            step_action = step.get("action") or step.get("command") or step.get("id")
+            if not step_action:
+                overall_status = "FAILED"
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO execution_steps
+                        (execution_id, step, stdout, stderr, status)
+                        VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                        """
+                    ),
+                    {
+                        "execution_id": execution_id,
+                        "step": step_id,
+                        "stdout": "",
+                        "stderr": "Step action is missing",
+                        "status": "FAILED",
+                    },
+                )
+                db.commit()
+                break
+
+            publish_event(
+                execution_id,
+                {
+                    "type": "step_start",
+                    "step": step_id,
+                    "status": "RUNNING",
+                    "stdout": f"action={step_action}",
+                    "stderr": "",
+                },
+            )
+
+            try:
+                action = get_action(str(step_action))
+                arguments = normalize_args(action, step.get("args"))
+                dispatch = resolve_action_dispatch(action, arguments)
+                execution = execute_action(
+                    client,
+                    str(step_action),
+                    dispatch,
+                    resolved_agent_ids,
+                    execution_id=execution_id,
+                )
+                result_payload = execution.get("result")
+                if isinstance(result_payload, dict) and isinstance(result_payload.get("results"), list):
+                    for row in result_payload.get("results") or []:
+                        if not isinstance(row, dict):
+                            continue
+                        aid = str(row.get("agent_id") or "").strip()
+                        if aid:
+                            target_rows[aid] = row
+                detail = f"channel={execution.get('channel')}; command={execution.get('command_used')}"
+                if execution.get("attempts"):
+                    detail += f"; attempts={','.join(execution.get('attempts'))}"
+                stdout = f"{detail}\n{json.dumps(execution.get('result'), default=str)}"
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO execution_steps
+                        (execution_id, step, stdout, stderr, status)
+                        VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                        """
+                    ),
+                    {
+                        "execution_id": execution_id,
+                        "step": step_id,
+                        "stdout": stdout,
+                        "stderr": "",
+                        "status": "SUCCESS",
+                    },
+                )
+                db.commit()
+                publish_event(
+                    execution_id,
+                    {
+                        "type": "step_done",
+                        "step": step_id,
+                        "status": "SUCCESS",
+                        "stdout": f"action={step_action}",
+                        "stderr": "",
+                    },
+                )
+                if (
+                    isinstance(result_payload, dict)
+                    and isinstance(result_payload.get("results"), list)
+                ):
+                    verification_result = run_post_action_verification(
+                        client,
+                        str(step_action),
+                        execution_id,
+                        result_payload.get("results") or [],
+                    )
+                    if not verification_result.get("skipped"):
+                        verification_ok = bool(verification_result.get("ok"))
+                        db.execute(
+                            text(
+                                """
+                                INSERT INTO execution_steps
+                                (execution_id, step, stdout, stderr, status)
+                                VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                                """
+                            ),
+                            {
+                                "execution_id": execution_id,
+                                "step": f"{step_id}:post_verify",
+                                "stdout": json.dumps(verification_result, default=str),
+                                "stderr": "" if verification_ok else "Post-action verification did not fully complete",
+                                "status": "SUCCESS" if verification_ok else "FAILED",
+                            },
+                        )
+                        db.commit()
+                        publish_event(
+                            execution_id,
+                            {
+                                "type": "step_done" if verification_ok else "step_failed",
+                                "step": f"{step_id}:post_verify",
+                                "status": "SUCCESS" if verification_ok else "FAILED",
+                                "stdout": json.dumps(verification_result.get("summary", {}), default=str),
+                                "stderr": "" if verification_ok else "verification_timeout_or_trigger_failure",
+                            },
+                        )
+            except HTTPException as exc:
+                overall_status = "FAILED"
+                err_text = exc.detail.get("message") if isinstance(exc.detail, dict) else exc.detail
+                if isinstance(exc.detail, dict):
+                    result_payload = exc.detail.get("result")
+                    if isinstance(result_payload, dict) and isinstance(result_payload.get("results"), list):
+                        for row in result_payload.get("results") or []:
+                            if not isinstance(row, dict):
+                                continue
+                            aid = str(row.get("agent_id") or "").strip()
+                            if aid:
+                                target_rows[aid] = row
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO execution_steps
+                        (execution_id, step, stdout, stderr, status)
+                        VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                        """
+                    ),
+                    {
+                        "execution_id": execution_id,
+                        "step": step_id,
+                        "stdout": "",
+                        "stderr": json.dumps(err_text, default=str) if not isinstance(err_text, str) else str(err_text),
+                        "status": "FAILED",
+                    },
+                )
+                db.commit()
+                publish_event(
+                    execution_id,
+                    {
+                        "type": "step_failed",
+                        "step": step_id,
+                        "status": "FAILED",
+                        "stdout": "",
+                        "stderr": str(err_text),
+                    },
+                )
+                break
+            except Exception as exc:
+                overall_status = "FAILED"
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO execution_steps
+                        (execution_id, step, stdout, stderr, status)
+                        VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                        """
+                    ),
+                    {
+                        "execution_id": execution_id,
+                        "step": step_id,
+                        "stdout": "",
+                        "stderr": str(exc),
+                        "status": "FAILED",
+                    },
+                )
+                db.commit()
+                publish_event(
+                    execution_id,
+                    {
+                        "type": "step_failed",
+                        "step": step_id,
+                        "status": "FAILED",
+                        "stdout": "",
+                        "stderr": str(exc),
+                    },
+                )
+                break
+
+        db.execute(
+            text(
+                """
+                UPDATE executions
+                SET status=:status, finished_at=:finished_at
+                WHERE id=:id
+                """
+            ),
+            {"status": overall_status, "finished_at": utc_now_naive(), "id": execution_id},
+        )
+        if target_rows:
+            _store_execution_targets(db, execution_id, list(target_rows.values()))
+        db.commit()
+    except Exception as exc:
+        overall_status = "FAILED"
+        db.execute(
+            text(
+                """
+                UPDATE executions
+                SET status='FAILED', finished_at=:finished_at
+                WHERE id=:id
+                """
+            ),
+            {"finished_at": utc_now_naive(), "id": execution_id},
+        )
+        db.execute(
+            text(
+                """
+                INSERT INTO execution_steps
+                (execution_id, step, stdout, stderr, status)
+                VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                """
+            ),
+            {
+                "execution_id": execution_id,
+                "step": "playbook_error",
+                "stdout": "",
+                "stderr": str(exc),
+                "status": "FAILED",
+            },
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    log_audit(
+        "playbook_executed",
+        actor=actor,
+        entity_type="execution",
+        entity_id=str(execution_id),
+        detail=f"playbook={playbook_label}; target={target}; status={overall_status}",
+        org_id=org_id,
+        ip_address=request_ip,
+    )
 
 
 def _list_playbooks() -> list[str]:
@@ -511,8 +803,6 @@ async def execute_playbook(request: Request, user=Depends(require_role("admin"))
 
     db = connect()
     execution_id = None
-    overall_status = "SUCCESS"
-    target_rows: Dict[str, Dict[str, Any]] = {}
     try:
         started_at = utc_now_naive()
         inserted = db.execute(
@@ -530,7 +820,7 @@ async def execute_playbook(request: Request, user=Depends(require_role("admin"))
                 "playbook": playbook_file,
                 "action": None,
                 "args": json.dumps({"steps": steps}, default=str),
-                "status": "RUNNING",
+                "status": "QUEUED",
                 "approved_by": actor,
                 "started_at": started_at,
                 "alert_id": alert_id,
@@ -538,8 +828,6 @@ async def execute_playbook(request: Request, user=Depends(require_role("admin"))
             },
         )
         execution_id = int(inserted.scalar())
-        db.commit()
-
         if justification:
             db.execute(
                 text(
@@ -550,242 +838,42 @@ async def execute_playbook(request: Request, user=Depends(require_role("admin"))
                 ),
                 {"execution_id": execution_id, "justification": str(justification)},
             )
-            db.commit()
-
-        publish_event(
-            execution_id,
-            {
-                "type": "execution_started",
-                "step": "playbook",
-                "status": "RUNNING",
-                "stdout": f"playbook={playbook_label}; steps={len(steps)}; target={target}",
-                "stderr": "",
-            },
-        )
-
-        for idx, step in enumerate(steps):
-            step_id = str(step.get("id") or step.get("action") or f"step_{idx+1}")
-            step_action = step.get("action") or step.get("command") or step.get("id")
-            if not step_action:
-                overall_status = "FAILED"
-                db.execute(
-                    text(
-                        """
-                        INSERT INTO execution_steps
-                        (execution_id, step, stdout, stderr, status)
-                        VALUES (:execution_id, :step, :stdout, :stderr, :status)
-                        """
-                    ),
-                    {
-                        "execution_id": execution_id,
-                        "step": step_id,
-                        "stdout": "",
-                        "stderr": "Step action is missing",
-                        "status": "FAILED",
-                    },
-                )
-                break
-
-            publish_event(
-                execution_id,
-                {
-                    "type": "step_start",
-                    "step": step_id,
-                    "status": "RUNNING",
-                    "stdout": f"action={step_action}",
-                    "stderr": "",
-                },
-            )
-
-            try:
-                action = get_action(str(step_action))
-                arguments = normalize_args(action, step.get("args"))
-                dispatch = resolve_action_dispatch(action, arguments)
-                execution = execute_action(
-                    client,
-                    str(step_action),
-                    dispatch,
-                    resolved_agent_ids,
-                    execution_id=execution_id,
-                )
-                result_payload = execution.get("result")
-                if isinstance(result_payload, dict) and isinstance(result_payload.get("results"), list):
-                    for row in result_payload.get("results") or []:
-                        if not isinstance(row, dict):
-                            continue
-                        aid = str(row.get("agent_id") or "").strip()
-                        if aid:
-                            target_rows[aid] = row
-                detail = f"channel={execution.get('channel')}; command={execution.get('command_used')}"
-                if execution.get("attempts"):
-                    detail += f"; attempts={','.join(execution.get('attempts'))}"
-                stdout = f"{detail}\n{json.dumps(execution.get('result'), default=str)}"
-                db.execute(
-                    text(
-                        """
-                        INSERT INTO execution_steps
-                        (execution_id, step, stdout, stderr, status)
-                        VALUES (:execution_id, :step, :stdout, :stderr, :status)
-                        """
-                    ),
-                    {
-                        "execution_id": execution_id,
-                        "step": step_id,
-                        "stdout": stdout,
-                        "stderr": "",
-                        "status": "SUCCESS",
-                    },
-                )
-                db.commit()
-                publish_event(
-                    execution_id,
-                    {
-                        "type": "step_done",
-                        "step": step_id,
-                        "status": "SUCCESS",
-                        "stdout": f"action={step_action}",
-                        "stderr": "",
-                    },
-                )
-                if (
-                    isinstance(result_payload, dict)
-                    and isinstance(result_payload.get("results"), list)
-                ):
-                    verification_result = run_post_action_verification(
-                        client,
-                        str(step_action),
-                        execution_id,
-                        result_payload.get("results") or [],
-                    )
-                    if not verification_result.get("skipped"):
-                        verification_ok = bool(verification_result.get("ok"))
-                        db.execute(
-                            text(
-                                """
-                                INSERT INTO execution_steps
-                                (execution_id, step, stdout, stderr, status)
-                                VALUES (:execution_id, :step, :stdout, :stderr, :status)
-                                """
-                            ),
-                            {
-                                "execution_id": execution_id,
-                                "step": f"{step_id}:post_verify",
-                                "stdout": json.dumps(verification_result, default=str),
-                                "stderr": "" if verification_ok else "Post-action verification did not fully complete",
-                                "status": "SUCCESS" if verification_ok else "FAILED",
-                            },
-                        )
-                        db.commit()
-                        publish_event(
-                            execution_id,
-                            {
-                                "type": "step_done" if verification_ok else "step_failed",
-                                "step": f"{step_id}:post_verify",
-                                "status": "SUCCESS" if verification_ok else "FAILED",
-                                "stdout": json.dumps(verification_result.get("summary", {}), default=str),
-                                "stderr": "" if verification_ok else "verification_timeout_or_trigger_failure",
-                            },
-                        )
-            except HTTPException as exc:
-                overall_status = "FAILED"
-                err_text = exc.detail.get("message") if isinstance(exc.detail, dict) else exc.detail
-                if isinstance(exc.detail, dict):
-                    result_payload = exc.detail.get("result")
-                    if isinstance(result_payload, dict) and isinstance(result_payload.get("results"), list):
-                        for row in result_payload.get("results") or []:
-                            if not isinstance(row, dict):
-                                continue
-                            aid = str(row.get("agent_id") or "").strip()
-                            if aid:
-                                target_rows[aid] = row
-                db.execute(
-                    text(
-                        """
-                        INSERT INTO execution_steps
-                        (execution_id, step, stdout, stderr, status)
-                        VALUES (:execution_id, :step, :stdout, :stderr, :status)
-                        """
-                    ),
-                    {
-                        "execution_id": execution_id,
-                        "step": step_id,
-                        "stdout": "",
-                        "stderr": json.dumps(err_text, default=str) if not isinstance(err_text, str) else str(err_text),
-                        "status": "FAILED",
-                    },
-                )
-                db.commit()
-                publish_event(
-                    execution_id,
-                    {
-                        "type": "step_failed",
-                        "step": step_id,
-                        "status": "FAILED",
-                        "stdout": "",
-                        "stderr": str(err_text),
-                    },
-                )
-                break
-            except Exception as exc:
-                overall_status = "FAILED"
-                db.execute(
-                    text(
-                        """
-                        INSERT INTO execution_steps
-                        (execution_id, step, stdout, stderr, status)
-                        VALUES (:execution_id, :step, :stdout, :stderr, :status)
-                        """
-                    ),
-                    {
-                        "execution_id": execution_id,
-                        "step": step_id,
-                        "stdout": "",
-                        "stderr": str(exc),
-                        "status": "FAILED",
-                    },
-                )
-                db.commit()
-                publish_event(
-                    execution_id,
-                    {
-                        "type": "step_failed",
-                        "step": step_id,
-                        "status": "FAILED",
-                        "stdout": "",
-                        "stderr": str(exc),
-                    },
-                )
-                break
-
-        db.execute(
-            text(
-                """
-                UPDATE executions
-                SET status=:status, finished_at=:finished_at
-                WHERE id=:id
-                """
-            ),
-            {"status": overall_status, "finished_at": utc_now_naive(), "id": execution_id},
-        )
-        if target_rows:
-            _store_execution_targets(db, execution_id, list(target_rows.values()))
         db.commit()
     finally:
         db.close()
 
+    worker = threading.Thread(
+        target=_run_playbook_async_job,
+        kwargs={
+            "execution_id": execution_id,
+            "steps": steps,
+            "target": target,
+            "resolved_agent_ids": resolved_agent_ids,
+            "actor": actor,
+            "org_id": org_id,
+            "playbook_label": playbook_label,
+            "playbook_file": playbook_file,
+            "alert_id": alert_id,
+            "request_ip": request.client.host if request.client else None,
+        },
+        daemon=True,
+    )
+    worker.start()
+
     log_audit(
-        "playbook_executed",
+        "playbook_queued",
         actor=actor,
         entity_type="execution",
-        entity_id=str(execution_id) if execution_id is not None else playbook_file,
-        detail=f"playbook={playbook_label}; target={target}; status={overall_status}",
+        entity_id=str(execution_id),
+        detail=f"playbook={playbook_label}; target={target}; steps={len(steps)}",
         org_id=org_id,
         ip_address=request.client.host if request.client else None,
     )
 
     return {
         "execution_id": execution_id,
-        "status": overall_status,
+        "status": "queued",
         "playbook": playbook_file,
         "target": target,
+        "agent_ids": resolved_agent_ids,
     }

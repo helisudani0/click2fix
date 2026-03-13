@@ -87,6 +87,30 @@ One-click Windows launcher:
 
 - First run: launches first-time setup.
 - Later runs: opens Control Center (start/stop/restart/status/logs/upgrade).
+- Always runs installer preflight to remove download security markers and detect quarantined files.
+
+## Windows Download Security Notes (SmartScreen/Defender)
+
+Some endpoints mark downloaded ZIP contents as untrusted and may block or quarantine scripts.
+We do not recommend disabling endpoint protection. Instead:
+
+1. Verify the installer hash with the bundled `.sha256` file.
+2. Unblock the ZIP and extracted folder before running setup.
+3. If your security tool still quarantines scripts, allowlist the installer hash and the Click2Fix install directory.
+
+Example (PowerShell):
+
+```powershell
+# Unblock the downloaded ZIP, then extract.
+Unblock-File -Path .\click2fix-appliance-installer-<version>.zip
+Expand-Archive -Path .\click2fix-appliance-installer-<version>.zip -DestinationPath C:\click2fix -Force
+
+# Remove download security markers from all extracted files.
+Get-ChildItem -Path C:\click2fix -Recurse -File | Unblock-File
+```
+
+If an enterprise policy enforces script restrictions, use a signed installer or request an allowlist
+for the Click2Fix installer hash and `C:\click2fix` (or your chosen install path).
 
 No backend/frontend repo workflow is needed on the customer side.
 

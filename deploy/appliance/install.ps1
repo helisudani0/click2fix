@@ -4,6 +4,19 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+
+$preflight = Join-Path $scriptDir "preflight.ps1"
+if (Test-Path $preflight) {
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $preflight -Root $scriptDir
+} else {
+  try {
+    Get-ChildItem -Path $scriptDir -Recurse -File -ErrorAction SilentlyContinue |
+      ForEach-Object { Unblock-File -Path $_.FullName -ErrorAction SilentlyContinue }
+  } catch {
+    Write-Host "Warning: Unable to remove download security markers. If scripts are blocked, run Unblock-File on the installer folder." -ForegroundColor Yellow
+  }
+}
 
 function Set-EnvValue {
   param(

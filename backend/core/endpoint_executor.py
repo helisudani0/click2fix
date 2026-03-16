@@ -2511,6 +2511,62 @@ class EndpointExecutor:
 			  }
 			}
 
+			function C2F-TestBinaryHeader {
+			  param([string]$Path)
+			  try {
+			    $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+			    $bytes = New-Object byte[] 8
+			    $read = $fs.Read($bytes, 0, $bytes.Length)
+			    $fs.Close()
+			    if ($read -ge 2 -and $bytes[0] -eq 0x4D -and $bytes[1] -eq 0x5A) { return $true } # MZ
+			    if ($read -ge 8 -and $bytes[0] -eq 0xD0 -and $bytes[1] -eq 0xCF -and $bytes[2] -eq 0x11 -and $bytes[3] -eq 0xE0 -and $bytes[4] -eq 0xA1 -and $bytes[5] -eq 0xB1 -and $bytes[6] -eq 0x1A -and $bytes[7] -eq 0xE1) { return $true } # OLE (MSI)
+			    if ($read -ge 2 -and $bytes[0] -eq 0x50 -and $bytes[1] -eq 0x4B) { return $true } # ZIP
+			  } catch { }
+			  return $false
+			}
+
+			function C2F-ValidateDownloadedInstaller {
+			  param([string]$Path)
+			  $raw = [string]$Path
+			  if (-not $raw) { return }
+			  $expanded = [Environment]::ExpandEnvironmentVariables($raw)
+			  $expanded = $expanded.Trim('"')
+			  if (-not (Test-Path -LiteralPath $expanded)) { return }
+			  $ext = [System.IO.Path]::GetExtension($expanded).ToLowerInvariant()
+			  if ($ext -notin @('.exe', '.msi', '.msix', '.msp', '.cab', '.zip')) { return }
+			  $len = 0
+			  try { $len = (Get-Item -LiteralPath $expanded).Length } catch { $len = 0 }
+			  if ($len -gt 0 -and $len -lt 10240) {
+			    throw ("downloaded file is too small to be a valid installer: " + $expanded)
+			  }
+			  if (-not (C2F-TestBinaryHeader -Path $expanded)) {
+			    $preview = ""
+			    try { $preview = (Get-Content -LiteralPath $expanded -TotalCount 6 -ErrorAction SilentlyContinue | Out-String) } catch { }
+			    if ($preview -match '(?i)<\s*html|<!doctype') {
+			      throw ("downloaded file appears to be HTML (not an installer). Use a direct download URL: " + $expanded)
+			    }
+			    throw ("downloaded file does not look like a valid installer. Use a direct download URL: " + $expanded)
+			  }
+			}
+
+			function Invoke-WebRequest {
+			  param([Parameter(ValueFromRemainingArguments=$true)][object[]]$Args)
+			  $outFile = ""
+			  for ($i = 0; $i -lt $Args.Count; $i++) {
+			    $argText = [string]$Args[$i]
+			    if ($argText -match '^(?i)-OutFile:(.+)$') {
+			      $outFile = $Matches[1]
+			    } elseif ($argText -match '^(?i)-OutFile$') {
+			      if (($i + 1) -lt $Args.Count) { $outFile = [string]$Args[$i + 1] }
+			    }
+			  }
+			  $resp = Microsoft.PowerShell.Utility\Invoke-WebRequest @Args
+			  if ($outFile) { C2F-ValidateDownloadedInstaller -Path $outFile }
+			  return $resp
+			}
+			try { Set-Alias -Name iwr -Value Invoke-WebRequest -Scope Local } catch { }
+			try { Set-Alias -Name curl -Value Invoke-WebRequest -Scope Local } catch { }
+
 			function C2F-GetPendingWindowsUpdates {
 			  try {
 			    $session = New-Object -ComObject Microsoft.Update.Session
@@ -4004,10 +4060,14 @@ $wsusServer = Read-C2FReg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpda
 $wuStatusServer = Read-C2FReg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate' 'WUStatusServer'
 $useWUServer = Read-C2FReg 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU' 'UseWUServer'
 $pauseEnd = Read-C2FReg 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings' 'PauseUpdatesEndTime'
+$pauseQualityEnd = Read-C2FReg 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings' 'PauseQualityUpdatesEndTime'
+$pauseFeatureEnd = Read-C2FReg 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings' 'PauseFeatureUpdatesEndTime'
 if($wsusServer){ C2F-Evidence ("wsus_server=" + $wsusServer) }
 if($wuStatusServer){ C2F-Evidence ("wsus_status_server=" + $wuStatusServer) }
 if($useWUServer){ C2F-Evidence ("wsus_enabled=" + $useWUServer) }
 if($pauseEnd){ C2F-Evidence ("pause_updates_end=" + $pauseEnd) }
+if($pauseQualityEnd){ C2F-Evidence ("pause_quality_updates_end=" + $pauseQualityEnd) }
+if($pauseFeatureEnd){ C2F-Evidence ("pause_feature_updates_end=" + $pauseFeatureEnd) }
 
 function Ensure-C2FPSWindowsUpdateModule {
   try {
@@ -4383,8 +4443,157 @@ function Test-C2FPendingReboot {
 $pendingBefore=Test-C2FPendingReboot
 C2F-Evidence ("pending_reboot_before=" + $pendingBefore)
 
+function Write-C2FReadinessResult {
+  param(
+    [string]$Outcome,
+    [string]$Summary,
+    [string]$ErrorText = "",
+    [bool]$Ok = $false
+  )
+  if (-not $Outcome) { $Outcome = "FAILED" }
+  if ($Outcome -eq "WAITING_REBOOT") { $Ok = $true }
+  if ($ErrorText) { C2F-Evidence ("error=" + $ErrorText) }
+  C2F-Evidence ("outcome=" + $Outcome)
+  Write-Output $Summary
+  Write-Result $Ok @{
+    "summary" = $Summary
+    "outcome" = $Outcome
+    "error" = $ErrorText
+    "update_profile" = $updateProfile
+    "updates_discovered" = 0
+    "updates_applicable" = 0
+    "updates_installable" = 0
+    "updates_skipped_non_target" = 0
+    "updates_installed" = 0
+    "updates_failed" = 0
+    "updates_remaining" = 0
+    "reboot_required" = $pendingBefore
+    "reboot_scheduled" = $false
+    "os_build_before" = ($build + "." + $ubr)
+    "os_build_after" = ($build + "." + $ubr)
+    "baseline_required" = $baselineRequired
+    "baseline_target_kb" = ("KB" + $baselineTargetKb)
+    "baseline_target_available" = $false
+    "baseline_met" = $baselineMetBefore
+    "esu_required" = $baselineRequired
+    "esu_enrolled" = $esuEnrolled
+  }
+  if ($Ok) {
+    C2F-Status "SUCCESS"
+  } else {
+    C2F-Status "FAILED" $ErrorText
+  }
+  exit 0
+}
+
+if ($pendingBefore) {
+  C2F-Evidence "reboot_pending=true"
+  C2F-Evidence "reboot_scheduled=false"
+  C2F-Evidence "reboot_policy=deferred_user_controlled"
+  $summary = "Windows Update deferred: endpoint has pending reboot."
+  Write-C2FReadinessResult -Outcome "WAITING_REBOOT" -Summary $summary -ErrorText $summary
+}
+
+$minFreeGb = 10
+$sysDrive = $env:SystemDrive
+if (-not $sysDrive) { $sysDrive = "C:" }
+$freeGb = $null
+$totalGb = $null
+try {
+  $drive = Get-CimInstance Win32_LogicalDisk -Filter ("DeviceID='" + $sysDrive + "'") -ErrorAction SilentlyContinue
+  if ($drive) {
+    $freeGb = [math]::Round(([double]$drive.FreeSpace / 1GB), 2)
+    $totalGb = [math]::Round(([double]$drive.Size / 1GB), 2)
+  }
+} catch { }
+if ($freeGb -ne $null) { C2F-Evidence ("disk_free_gb=" + $freeGb) }
+if ($totalGb -ne $null) { C2F-Evidence ("disk_total_gb=" + $totalGb) }
+C2F-Evidence ("disk_min_gb=" + $minFreeGb)
+if (($freeGb -ne $null) -and ($freeGb -lt $minFreeGb)) {
+  $summary = ("Windows Update blocked: insufficient disk space (" + $freeGb + " GB free, requires " + $minFreeGb + " GB).")
+  Write-C2FReadinessResult -Outcome "FAILED" -Summary $summary -ErrorText $summary
+}
+
+$pauseActive = $false
+$pauseEndText = ""
+foreach ($pauseVal in @($pauseEnd, $pauseQualityEnd, $pauseFeatureEnd)) {
+  if (-not $pauseVal) { continue }
+  try {
+    $pdt = [DateTime]::Parse([string]$pauseVal)
+    if ($pdt -gt (Get-Date)) {
+      $pauseActive = $true
+      $pauseEndText = [string]$pauseVal
+      break
+    }
+  } catch { }
+}
+C2F-Evidence ("pause_updates_active=" + $pauseActive)
+if ($pauseActive) {
+  $summary = ("Windows Update paused until " + $pauseEndText + ".")
+  Write-C2FReadinessResult -Outcome "FAILED" -Summary $summary -ErrorText $summary
+}
+
+$wsusRequired = $false
+try {
+  if ($useWUServer) {
+    $wsusRequired = (-not ($useWUServer -match '^(0|false)$'))
+  }
+} catch { }
+C2F-Evidence ("wsus_required=" + $wsusRequired)
+if ($wsusRequired) {
+  if (-not $wsusServer) {
+    $summary = "WSUS is enabled but no WSUS server is configured."
+    Write-C2FReadinessResult -Outcome "FAILED" -Summary $summary -ErrorText $summary
+  }
+  $wsusHost = ""
+  $wsusPort = 0
+  try {
+    $uri = [Uri]$wsusServer
+    $wsusHost = $uri.Host
+    $wsusPort = [int]$uri.Port
+    if ($wsusPort -le 0) {
+      $wsusPort = if ($uri.Scheme -eq "https") { 443 } else { 80 }
+    }
+  } catch { }
+  if (-not $wsusHost) {
+    $summary = ("WSUS server URL is invalid: " + $wsusServer)
+    Write-C2FReadinessResult -Outcome "FAILED" -Summary $summary -ErrorText $summary
+  }
+  C2F-Evidence ("wsus_host=" + $wsusHost)
+  C2F-Evidence ("wsus_port=" + $wsusPort)
+  $wsusReachable = $false
+  try {
+    $client = New-Object System.Net.Sockets.TcpClient
+    $iar = $client.BeginConnect($wsusHost, $wsusPort, $null, $null)
+    $ok = $iar.AsyncWaitHandle.WaitOne(3000, $false)
+    if ($ok -and $client.Connected) { $wsusReachable = $true }
+    $client.Close()
+  } catch { $wsusReachable = $false }
+  C2F-Evidence ("wsus_reachable=" + $wsusReachable)
+  if (-not $wsusReachable) {
+    $summary = ("WSUS server unreachable: " + $wsusServer)
+    Write-C2FReadinessResult -Outcome "FAILED" -Summary $summary -ErrorText $summary
+  }
+}
+
 $svc=Get-Service -Name wuauserv -ErrorAction SilentlyContinue
+if (-not $svc) {
+  $summary = "Windows Update service (wuauserv) not found."
+  Write-C2FReadinessResult -Outcome "FAILED" -Summary $summary -ErrorText $summary
+}
+try {
+  $svcInfo = Get-CimInstance Win32_Service -Filter "Name='wuauserv'" -ErrorAction SilentlyContinue
+  if ($svcInfo) {
+    $svcStartMode = [string]$svcInfo.StartMode
+    if ($svcStartMode) { C2F-Evidence ("wuauserv_start_mode=" + $svcStartMode) }
+    if ($svcStartMode -eq "Disabled") {
+      $summary = "Windows Update service is disabled."
+      Write-C2FReadinessResult -Outcome "FAILED" -Summary $summary -ErrorText $summary
+    }
+  }
+} catch { }
 if($svc -and $svc.Status -ne 'Running'){ Start-Service wuauserv -ErrorAction SilentlyContinue }
+C2F-Evidence "readiness=ok"
 
 $session=New-Object -ComObject 'Microsoft.Update.Session'
 $searcher=$session.CreateUpdateSearcher()

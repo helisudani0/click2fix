@@ -2670,7 +2670,22 @@ class EndpointExecutor:
 				  $out = ($out -replace "`0", "")
 				  $rc = [int]$run.rc
 			  if ($rc -ne 0) {
-			    throw ("custom-os-command failed rc=" + $rc + " output=" + $out)
+			    $errOut = [string]$out
+			    $hint = ""
+			    $cmdLower = ([string]$cmd).ToLowerInvariant()
+			    $errLower = $errOut.ToLowerInvariant()
+			    if ($cmdLower -match '\bwinget\b' -or $errLower -match '\bwinget\b') {
+			      if ($errLower -match 'access is denied') {
+			        $hint = "winget is blocked in this service context (WindowsApps/AppInstaller). Use direct MSI/EXE installer or run winget in an interactive user session."
+			      } elseif ($errLower -match '0x8a15000f' -or $errLower -match 'data required by the source is missing') {
+			        $hint = "winget source cache is corrupted. Run: winget source reset --force; winget source update; then retry."
+			      } elseif ($errLower -match 'cannot find the path specified' -or $errLower -match 'not recognized' -or $errLower -match 'failed to run') {
+			        $hint = "winget not available on PATH for this user. Ensure App Installer is installed for this account or call winget.exe by full path."
+			      }
+			    }
+			    if ($errOut.Length -gt 2000) { $errOut = $errOut.Substring(0, 2000) + "..." }
+			    if ($hint) { $errOut = $errOut + " | hint=" + $hint }
+			    throw ("custom-os-command failed rc=" + $rc + " output=" + $errOut)
 			  }
 
 		  $verifyKbRaw = [string]$VerifyKb

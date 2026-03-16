@@ -18,6 +18,14 @@ def is_command_undefined(detail: str) -> bool:
     )
 
 
+def _active_response_enabled() -> bool:
+    raw = os.getenv("C2F_DISABLE_ACTIVE_RESPONSE")
+    if isinstance(raw, str) and raw.strip().lower() in {"1", "true", "yes", "on"}:
+        return False
+    cfg = SETTINGS.get("active_response", {}) if isinstance(SETTINGS, dict) else {}
+    return bool(cfg.get("enabled", False))
+
+
 def orchestration_mode() -> str:
     env_mode = os.getenv("C2F_ORCHESTRATION_MODE", "").strip().lower()
     cfg_mode = ""
@@ -33,14 +41,19 @@ def orchestration_mode() -> str:
         "ar": "active_response",
         "hybrid": "hybrid",
     }
-    return aliases.get(mode, "endpoint")
+    resolved = aliases.get(mode, "endpoint")
+    if resolved in {"active_response", "hybrid"} and not _active_response_enabled():
+        return "endpoint"
+    return resolved
 
 
 def _active_response_endpoint_fallback_enabled() -> bool:
+    if not _active_response_enabled():
+        return False
     if not isinstance(SETTINGS, dict):
-        return True
+        return False
     cfg = SETTINGS.get("orchestration", {}) or {}
-    value = cfg.get("active_response_fallback_to_endpoint", True)
+    value = cfg.get("active_response_fallback_to_endpoint", False)
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -204,6 +217,8 @@ def _run_active_response(
     agent_ids: Iterable[str],
     execution_id: int | None = None,
 ) -> Dict[str, Any]:
+    if not _active_response_enabled():
+        raise HTTPException(status_code=400, detail="Active response is disabled")
     attempts = dispatch.get("attempts") or [
         {
             "command": dispatch.get("command"),

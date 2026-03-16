@@ -1,4 +1,5 @@
 import ipaddress
+import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -69,6 +70,7 @@ class ActionCapabilityResolver:
         """Resolve the preferred execution channel for an action."""
         capabilities = self.get_action_capabilities(action_id)
         preferred_channel = capabilities.get("preferred_channel", "endpoint")
+        active_response_enabled = self._active_response_enabled()
         
         # Check if preferred channel is available
         if preferred_channel == "manager_api":
@@ -84,14 +86,21 @@ class ActionCapabilityResolver:
                 creds_configured = connector_status.get("connectors", {}).get("linux", {}).get("credentials_configured", False)
                 if creds_configured:
                     return "endpoint"
-            # Fallback to active_response if endpoint not available
-            return "active_response"
+            # Fallback to active_response if endpoint not available and enabled
+            return "active_response" if active_response_enabled else "endpoint"
         
         elif preferred_channel == "active_response":
-            # Active response is always available if enabled
-            return "active_response"
+            # Active response is only available when enabled
+            return "active_response" if active_response_enabled else "endpoint"
         
         return "endpoint"  # Default fallback
+
+    def _active_response_enabled(self) -> bool:
+        raw = os.getenv("C2F_DISABLE_ACTIVE_RESPONSE")
+        if isinstance(raw, str) and raw.strip().lower() in {"1", "true", "yes", "on"}:
+            return False
+        cfg = SETTINGS.get("active_response", {}) if isinstance(SETTINGS, dict) else {}
+        return bool(cfg.get("enabled", False))
     
     def get_timeout_seconds(self, action_id: str) -> int:
         """Get timeout for an action."""

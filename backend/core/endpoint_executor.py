@@ -15,6 +15,7 @@ from sqlalchemy import text
 
 from core.audit import log_audit
 from core.indexer_client import IndexerClient
+from core.secrets import resolve_secret_env, resolve_secret_value
 from core.settings import SETTINGS
 
 
@@ -31,10 +32,10 @@ def _cfg(path: str, default: Any = None) -> Any:
 
 def _read_secret(value: Optional[str], env_key: Optional[str]) -> str:
     if env_key:
-        env_value = os.getenv(env_key)
+        env_value = resolve_secret_env(env_key)
         if env_value:
             return env_value
-    return value or ""
+    return resolve_secret_value(value or "")
 
 
 def _bool(value: Any, default: bool = False) -> bool:
@@ -194,9 +195,11 @@ class EndpointExecutor:
 
     def connector_status(self) -> Dict[str, Any]:
         per_agent_ready = sorted(
-            aid
-            for aid, creds in self.windows_agent_credentials.items()
-            if creds.get("username") and creds.get("password")
+            set(
+                aid
+                for aid, creds in self.windows_agent_credentials.items()
+                if creds.get("username") and creds.get("password")
+            ).union(self._discover_env_windows_agent_ids())
         )
         global_ready = bool(self.windows_cfg["username"] and self.windows_cfg["password"])
         return {
@@ -4944,6 +4947,10 @@ catch {
     def _windows_credentials_for_agent(self, agent_id: Optional[str]) -> Dict[str, str]:
         norm = self._normalize_agent_id(agent_id or "")
         if norm:
+            env_username = resolve_secret_env(f"C2F_WINRM_USERNAME_{norm}")
+            env_password = resolve_secret_env(f"C2F_WINRM_PASSWORD_{norm}")
+            if env_username and env_password:
+                return {"username": env_username, "password": env_password}
             per_agent = self.windows_agent_credentials.get(norm) or {}
             if per_agent.get("username") and per_agent.get("password"):
                 return {
@@ -4961,10 +4968,30 @@ catch {
             return bool(creds.get("username") and creds.get("password"))
         if self.windows_cfg.get("username") and self.windows_cfg.get("password"):
             return True
+        if self._discover_env_windows_agent_ids():
+            return True
         return any(
             creds.get("username") and creds.get("password")
             for creds in self.windows_agent_credentials.values()
         )
+
+    def _discover_env_windows_agent_ids(self) -> List[str]:
+        prefix = "C2F_WINRM_USERNAME_"
+        found: List[str] = []
+        for key in os.environ.keys():
+            if not key.startswith(prefix):
+                continue
+            suffix = key[len(prefix):].strip()
+            if not suffix:
+                continue
+            norm = self._normalize_agent_id(suffix)
+            if not norm:
+                continue
+            username = resolve_secret_env(key)
+            password = resolve_secret_env(f"C2F_WINRM_PASSWORD_{suffix}")
+            if username and password:
+                found.append(norm)
+        return sorted(set(found))
 
     def execute(
         self,

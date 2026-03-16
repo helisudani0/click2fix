@@ -1634,11 +1634,15 @@ class EndpointExecutor:
 					  }
 					}
 
-			try {
-			  C2F-Status "START"
-			  C2F-Evidence "package_manager=winget"
-
-		  $targets = @()
+				try {
+				  C2F-Status "START"
+				  C2F-Evidence "package_manager=winget"
+				  $actionKey = ([string]$ActionId).ToLowerInvariant()
+				  $allowInstall = ($actionKey -eq "software-install-upgrade")
+				  $updateOnly = (-not $allowInstall)
+				  if ($allowInstall) { C2F-Evidence "install_mode=install_or_upgrade" } else { C2F-Evidence "install_mode=upgrade_only" }
+	
+			  $targets = @()
 		  $meta = @{}
 		  $requested = @()
 			  foreach ($p in ($PackageSpec -split '[,;\r\n]+')) {
@@ -1729,13 +1733,15 @@ class EndpointExecutor:
 			  }
 			  try { [void](Repair-C2FWingetSources) } catch { }
 
-			  $installed = 0
-			  $failed = 0
-		  $remaining = 0
-		  $skipped = 0
-		  $unresolved = 0
-		  $noChangeHits = 0
-		  $idx = 0
+				  $installed = 0
+				  $failed = 0
+			  $remaining = 0
+			  $skipped = 0
+			  $unresolved = 0
+			  $noChangeHits = 0
+			  $skippedNotInstalled = 0
+			  $skippedNoChange = 0
+			  $idx = 0
 
 			  if ($allMode) {
 			    $allRows = Get-C2FWingetUpgrades
@@ -1997,13 +2003,46 @@ class EndpointExecutor:
 		      # Intel.HAXM frequently fails `upgrade`; bypass with install/force.
 		      $forceInstall = $true
 		    }
-			    $beforeRows = @()
-			    try { $beforeRows = Get-C2FWingetInstalledRows -PackageId $lookupId } catch { $beforeRows = @() }
-			    $beforeVersions = @($beforeRows | ForEach-Object { $_.version } | Where-Object { $_ } | Select-Object -Unique)
-			    $beforeVersionSummary = [string]::Join(",", $beforeVersions)
-			    if (-not $installedBefore -and $beforeVersionSummary) { $installedBefore = $beforeVersionSummary }
-			    if ($isRemovalMode) {
-			      $arpMeta = $null
+				    $beforeRows = @()
+				    try { $beforeRows = Get-C2FWingetInstalledRows -PackageId $lookupId } catch { $beforeRows = @() }
+				    $beforeVersions = @($beforeRows | ForEach-Object { $_.version } | Where-Object { $_ } | Select-Object -Unique)
+				    $beforeVersionSummary = [string]::Join(",", $beforeVersions)
+				    if (-not $installedBefore -and $beforeVersionSummary) { $installedBefore = $beforeVersionSummary }
+				    $arpPresent = $false
+				    if ($lookupId -match '^(?i)ARP\\') {
+				      try { $arpPresent = Test-C2FArpEntryPresent -LookupId $lookupId -DisplayName $disp } catch { $arpPresent = $false }
+				    }
+				    $installedDetected = (($beforeRows -and $beforeRows.Count -gt 0) -or $arpPresent)
+				    if (-not $installedDetected -and $installedBefore) { $installedDetected = $true }
+				    if ($updateOnly -and (-not $installedDetected)) {
+				      $skipped++
+				      $skippedNotInstalled++
+				      C2F-Evidence ("skipped_update_" + $idx + "=" + $lookupId + "|" + $disp + "|reason=package_not_installed")
+				      $idx++
+				      continue
+				    }
+				    if ($Version -and $Version -ne "" -and $installedDetected) {
+				      $desiredNorm = Normalize-C2FToken $Version
+				      if ($desiredNorm) {
+				        $beforeNorms = @($beforeVersions | ForEach-Object { Normalize-C2FToken $_ } | Where-Object { $_ })
+				        $match = $false
+				        foreach ($bv in $beforeNorms) {
+				          $bvLower = ([string]$bv).ToLower()
+				          $dvLower = ([string]$desiredNorm).ToLower()
+				          if ($bvLower -eq $dvLower -or $bvLower.StartsWith($dvLower) -or $dvLower.StartsWith($bvLower)) { $match = $true; break }
+				        }
+				        if ($match) {
+				          $skipped++
+				          $noChangeHits++
+				          $skippedNoChange++
+				          C2F-Evidence ("skipped_update_" + $idx + "=" + $lookupId + "|" + $disp + "|reason=version_already_installed|installed_before=" + $installedBefore)
+				          $idx++
+				          continue
+				        }
+				      }
+				    }
+				    if ($isRemovalMode) {
+				      $arpMeta = $null
 			      try { $arpMeta = Get-C2FArpUninstallMeta -LookupId $lookupId -DisplayName $disp } catch { $arpMeta = $null }
 			      if ($arpMeta -and $arpMeta.found -and $arpMeta.interactive_only) {
 			        $failed++
@@ -2041,27 +2080,29 @@ class EndpointExecutor:
 					        $resolvedAvailableVersion -and
 					        $resolvedAvailableVersion -notmatch '^(?i)(unknown|n/a|-)$'
 					      )
-					      $upgradeSilent = @(@('upgrade') + $selector + @('--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity', '--include-unknown'))
-					      $installArgs = @('--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
-					      if ($forceInstall -and (Test-C2FWingetSupportsForce)) { $installArgs += '--force' }
-					      $installFallbackExact = @(@('install') + $selector + $installArgs)
-					      $installFallbackById = @(@('install', $lookupId) + $installArgs)
-					      $installFallbackByName = @(@('install', '--name', $lookupId) + $installArgs)
-					      $installResolvedVersionExact = @()
-					      $installResolvedVersionById = @()
-					      if ($hasResolvedAvailableVersion) {
-					        $installResolvedVersionArgs = @('--version', $resolvedAvailableVersion, '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
-					        if ($forceInstall -and (Test-C2FWingetSupportsForce)) { $installResolvedVersionArgs += '--force' }
-					        $installResolvedVersionExact = @(@('install') + $selector + $installResolvedVersionArgs)
-					        $installResolvedVersionById = @(@('install', '--id', $lookupId, '--exact') + $installResolvedVersionArgs)
-					        C2F-Evidence ("resolved_available_version_" + $idx + "=" + $lookupId + "|" + $resolvedAvailableVersion)
-					      }
-					      if ($lookupId -match '^(?i)ARP\\') {
-					        # ARP packages often have no winget source listing; remediate by removing the vulnerable app.
-					        $isRemovalMode = $true
-					        $uninstallArgs = @('--silent', '--disable-interactivity')
-					        $uninstallById = @(@('uninstall', '--id', $lookupId, '--exact') + $uninstallArgs)
-					        $uninstallByName = @(@('uninstall', '--name', $disp, '--exact') + $uninstallArgs)
+						      $upgradeSilent = @(@('upgrade') + $selector + @('--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity', '--include-unknown'))
+						      $installArgs = @('--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
+						      if ($forceInstall -and (Test-C2FWingetSupportsForce)) { $installArgs += '--force' }
+						      $installFallbackExact = @(@('install') + $selector + $installArgs)
+						      $installFallbackById = @(@('install', $lookupId) + $installArgs)
+						      $installFallbackByName = @(@('install', '--name', $lookupId) + $installArgs)
+						      $installResolvedVersionExact = @()
+						      $installResolvedVersionById = @()
+						      if ($hasResolvedAvailableVersion) {
+						        $installResolvedVersionArgs = @('--version', $resolvedAvailableVersion, '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
+						        if ($forceInstall -and (Test-C2FWingetSupportsForce)) { $installResolvedVersionArgs += '--force' }
+						        $installResolvedVersionExact = @(@('install') + $selector + $installResolvedVersionArgs)
+						        $installResolvedVersionById = @(@('install', '--id', $lookupId, '--exact') + $installResolvedVersionArgs)
+						        C2F-Evidence ("resolved_available_version_" + $idx + "=" + $lookupId + "|" + $resolvedAvailableVersion)
+						      }
+						      if ($updateOnly) {
+						        $cmdAttempts = @($upgradeSilent)
+						      } elseif ($lookupId -match '^(?i)ARP\\') {
+						        # ARP packages often have no winget source listing; remediate by removing the vulnerable app.
+						        $isRemovalMode = $true
+						        $uninstallArgs = @('--silent', '--disable-interactivity')
+						        $uninstallById = @(@('uninstall', '--id', $lookupId, '--exact') + $uninstallArgs)
+						        $uninstallByName = @(@('uninstall', '--name', $disp, '--exact') + $uninstallArgs)
 					        $cmdAttempts = @($uninstallById, $uninstallByName)
 					      } elseif ($forceInstall) {
 					        # Force-install bypass for Intel.HAXM-like package IDs.
@@ -2332,23 +2373,26 @@ class EndpointExecutor:
 		    $installed = [Math]::Max($applicable - $failed - $remaining, 0)
 		  }
 
-	  C2F-Evidence ("updates_installed=" + $installed)
-		  C2F-Evidence ("updates_failed=" + $failed)
-		  C2F-Evidence ("updates_remaining=" + $remaining)
-		  C2F-Evidence ("updates_skipped=" + $skipped)
-		  C2F-Evidence ("updates_unresolved=" + $unresolved)
-		  C2F-Evidence ("updates_no_change=" + $noChangeHits)
-
-		  $outcome = "SUCCESS"
-		  if ($failed -gt 0 -or $remaining -gt 0) {
-		    if ($allMode) {
-		      $outcome = "PARTIAL"
-		    } else {
-		      $outcome = "FAILED"
-		    }
-		  } elseif ($unresolved -gt 0 -or ($skipped -gt 0 -and $installed -eq 0)) {
-		    $outcome = "PARTIAL"
-		  }
+		  C2F-Evidence ("updates_installed=" + $installed)
+			  C2F-Evidence ("updates_failed=" + $failed)
+			  C2F-Evidence ("updates_remaining=" + $remaining)
+			  C2F-Evidence ("updates_skipped=" + $skipped)
+			  C2F-Evidence ("updates_skipped_not_installed=" + $skippedNotInstalled)
+			  C2F-Evidence ("updates_skipped_no_change=" + $skippedNoChange)
+			  C2F-Evidence ("updates_unresolved=" + $unresolved)
+			  C2F-Evidence ("updates_no_change=" + $noChangeHits)
+	
+			  $skippedProblem = [Math]::Max(0, ($skipped - $skippedNotInstalled - $skippedNoChange))
+			  $outcome = "SUCCESS"
+			  if ($failed -gt 0 -or $remaining -gt 0) {
+			    if ($allMode) {
+			      $outcome = "PARTIAL"
+			    } else {
+			      $outcome = "FAILED"
+			    }
+			  } elseif ($unresolved -gt 0 -or $skippedProblem -gt 0) {
+			    $outcome = "PARTIAL"
+			  }
 			  C2F-Evidence ("outcome=" + $outcome)
 
 			  Write-Output ("package update complete: outcome=" + $outcome + " applicable=" + $applicable + " installable=" + $installable + " installed=" + $installed + " failed=" + $failed + " remaining=" + $remaining + " skipped=" + $skipped + " unresolved=" + $unresolved)
@@ -5298,7 +5342,10 @@ catch {
         context: Dict[str, Any],
     ) -> Dict[str, Any]:
         timeout_seconds = self._action_timeout_seconds(action_id)
+        requested_action_id = str((context or {}).get("action_id") or action_id).strip()
+        logical_action_id = requested_action_id or str(action_id or "").strip()
         aid = str(action_id or "").strip().lower()
+        logical_aid = str(logical_action_id or action_id).strip().lower()
         if target["platform"] == "windows":
             if aid in {"fleet-software-update", "windows-os-update"}:
                 script_action_id = "patch-windows"
@@ -5325,7 +5372,7 @@ catch {
                     target,
                     context=context,
                     timeout_seconds=timeout_seconds,
-                    action_id=aid,
+                    action_id=logical_aid or aid,
                 )
                 if aid == "windows-os-update" and status_code != 0:
                     status_code, stdout, stderr = self._attempt_windows_os_update_kb_fallback(
@@ -5406,7 +5453,7 @@ catch {
                         target,
                         context=context,
                         timeout_seconds=timeout_seconds,
-                        action_id=aid,
+                        action_id=logical_aid or aid,
                         script_action_id=script_action_id,
                         script_args=task_args,
                     )
@@ -5450,7 +5497,8 @@ catch {
                             script_args=fallback_args,
                         )
         else:
-            script = self._build_linux_script(action_id, action_args, context=context, target=target)
+            linux_action_id = logical_action_id if logical_aid in {"package-update", "software-install-upgrade"} else action_id
+            script = self._build_linux_script(linux_action_id, action_args, context=context, target=target)
             status_code, stdout, stderr = self._run_ssh(target["ip"], script, timeout_seconds=timeout_seconds)
 
         return {
@@ -6206,8 +6254,11 @@ catch {
             "$ProgressPreference='SilentlyContinue';"
             f"$lf={_ps_quote(log_file)};"
             f"$needle={_ps_quote(needle)};"
-            "if(Test-Path $lf){"
-            "Get-Content -Path $lf -Tail 300 | Select-String -SimpleMatch $needle | ForEach-Object { $_.Line }"
+            "$files=@($lf,'C:\\\\Click2Fix\\\\logs\\\\executions.log');"
+            "foreach($f in $files){"
+            "if(Test-Path $f){"
+            "Get-Content -Path $f -Tail 300 | Select-String -SimpleMatch $needle | ForEach-Object { $_.Line }"
+            "}"
             "}"
         )
 
@@ -6944,8 +6995,8 @@ catch {
                 "Write-Output $res.summary"
             )
             return self._wrap_windows_script(aid, inner, context or {}, target or {})
-        if aid == "package-update":
-            script_path = self._windows_action_script_path(aid)
+        if aid in {"package-update", "software-install-upgrade"}:
+            script_path = self._windows_action_script_path("package-update")
             pkg = _ps_quote(args[0] if args else "all")
             ver = _ps_quote(args[1] if len(args) > 1 else "")
             inner = (
@@ -7216,17 +7267,22 @@ catch {
                 "echo \"linux update complete: outcome=$outcome applicable=$count_before installed_est=$installed_est remaining=$count_after\""
             )
             return self._wrap_linux_script(aid, inner, context or {}, target or {})
-        if aid == "package-update":
+        if aid in {"package-update", "software-install-upgrade"}:
             pkg = _sh_quote(args[0] if args else "all")
             ver = _sh_quote(args[1] if len(args) > 1 else "")
             inner = (
                 f"pkg={pkg}; ver={ver}; "
+                "allow_install=0; "
+                "if [ \"$action_id\" = \"software-install-upgrade\" ]; then allow_install=1; fi; "
+                "if [ \"$allow_install\" -eq 1 ]; then c2f_evidence install_mode=install_or_upgrade; "
+                "else c2f_evidence install_mode=upgrade_only; fi; "
                 "pkgs=$(printf '%s' \"$pkg\" | tr ',;\\n\\r' ' '); "
                 "all_mode=0; "
                 "if [ -z \"$(printf '%s' \"$pkgs\" | tr -d '[:space:]')\" ]; then all_mode=1; fi; "
                 "if [ \"$pkgs\" = \"all\" ] || [ \"$pkgs\" = \"*\" ]; then all_mode=1; fi; "
                 "sudo apt-get update -y >/tmp/c2f_pkg_update.log 2>&1; "
-                "applicable=0; installable=0; installed=0; failed=0; remaining=0; idx=0; "
+                "applicable=0; installable=0; installed=0; failed=0; remaining=0; skipped=0; "
+                "skipped_not_installed=0; skipped_no_change=0; idx=0; "
                 "if [ \"$all_mode\" -eq 1 ]; then "
                 "up_before=$(apt list --upgradable 2>/dev/null | sed '1d' | sed '/^$/d' || true); "
                 "while IFS= read -r line; do "
@@ -7256,6 +7312,20 @@ catch {
                 "[ -z \"$p\" ] && continue; "
                 "applicable=$((applicable+1)); installable=$((installable+1)); "
                 "inst_before=$(dpkg-query -W -f='${Version}' \"$p\" 2>/dev/null || true); "
+                "if [ \"$allow_install\" -eq 0 ] && [ -z \"$inst_before\" ]; then "
+                "skipped=$((skipped+1)); skipped_not_installed=$((skipped_not_installed+1)); "
+                "c2f_evidence \"skipped_update_${idx}=${p}|${p}|reason=package_not_installed\"; "
+                "idx=$((idx+1)); "
+                "continue; "
+                "fi; "
+                "if [ -n \"$ver\" ] && [ -n \"$inst_before\" ]; then "
+                "if [ \"$inst_before\" = \"$ver\" ] || [ \"${inst_before#${ver}}\" != \"$inst_before\" ] || [ \"${ver#${inst_before}}\" != \"$ver\" ]; then "
+                "skipped=$((skipped+1)); skipped_no_change=$((skipped_no_change+1)); "
+                "c2f_evidence \"skipped_update_${idx}=${p}|${p}|reason=version_already_installed|installed_before=${inst_before}\"; "
+                "idx=$((idx+1)); "
+                "continue; "
+                "fi; "
+                "fi; "
                 "cand=$(apt-cache policy \"$p\" 2>/dev/null | awk '/Candidate:/ {print $2; exit}'); "
                 "if [ -n \"$ver\" ]; then "
                 "c2f_evidence \"available_update_${idx}=${p}|${p}|requested_version=${ver}|installed_before=${inst_before}|candidate=${cand}\"; "
@@ -7287,7 +7357,14 @@ catch {
                 "c2f_evidence updates_installed=$installed; "
                 "c2f_evidence updates_failed=$failed; "
                 "c2f_evidence updates_remaining=$remaining; "
-                "outcome='SUCCESS'; if [ \"$failed\" -gt 0 ] || [ \"$remaining\" -gt 0 ]; then outcome='PARTIAL'; fi; "
+                "c2f_evidence updates_skipped=$skipped; "
+                "c2f_evidence updates_skipped_not_installed=$skipped_not_installed; "
+                "c2f_evidence updates_skipped_no_change=$skipped_no_change; "
+                "skipped_problem=$((skipped - skipped_not_installed - skipped_no_change)); "
+                "if [ \"$skipped_problem\" -lt 0 ]; then skipped_problem=0; fi; "
+                "outcome='SUCCESS'; "
+                "if [ \"$failed\" -gt 0 ] || [ \"$remaining\" -gt 0 ]; then outcome='PARTIAL'; "
+                "elif [ \"$skipped_problem\" -gt 0 ]; then outcome='PARTIAL'; fi; "
                 "c2f_evidence outcome=$outcome; "
                 "echo \"package update complete: outcome=$outcome applicable=$applicable installable=$installable installed=$installed failed=$failed remaining=$remaining\""
             )

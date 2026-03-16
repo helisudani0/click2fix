@@ -291,7 +291,7 @@ active_response:
         validation: []
     - id: "package-update"
       label: "Update Package"
-      description: "Remediation: install/upgrade a specific package (Windows winget / Linux apt)."
+      description: "Remediation: upgrade an installed package (Windows winget / Linux apt)."
       command: "package-update"
       category: "patching"
       risk: "high"
@@ -741,7 +741,6 @@ orchestration:
   bulk_max_workers: 60
   timeout_seconds: 120
   stop_on_error: false
-  active_response_fallback_to_endpoint: true
   windows_patch_stagger_seconds: 5
   windows_patch_stagger_min_targets: 5
   windows_os_update_profile_fallback_on_missing_target: true
@@ -816,6 +815,14 @@ analytics_ingest:
   interval_seconds: 300
   limit: 200
   query: null
+  event_driven:
+    enabled: true
+    worker_interval_seconds: 2
+    batch_size: 25
+    max_attempts: 6
+    retry_base_seconds: 5
+    retry_max_seconds: 300
+    lock_timeout_seconds: 300
 
 verification:
   post_action:
@@ -845,6 +852,7 @@ approval_policy:
       - role: "admin"
         count: 1
     justification_required: false
+    prevent_self_approval: true
   actions:
     kill-process:
       requirements:
@@ -994,14 +1002,18 @@ approval_policy:
       justification_required: true
 
 security:
-  jwt_secret: "CHANGE_ME_TO_A_LONG_RANDOM_VALUE"
+  # Secret-capable values can be literal strings or references:
+  # - env://JWT_SECRET
+  # - file://./secrets/jwt_secret.txt
+  # - vault://secret/data/click2fix/backend#jwt_secret
+  jwt_secret: "env://JWT_SECRET"
   enforce_strong_jwt: true
   jwt_issuer: "click2fix-api"
   jwt_audience: "click2fix-ui"
   token_exp_hours: 8
   cookie_name: "c2f_token"
   csrf_cookie_name: "c2f_csrf"
-  cookie_secure: false
+  cookie_secure: null
   return_access_token_in_body: false
   cookie_samesite: "strict"
   cookie_httponly: true
@@ -1034,6 +1046,10 @@ security:
     max_attempts: 8
     window_seconds: 300
     block_seconds: 900
+  v2_abac:
+    opa_url: ""
+    opa_timeout_seconds: 2
+    opa_fail_closed: false
 
 auth:
   oidc:

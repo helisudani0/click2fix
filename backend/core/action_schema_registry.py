@@ -196,7 +196,7 @@ class ActionRegistry:
         self.register(ActionCapability(
             id="package-update",
             label="Update Package",
-            description="Install/upgrade a specific package via winget (Windows) or apt (Linux)",
+            description="Upgrade an installed package via winget (Windows) or apt (Linux)",
             category="patching",
             risk_level="high",
             supported_platforms=["windows", "linux"],

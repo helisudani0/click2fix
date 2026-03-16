@@ -15,7 +15,6 @@ from sqlalchemy import text
 
 from core.audit import log_audit
 from core.indexer_client import IndexerClient
-from core.secrets import resolve_secret_env, resolve_secret_value
 from core.settings import SETTINGS
 
 
@@ -30,12 +29,28 @@ def _cfg(path: str, default: Any = None) -> Any:
     return node
 
 
+def _resolve_env(env_key: Optional[str]) -> str:
+    if not env_key:
+        return ""
+    return os.getenv(str(env_key).strip(), "") or ""
+
+
+def _resolve_inline(value: Optional[str]) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    if text.startswith("env://"):
+        return _resolve_env(text[len("env://") :].strip())
+    return text
+
+
 def _read_secret(value: Optional[str], env_key: Optional[str]) -> str:
-    if env_key:
-        env_value = resolve_secret_env(env_key)
-        if env_value:
-            return env_value
-    return resolve_secret_value(value or "")
+    env_value = _resolve_env(env_key)
+    if env_value:
+        return env_value
+    return _resolve_inline(value or "")
 
 
 def _bool(value: Any, default: bool = False) -> bool:
@@ -4947,8 +4962,8 @@ catch {
     def _windows_credentials_for_agent(self, agent_id: Optional[str]) -> Dict[str, str]:
         norm = self._normalize_agent_id(agent_id or "")
         if norm:
-            env_username = resolve_secret_env(f"C2F_WINRM_USERNAME_{norm}")
-            env_password = resolve_secret_env(f"C2F_WINRM_PASSWORD_{norm}")
+            env_username = _resolve_env(f"C2F_WINRM_USERNAME_{norm}")
+            env_password = _resolve_env(f"C2F_WINRM_PASSWORD_{norm}")
             if env_username and env_password:
                 return {"username": env_username, "password": env_password}
             per_agent = self.windows_agent_credentials.get(norm) or {}
@@ -4987,8 +5002,8 @@ catch {
             norm = self._normalize_agent_id(suffix)
             if not norm:
                 continue
-            username = resolve_secret_env(key)
-            password = resolve_secret_env(f"C2F_WINRM_PASSWORD_{suffix}")
+            username = _resolve_env(key)
+            password = _resolve_env(f"C2F_WINRM_PASSWORD_{suffix}")
             if username and password:
                 found.append(norm)
         return sorted(set(found))

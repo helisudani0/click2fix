@@ -6274,18 +6274,6 @@ catch {
         stdout_lines.extend("C2F_LOG " + ln for ln in sent_order[-200:])
         stdout = "\n".join([ln for ln in stdout_lines if ln])
         stderr = error if not ok else ""
-        action_key = str(action_id or "").strip().lower()
-        if (not ok) and action_key in {"package-update", "software-install-upgrade"}:
-            # Winget is often unavailable under SYSTEM; retry once directly under the WinRM user.
-            try:
-                rc2, out2, err2 = _run_direct_script(override_run_as_system=False)
-                if rc2 == 0:
-                    return 0, out2, ""
-                extra = (err2 or out2 or "").strip()
-                if extra:
-                    stderr = (stderr + " | direct_fallback_failed: " + extra).strip(" |")
-            except Exception as exc:
-                stderr = (stderr + " | direct_fallback_failed: " + str(exc)).strip(" |")
         return (0 if ok else 1), stdout, stderr
 
     def _execute_windows_script_task(
@@ -6890,6 +6878,18 @@ catch {
         stdout_lines.extend("C2F_LOG " + ln for ln in sent_order[-300:])
         stdout = "\n".join([ln for ln in stdout_lines if ln])
         stderr = error if not ok else ""
+        action_key = str(action_id or "").strip().lower()
+        if (not ok) and action_key in {"package-update", "software-install-upgrade"}:
+            # Winget is often unavailable under SYSTEM; retry once directly under the WinRM user.
+            try:
+                rc2, out2, err2 = _run_direct_script(override_run_as_system=False)
+                if rc2 == 0:
+                    return 0, out2, ""
+                extra = (err2 or out2 or "").strip()
+                if extra:
+                    stderr = (stderr + " | direct_fallback_failed: " + extra).strip(" |")
+            except Exception as exc:
+                stderr = (stderr + " | direct_fallback_failed: " + str(exc)).strip(" |")
         return (0 if ok else 1), stdout, stderr
 
     def _run_winrm(self, target: Dict[str, Any], script: str, *, timeout_seconds: Optional[int] = None):

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import api from "../api/client";
 import { executionSocket } from "../api/socket";
-import { requestDualStack } from "../api/dualStack";
 import { getAlerts } from "../api/wazuh";
 import RelativeTimestamp from "./RelativeTimestamp";
 import { nowUtcIso } from "../utils/time";
@@ -18,11 +18,7 @@ const UPDATE_ACTION_IDS = new Set([
 const SCAN_ACTION_IDS = new Set(["ioc-scan", "toc-scan", "yara-scan", "collect-forensics", "collect-memory", "malware-scan", "threat-hunt-persistence"]);
 const FLEET_TARGET_IDS = new Set(["all", "*", "fleet", "all-active"]);
 
-const getExecutionDetailRequest = (executionId) =>
-  requestDualStack({
-    method: "get",
-    v1Path: `/executions/${executionId}`,
-  });
+const getExecutionDetailRequest = (executionId) => api.get(`/executions/${executionId}`);
 
 const sendExecutionControlRequest = (executionId, payload = {}) => {
   const requested = String(
@@ -39,12 +35,7 @@ const sendExecutionControlRequest = (executionId, payload = {}) => {
     pause: "pause",
   };
   const command = commandMap[requested] || requested || "resume";
-  return requestDualStack({
-    method: "post",
-    v1Path: `/executions/${executionId}/control`,
-    v2Path: `/v2/executions/${executionId}/manual-gate`,
-    data: { ...payload, command },
-  });
+  return api.post(`/executions/${executionId}/control`, { ...payload, command });
 };
 
 const resolveTargetStatus = (target, isUpdateAction) => {

@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import ExecutionStream from "../components/ExecutionStream";
 import Pager from "../components/Pager";
+import RelativeTimestamp from "../components/RelativeTimestamp";
+import SideDrawer from "../components/SideDrawer";
 import { getAgents, getExecutions, runGlobalShell, suggestGlobalShellCommand } from "../api/wazuh";
-import { buildHumanReadableOutput, summarizeReadableOutput } from "../utils/output";
-import { formatWazuhTimestamp } from "../utils/time";
+import { buildHumanReadableOutput, normalizeOutputText, summarizeReadableOutput } from "../utils/output";
 
 const CONNECTED_STATUSES = new Set(["active", "connected", "online"]);
 const FLEET_TARGETS = new Set(["all", "*", "fleet", "all-active"]);
@@ -197,10 +198,7 @@ const summarizeConsolePreview = (value, limit = 180) => {
 };
 
 const summarizeRawPreview = (value, limit = 180) => {
-  const text = String(value || "")
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .trim();
+  const text = normalizeOutputText(value);
   if (!text) return "";
   if (text.length <= limit) return text;
   return `${text.slice(0, limit)}...`;
@@ -272,7 +270,7 @@ const statusTone = (status) => {
   const value = String(status || "").toUpperCase();
   if (value === "SUCCESS") return "success";
   if (["FAILED", "ERROR", "KILLED"].includes(value)) return "failed";
-  if (["RUNNING", "PAUSED", "PENDING", "QUEUED", "CANCELLED"].includes(value)) return "pending";
+  if (["RUNNING", "PAUSED", "PENDING", "PENDING_VERIFICATION", "QUEUED", "CANCELLED"].includes(value)) return "pending";
   return "neutral";
 };
 
@@ -360,7 +358,7 @@ export default function GlobalShell() {
         if (current && rows.some((row) => Number(row.id) === Number(current))) {
           return current;
         }
-        return rows.length ? rows[0].id : null;
+        return null;
       });
     } catch {
       setHistory([]);
@@ -1191,8 +1189,8 @@ export default function GlobalShell() {
                         <td className="ws-normal" title={row.outputPreview || "-"}>
                           {row.outputPreview || "-"}
                         </td>
-                        <td>{formatWazuhTimestamp(row.startedAt)}</td>
-                        <td>{formatWazuhTimestamp(row.finishedAt)}</td>
+                        <td><RelativeTimestamp value={row.startedAt} /></td>
+                        <td><RelativeTimestamp value={row.finishedAt} /></td>
                       </tr>
                     ))
                   )}
@@ -1211,26 +1209,62 @@ export default function GlobalShell() {
               pageSizeOptions={[10, 25, 50]}
               label="shell runs"
             />
-	            {selectedHistory ? (
-	              <div className="list-item readable mt-10">
-	                <div className="muted">Selected Run Command</div>
-	                <div className="meta-line mt-6">Shell: {selectedHistory.shell || "-"}</div>
-	                <pre className="code-block mt-10">{selectedHistory.command || "-"}</pre>
-	                <div className="muted mt-10">Clean Output Preview (Human-readable)</div>
-	                <pre className="code-block mt-10">{selectedHistory.cleanOutputPreview || "-"}</pre>
-	                <div className="muted mt-10">Raw Output Preview</div>
-	                <pre className="code-block mt-10">{selectedHistory.outputPreview || "-"}</pre>
-	              </div>
-	            ) : null}
           </div>
         </div>
       </div>
 
-      {activeExecutionId ? (
-        <ExecutionStream executionId={activeExecutionId} title={`Global Shell Run #${activeExecutionId}`} />
-      ) : (
+      {!selectedHistory ? (
         <div className="empty-state">Select a run from history to inspect full output and execution proof.</div>
-      )}
+      ) : null}
+
+      <SideDrawer
+        open={Boolean(selectedHistory)}
+        onClose={() => setActiveExecutionId(null)}
+        title={selectedHistory ? `Global Shell Run #${selectedHistory.id}` : "Global Shell Run"}
+        subtitle={selectedHistory ? `${selectedHistory.targetLabel || selectedHistory.agent || "-"} | ${selectedHistory.status || "-"}` : ""}
+      >
+        {selectedHistory ? (
+          <div className="drawer-grid">
+            <div className="panel-stack">
+              <div className="card">
+                <div className="card-header">
+                  <div>
+                    <h3>Run Command</h3>
+                    <p className="muted">Shell context and sanitized preview for rapid debugging.</p>
+                  </div>
+                </div>
+                <div className="kv-grid">
+                  <div className="kv-row">
+                    <span className="kv-key">Shell</span>
+                    <span className="kv-value">{selectedHistory.shell || "-"}</span>
+                  </div>
+                  <div className="kv-row">
+                    <span className="kv-key">Status</span>
+                    <span className="kv-value">
+                      <span className={`status-pill ${statusTone(selectedHistory.status)}`}>{selectedHistory.status || "-"}</span>
+                    </span>
+                  </div>
+                  <div className="kv-row">
+                    <span className="kv-key">Started</span>
+                    <span className="kv-value"><RelativeTimestamp value={selectedHistory.startedAt} /></span>
+                  </div>
+                  <div className="kv-row">
+                    <span className="kv-key">Finished</span>
+                    <span className="kv-value"><RelativeTimestamp value={selectedHistory.finishedAt} /></span>
+                  </div>
+                </div>
+                <div className="muted mt-12">Command</div>
+                <pre className="code-block mt-8">{selectedHistory.command || "-"}</pre>
+                <div className="muted mt-12">Clean Output Preview</div>
+                <pre className="code-block mt-8">{selectedHistory.cleanOutputPreview || "-"}</pre>
+                <div className="muted mt-12">Raw Output Preview</div>
+                <pre className="code-block mt-8">{selectedHistory.outputPreview || "-"}</pre>
+              </div>
+            </div>
+            <ExecutionStream executionId={selectedHistory.id} />
+          </div>
+        ) : null}
+      </SideDrawer>
     </div>
   );
 }

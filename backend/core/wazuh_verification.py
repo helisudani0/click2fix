@@ -479,3 +479,34 @@ def run_post_action_verification(
 ) -> Dict[str, Any]:
     verifier = PostActionVerificationLoop(client=client)
     return verifier.verify_targets(action_id, execution_id, target_rows)
+
+
+def derive_verification_state(result: Dict[str, Any] | None) -> Dict[str, Any]:
+    if not isinstance(result, dict) or result.get("skipped"):
+        return {
+            "applicable": False,
+            "ok": True,
+            "pending": False,
+            "step_status": "SUCCESS",
+            "step_error": "",
+            "execution_status": None,
+        }
+
+    ok = bool(result.get("ok"))
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    timed_out = max(0, _to_int(summary.get("timed_out"), 0))
+    trigger_failed = max(0, _to_int(summary.get("trigger_failed"), 0))
+    pending = (not ok) and timed_out > 0 and trigger_failed == 0
+
+    return {
+        "applicable": True,
+        "ok": ok,
+        "pending": pending,
+        "step_status": "PENDING" if pending else ("SUCCESS" if ok else "FAILED"),
+        "step_error": (
+            "Awaiting fresh Wazuh/SCA scan data"
+            if pending
+            else ("" if ok else "Post-action verification did not fully complete")
+        ),
+        "execution_status": "PENDING_VERIFICATION" if pending else None,
+    }

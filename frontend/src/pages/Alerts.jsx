@@ -4,7 +4,9 @@ import { getAgents, getAlerts } from "../api/wazuh";
 import IOCPanel from "../components/IOCPanel";
 import MitrePanel from "../components/MitrePanel";
 import Pager from "../components/Pager";
-import { formatWazuhTimestamp, parseWazuhTimestamp } from "../utils/time";
+import RelativeTimestamp from "../components/RelativeTimestamp";
+import SideDrawer from "../components/SideDrawer";
+import { parseWazuhTimestamp } from "../utils/time";
 
 const pickAlertId = (alert) => {
   const raw = alert?.id ?? alert?.alert_id;
@@ -52,7 +54,6 @@ const normalizeAlerts = (data) => {
       manager: manager?.name || manager?.node || "",
       fullLog: alert?.full_log || alert?.log || "",
       timestampRaw: alert?.timestamp || alert?.time || alert?.["@timestamp"] || alert?.date || "",
-      timestamp: formatWazuhTimestamp(alert?.timestamp || alert?.time || alert?.["@timestamp"] || alert?.date || ""),
       raw: alert,
     });
   });
@@ -94,6 +95,7 @@ export default function Alerts() {
   const [agents, setAgents] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [selectedId, setSelectedId] = useState("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [queuePage, setQueuePage] = useState(1);
   const [queuePageSize, setQueuePageSize] = useState(50);
 
@@ -264,171 +266,180 @@ export default function Alerts() {
       {loading ? <div className="empty-state">Loading alerts...</div> : null}
       {!loading && error ? <div className="empty-state">Error: {error}</div> : null}
 
-      <div className="split-view">
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h3>Detection Queue</h3>
-              <p className="muted">Sorted by newest event timestamp.</p>
-            </div>
+      <div className="card">
+        <div className="card-header">
+          <div>
+            <h3>Detection Queue</h3>
+            <p className="muted">Sorted by newest event timestamp.</p>
           </div>
-          <div className="table-scroll">
-            <table className="table readable">
-              <thead>
+        </div>
+        <div className="table-scroll">
+          <table className="table readable">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Severity</th>
+                <th>Rule</th>
+                <th>Agent</th>
+                <th>Groups</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody>
+              {alerts.length === 0 ? (
                 <tr>
-                  <th>ID</th>
-                  <th>Severity</th>
-                  <th>Rule</th>
-                  <th>Agent</th>
-                  <th>Groups</th>
-                  <th>Timestamp</th>
+                  <td colSpan="6" className="text-center">
+                    No alerts found.
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {alerts.length === 0 ? (
-                  <tr>
-                    <td colSpan="6" className="text-center">
-                      No alerts found.
+              ) : (
+                pagedAlerts.map((alert) => (
+                  <tr
+                    key={alert.id}
+                    onClick={() => {
+                      setSelectedId(alert.id);
+                      setDrawerOpen(true);
+                    }}
+                    className={`clickable ${selected?.id === alert.id ? "selected" : ""}`}
+                  >
+                    <td>{alert.id}</td>
+                    <td>
+                      <span className={`status-pill ${severityClass(alert.level)}`}>{alert.level}</span>
                     </td>
+                    <td>{alert.rule}</td>
+                    <td>{alert.agentName}</td>
+                    <td>{alert.groups || "-"}</td>
+                    <td><RelativeTimestamp value={alert.timestampRaw} /></td>
                   </tr>
-                ) : (
-                  pagedAlerts.map((alert) => (
-                    <tr
-                      key={alert.id}
-                      onClick={() => setSelectedId(alert.id)}
-                      className={`clickable ${selected?.id === alert.id ? "selected" : ""}`}
-                    >
-                      <td>{alert.id}</td>
-                      <td>
-                        <span className={`status-pill ${severityClass(alert.level)}`}>{alert.level}</span>
-                      </td>
-                      <td>{alert.rule}</td>
-                      <td>{alert.agentName}</td>
-                      <td>{alert.groups || "-"}</td>
-                      <td>{alert.timestamp}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-          <Pager
-            total={alerts.length}
-            page={queuePage}
-            pageSize={queuePageSize}
-            onPageChange={setQueuePage}
-            onPageSizeChange={(size) => {
-              setQueuePageSize(size);
-              setQueuePage(1);
-            }}
-            pageSizeOptions={[25, 50, 100]}
-            label="alerts"
-          />
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
-
-        <div className="panel-stack">
-          {!selected ? (
-            <div className="empty-state">Select an alert to inspect its full context.</div>
-          ) : (
-            <>
-              <div className="card">
-                <div className="card-header">
-                  <div>
-                    <h3>Incident Snapshot</h3>
-                    <p className="muted">Analyst context for triage, escalation, and playbook execution.</p>
-                  </div>
-                  <div className="page-actions">
-                    <button className="btn secondary" onClick={() => navigate(`/alerts?query=${encodeURIComponent(selected.id)}`)}>
-                      Pin Alert
-                    </button>
-                    <button className="btn secondary" onClick={() => navigate("/approvals")}>
-                      Request Approval
-                    </button>
-                    <button className="btn" onClick={() => navigate("/cases")}>
-                      Open Case Desk
-                    </button>
-                  </div>
-                </div>
-                <div className="kv-grid">
-                  <div className="kv-row">
-                    <span className="kv-key">Alert ID</span>
-                    <span className="kv-value">{selected.id}</span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Severity</span>
-                    <span className="kv-value">
-                      <span className={`status-pill ${severityClass(selected.level)}`}>Level {selected.level}</span>
-                    </span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Timestamp</span>
-                    <span className="kv-value">{selected.timestamp}</span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Agent</span>
-                    <span className="kv-value">
-                      {selected.agentName} ({selected.agentId || "-"}) {selected.agentIp ? `| ${selected.agentIp}` : ""}
-                    </span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Rule</span>
-                    <span className="kv-value">
-                      {selected.rule} {selected.ruleId ? `(${selected.ruleId})` : ""}
-                    </span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Decoder</span>
-                    <span className="kv-value">{selected.decoder || "-"}</span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Location</span>
-                    <span className="kv-value">{selected.location || "-"}</span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Manager</span>
-                    <span className="kv-value">{selected.manager || "-"}</span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Groups</span>
-                    <span className="kv-value">{selected.groups || "-"}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="card">
-                <div className="card-header">
-                  <div>
-                    <h3>Event Log</h3>
-                    <p className="muted">Raw log content associated with this detection event.</p>
-                  </div>
-                </div>
-                <pre className="code-block">{selected.fullLog ? String(selected.fullLog) : "No full_log field on this alert."}</pre>
-              </div>
-
-              <div className="card">
-                <div className="card-header">
-                  <div>
-                    <h3>Raw Alert JSON</h3>
-                    <p className="muted">Unmodified payload from Wazuh/indexer.</p>
-                  </div>
-                </div>
-                <pre className="code-block">{JSON.stringify(selected.raw, null, 2)}</pre>
-              </div>
-            </>
-          )}
-        </div>
+        <Pager
+          total={alerts.length}
+          page={queuePage}
+          pageSize={queuePageSize}
+          onPageChange={setQueuePage}
+          onPageSizeChange={(size) => {
+            setQueuePageSize(size);
+            setQueuePage(1);
+          }}
+          pageSizeOptions={[25, 50, 100]}
+          label="alerts"
+        />
       </div>
 
-      {selected ? (
-        <div className="grid-2">
-          <div className="card">
-            <IOCPanel alertId={selected.id} />
-          </div>
-          <div className="card">
-            <MitrePanel alertId={selected.id} />
-          </div>
-        </div>
-      ) : null}
+      {!drawerOpen ? <div className="empty-state">Select an alert to inspect its full context.</div> : null}
+
+      <SideDrawer
+        open={drawerOpen && Boolean(selected)}
+        onClose={() => setDrawerOpen(false)}
+        title={selected ? `Alert ${selected.id}` : "Alert"}
+        subtitle={selected ? `${selected.rule} | ${selected.agentName}` : ""}
+        actions={selected ? (
+          <>
+            <button className="btn secondary" onClick={() => navigate(`/alerts?query=${encodeURIComponent(selected.id)}`)}>
+              Pin Alert
+            </button>
+            <button className="btn secondary" onClick={() => navigate("/approvals")}>
+              Request Approval
+            </button>
+            <button className="btn" onClick={() => navigate("/cases")}>
+              Open Case Desk
+            </button>
+          </>
+        ) : null}
+      >
+        {selected ? (
+          <>
+            <div className="drawer-grid">
+              <div className="panel-stack">
+                <div className="card">
+                  <div className="card-header">
+                    <div>
+                      <h3>Incident Snapshot</h3>
+                      <p className="muted">Analyst context for triage, escalation, and playbook execution.</p>
+                    </div>
+                  </div>
+                  <div className="kv-grid">
+                    <div className="kv-row">
+                      <span className="kv-key">Alert ID</span>
+                      <span className="kv-value">{selected.id}</span>
+                    </div>
+                    <div className="kv-row">
+                      <span className="kv-key">Severity</span>
+                      <span className="kv-value">
+                        <span className={`status-pill ${severityClass(selected.level)}`}>Level {selected.level}</span>
+                      </span>
+                    </div>
+                    <div className="kv-row">
+                      <span className="kv-key">Timestamp</span>
+                      <span className="kv-value"><RelativeTimestamp value={selected.timestampRaw} /></span>
+                    </div>
+                    <div className="kv-row">
+                      <span className="kv-key">Agent</span>
+                      <span className="kv-value">
+                        {selected.agentName} ({selected.agentId || "-"}) {selected.agentIp ? `| ${selected.agentIp}` : ""}
+                      </span>
+                    </div>
+                    <div className="kv-row">
+                      <span className="kv-key">Rule</span>
+                      <span className="kv-value">
+                        {selected.rule} {selected.ruleId ? `(${selected.ruleId})` : ""}
+                      </span>
+                    </div>
+                    <div className="kv-row">
+                      <span className="kv-key">Decoder</span>
+                      <span className="kv-value">{selected.decoder || "-"}</span>
+                    </div>
+                    <div className="kv-row">
+                      <span className="kv-key">Location</span>
+                      <span className="kv-value">{selected.location || "-"}</span>
+                    </div>
+                    <div className="kv-row">
+                      <span className="kv-key">Manager</span>
+                      <span className="kv-value">{selected.manager || "-"}</span>
+                    </div>
+                    <div className="kv-row">
+                      <span className="kv-key">Groups</span>
+                      <span className="kv-value">{selected.groups || "-"}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="card">
+                  <div className="card-header">
+                    <div>
+                      <h3>Event Log</h3>
+                      <p className="muted">Raw log content associated with this detection event.</p>
+                    </div>
+                  </div>
+                  <pre className="code-block">{selected.fullLog ? String(selected.fullLog) : "No full_log field on this alert."}</pre>
+                </div>
+              </div>
+
+              <div className="panel-stack">
+                <div className="card">
+                  <IOCPanel alertId={selected.id} />
+                </div>
+                <div className="card">
+                  <MitrePanel alertId={selected.id} />
+                </div>
+                <div className="card">
+                  <div className="card-header">
+                    <div>
+                      <h3>Raw Alert JSON</h3>
+                      <p className="muted">Unmodified payload from Wazuh/indexer.</p>
+                    </div>
+                  </div>
+                  <pre className="code-block">{JSON.stringify(selected.raw, null, 2)}</pre>
+                </div>
+              </div>
+            </div>
+          </>
+        ) : null}
+      </SideDrawer>
     </div>
   );
 }

@@ -11,7 +11,7 @@ from core.security import require_role
 from core.time_utils import utc_now_naive
 from core.ws_bus import publish_event
 from core.wazuh_client import WazuhClient
-from core.wazuh_verification import run_post_action_verification
+from core.wazuh_verification import derive_verification_state, run_post_action_verification
 from db.database import connect
 
 router = APIRouter()
@@ -246,8 +246,20 @@ async def remediate(
         )
         if target_rows:
             _store_execution_targets(db, int(execution_id), target_rows)
-        if isinstance(verification_result, dict) and not verification_result.get("skipped"):
-            verification_ok = bool(verification_result.get("ok"))
+        verification_state = derive_verification_state(verification_result)
+        if verification_state.get("execution_status") and execution_status == "SUCCESS":
+            execution_status = str(verification_state.get("execution_status") or execution_status)
+            db.execute(
+                text(
+                    """
+                    UPDATE executions
+                    SET status=:status
+                    WHERE id=:id
+                    """
+                ),
+                {"status": execution_status, "id": execution_id},
+            )
+        if verification_state.get("applicable"):
             db.execute(
                 text(
                     """
@@ -260,8 +272,8 @@ async def remediate(
                     "execution_id": execution_id,
                     "step": "post_action_verification",
                     "stdout": json.dumps(verification_result, default=str),
-                    "stderr": "" if verification_ok else "Post-action verification did not fully complete",
-                    "status": "SUCCESS" if verification_ok else "FAILED",
+                    "stderr": str(verification_state.get("step_error") or ""),
+                    "status": str(verification_state.get("step_status") or "SUCCESS"),
                 },
             )
         db.commit()

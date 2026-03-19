@@ -8,6 +8,8 @@ import api, {
 import { APP_TIMEZONE_LABEL } from "../utils/time";
 import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
+const SIDEBAR_STORAGE_KEY = "c2f-sidebar-collapsed";
+
 const ROUTE_LABELS = {
   "/": "Dashboard",
   "/alerts": "Alerts",
@@ -74,12 +76,30 @@ const NAV_SECTIONS = [
   },
 ];
 
+const shortLabel = (value) =>
+  String(value || "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 3)
+    .toUpperCase() || "NAV";
+
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [user, setUser] = useState(null);
   const [search, setSearch] = useState("");
   const [appVersion, setAppVersion] = useState(UI_APP_VERSION);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === "1";
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, sidebarCollapsed ? "1" : "0");
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     let active = true;
@@ -174,24 +194,42 @@ export default function AppLayout() {
   };
 
   return (
-    <div className="app-layout">
+    <div className={`app-layout${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
 
       <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-badge">C2F</div>
-          <div>
-            <div className="brand-title">Click2Fix</div>
-            <div className="brand-subtitle">SOC Operations Platform</div>
-            <div className="brand-version">Version {appVersion}</div>
+        <div className="sidebar-top">
+          <div className="brand">
+            <div className="brand-badge">C2F</div>
+            <div className="brand-copy">
+              <div className="brand-title">Click2Fix</div>
+              <div className="brand-subtitle">SOC Operations Platform</div>
+              <div className="brand-version">Version {appVersion}</div>
+            </div>
           </div>
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setSidebarCollapsed((prev) => !prev)}
+            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-pressed={sidebarCollapsed}
+          >
+            {sidebarCollapsed ? ">" : "<"}
+          </button>
         </div>
 
         <div className="priority-panel" aria-label="Priority navigation">
           <div className="priority-title">Priority Queue</div>
           <div className="priority-links">
             {PRIORITY_LINKS.map((item) => (
-              <NavLink key={item.to} to={item.to} className={({ isActive }) => `priority-link${isActive ? " active" : ""}`}>
-                {item.label}
+              <NavLink
+                key={item.to}
+                to={item.to}
+                title={item.label}
+                className={({ isActive }) => `priority-link${isActive ? " active" : ""}`}
+              >
+                <span className="nav-link-badge">{shortLabel(item.label)}</span>
+                <span className="nav-link-label">{item.label}</span>
               </NavLink>
             ))}
           </div>
@@ -207,17 +245,20 @@ export default function AppLayout() {
                     key={link.to}
                     to={link.to}
                     end={Boolean(link.end)}
+                    title={link.label}
                     className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
                   >
-                    {link.label}
+                    <span className="nav-link-badge">{shortLabel(link.label)}</span>
+                    <span className="nav-link-label">{link.label}</span>
                   </NavLink>
                 ))}
               </div>
             </div>
           ))}
         </nav>
-        <button type="button" className="nav-link ops-link-btn" onClick={openOpsConsole}>
-          Backend Ops
+        <button type="button" className="nav-link ops-link-btn" onClick={openOpsConsole} title="Backend Ops">
+          <span className="nav-link-badge">OPS</span>
+          <span className="nav-link-label">Backend Ops</span>
         </button>
 
         <div className="sidebar-footer">
@@ -247,6 +288,14 @@ export default function AppLayout() {
             </div>
           </div>
           <div className="topbar-right">
+            <button
+              type="button"
+              className="btn secondary sidebar-toggle-mobile"
+              onClick={() => setSidebarCollapsed((prev) => !prev)}
+              aria-pressed={sidebarCollapsed}
+            >
+              {sidebarCollapsed ? "Expand Nav" : "Collapse Nav"}
+            </button>
             <div className="topbar-version" title="Current frontend version">
               {appVersion}
             </div>

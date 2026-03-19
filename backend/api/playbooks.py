@@ -19,7 +19,7 @@ from core.settings import SETTINGS
 from core.time_utils import utc_now_naive
 from core.ws_bus import publish_event
 from core.wazuh_client import WazuhClient
-from core.wazuh_verification import run_post_action_verification
+from core.wazuh_verification import derive_verification_state, run_post_action_verification
 from db.database import connect
 
 
@@ -389,8 +389,8 @@ def _run_playbook_async_job(
                         execution_id,
                         result_payload.get("results") or [],
                     )
-                    if not verification_result.get("skipped"):
-                        verification_ok = bool(verification_result.get("ok"))
+                    verification_state = derive_verification_state(verification_result)
+                    if verification_state.get("applicable"):
                         db.execute(
                             text(
                                 """
@@ -403,19 +403,23 @@ def _run_playbook_async_job(
                                 "execution_id": execution_id,
                                 "step": f"{step_id}:post_verify",
                                 "stdout": json.dumps(verification_result, default=str),
-                                "stderr": "" if verification_ok else "Post-action verification did not fully complete",
-                                "status": "SUCCESS" if verification_ok else "FAILED",
+                                "stderr": str(verification_state.get("step_error") or ""),
+                                "status": str(verification_state.get("step_status") or "SUCCESS"),
                             },
                         )
                         db.commit()
                         publish_event(
                             execution_id,
                             {
-                                "type": "step_done" if verification_ok else "step_failed",
+                                "type": (
+                                    "step_done"
+                                    if verification_state.get("ok")
+                                    else ("step_warning" if verification_state.get("pending") else "step_failed")
+                                ),
                                 "step": f"{step_id}:post_verify",
-                                "status": "SUCCESS" if verification_ok else "FAILED",
+                                "status": str(verification_state.get("step_status") or "SUCCESS"),
                                 "stdout": json.dumps(verification_result.get("summary", {}), default=str),
-                                "stderr": "" if verification_ok else "verification_timeout_or_trigger_failure",
+                                "stderr": str(verification_state.get("step_error") or ""),
                             },
                         )
             except HTTPException as exc:

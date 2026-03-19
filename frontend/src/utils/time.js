@@ -21,6 +21,7 @@ export const DEFAULT_TIMEZONE = APP_TIMEZONE;
 
 let serverClockSkewMs = 0;
 const FORMATTER_CACHE = new Map();
+let RELATIVE_TIME_FORMATTER = null;
 
 const getFormatter = (timeZone) => {
   const key = timeZone || DEFAULT_TIMEZONE;
@@ -111,6 +112,13 @@ export const nowUtcDate = () => new Date(Date.now() + serverClockSkewMs);
 
 export const nowUtcIso = () => nowUtcDate().toISOString();
 
+const getRelativeFormatter = () => {
+  if (!RELATIVE_TIME_FORMATTER) {
+    RELATIVE_TIME_FORMATTER = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  }
+  return RELATIVE_TIME_FORMATTER;
+};
+
 export const formatWazuhTimestamp = (value, timeZone = DEFAULT_TIMEZONE) => {
   const date = parseWazuhTimestamp(value);
   if (!date) {
@@ -121,6 +129,15 @@ export const formatWazuhTimestamp = (value, timeZone = DEFAULT_TIMEZONE) => {
   return `${parts.month} ${parts.day}, ${parts.year} @ ${parts.hour}:${parts.minute}:${parts.second}.${pad(date.getUTCMilliseconds(), 3)} ${APP_TIMEZONE_LABEL}`;
 };
 
+export const formatWazuhIso = (value) => {
+  const date = parseWazuhTimestamp(value);
+  if (!date) {
+    if (value === null || value === undefined || value === "") return "-";
+    return typeof value === "string" || typeof value === "number" ? String(value) : "-";
+  }
+  return date.toISOString();
+};
+
 export const formatWazuhShort = (value, timeZone = DEFAULT_TIMEZONE) => {
   const date = parseWazuhTimestamp(value);
   if (!date) {
@@ -129,4 +146,54 @@ export const formatWazuhShort = (value, timeZone = DEFAULT_TIMEZONE) => {
   }
   const parts = partsFor(date, timeZone);
   return `${parts.month} ${pad(parts.day)} ${parts.hour}:${parts.minute} ${APP_TIMEZONE_LABEL}`;
+};
+
+export const formatRelativeTime = (value, reference = nowUtcDate()) => {
+  const date = parseWazuhTimestamp(value);
+  if (!date) {
+    if (value === null || value === undefined || value === "") return "-";
+    return typeof value === "string" || typeof value === "number" ? String(value) : "-";
+  }
+
+  const diffMs = date.getTime() - reference.getTime();
+  const absMs = Math.abs(diffMs);
+  const second = 1000;
+  const minute = 60 * second;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  const week = 7 * day;
+  const month = 30 * day;
+  const year = 365 * day;
+
+  let unit = "second";
+  let divisor = second;
+  if (absMs >= year) {
+    unit = "year";
+    divisor = year;
+  } else if (absMs >= month) {
+    unit = "month";
+    divisor = month;
+  } else if (absMs >= week) {
+    unit = "week";
+    divisor = week;
+  } else if (absMs >= day) {
+    unit = "day";
+    divisor = day;
+  } else if (absMs >= hour) {
+    unit = "hour";
+    divisor = hour;
+  } else if (absMs >= minute) {
+    unit = "minute";
+    divisor = minute;
+  }
+
+  const valueRounded = Math.round(diffMs / divisor);
+  return getRelativeFormatter().format(valueRounded, unit);
+};
+
+export const formatTimestampTitle = (value, timeZone = DEFAULT_TIMEZONE) => {
+  const exact = formatWazuhTimestamp(value, timeZone);
+  const iso = formatWazuhIso(value);
+  if (!iso || iso === "-" || iso === exact) return exact;
+  return `${exact} | ${iso}`;
 };

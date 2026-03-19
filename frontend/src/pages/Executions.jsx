@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { getExecutions } from "../api/wazuh";
 import ExecutionStream from "../components/ExecutionStream";
 import Pager from "../components/Pager";
-import { formatWazuhTimestamp, parseWazuhTimestamp } from "../utils/time";
+import RelativeTimestamp from "../components/RelativeTimestamp";
+import SideDrawer from "../components/SideDrawer";
+import { parseWazuhTimestamp } from "../utils/time";
 
 const executionRow = (row) => {
   if (Array.isArray(row)) {
@@ -31,7 +33,7 @@ const statusTone = (status) => {
   const value = String(status || "").toUpperCase();
   if (value === "SUCCESS") return "success";
   if (["FAILED", "ERROR", "KILLED"].includes(value)) return "failed";
-  if (["RUNNING", "PAUSED", "PENDING", "QUEUED", "CANCELLED"].includes(value)) return "pending";
+  if (["RUNNING", "PAUSED", "PENDING", "PENDING_VERIFICATION", "QUEUED", "CANCELLED"].includes(value)) return "pending";
   return "neutral";
 };
 
@@ -57,6 +59,7 @@ export default function Executions() {
   const [statusFilter, setStatusFilter] = useState("");
   const [queuePage, setQueuePage] = useState(1);
   const [queuePageSize, setQueuePageSize] = useState(50);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const load = useCallback((force = false) => {
     setLoading(true);
@@ -128,7 +131,7 @@ export default function Executions() {
       const status = String(run.status || "").toUpperCase();
       if (status === "SUCCESS") totals.success += 1;
       else if (["FAILED", "ERROR", "KILLED"].includes(status)) totals.failed += 1;
-      else if (["RUNNING", "PAUSED", "PENDING", "QUEUED"].includes(status)) totals.running += 1;
+      else if (["RUNNING", "PAUSED", "PENDING", "PENDING_VERIFICATION", "QUEUED"].includes(status)) totals.running += 1;
       else totals.other += 1;
     });
     return totals;
@@ -156,6 +159,7 @@ export default function Executions() {
             <option value="RUNNING">RUNNING</option>
             <option value="PAUSED">PAUSED</option>
             <option value="PENDING">PENDING</option>
+            <option value="PENDING_VERIFICATION">PENDING_VERIFICATION</option>
             <option value="QUEUED">QUEUED</option>
             <option value="SUCCESS">SUCCESS</option>
             <option value="FAILED">FAILED</option>
@@ -191,73 +195,83 @@ export default function Executions() {
         </div>
       </div>
 
-      <div className="split-view">
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h3>Execution Queue</h3>
-              <p className="muted">Select a run for live stream and forensic detail.</p>
-            </div>
+      <div className="card">
+        <div className="card-header">
+          <div>
+            <h3>Execution Queue</h3>
+            <p className="muted">Select a run for live stream and forensic detail.</p>
           </div>
-          <div className="table-scroll">
-            <table className="table compact readable">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Status</th>
-                  <th>Action</th>
-                  <th>Target</th>
-                  <th>Approved By</th>
-                  <th>Started</th>
-                  <th>Finished</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRuns.length === 0 ? (
-                  <tr>
-                    <td colSpan="7" className="text-center">
-                      No executions found.
-                    </td>
-                  </tr>
-                ) : (
-                  pagedRuns.map((run) => (
-                    <tr
-                      key={run.id}
-                      onClick={() => setSelected(run.id)}
-                      className={`clickable ${Number(selected) === Number(run.id) ? "selected" : ""}`}
-                    >
-                      <td>{run.id}</td>
-                      <td>
-                        <span className={`status-pill ${statusTone(run.status)}`}>{run.status || "-"}</span>
-                      </td>
-                      <td>{run.action || "-"}</td>
-                      <td>{run.agent || "-"}</td>
-                      <td>{run.approvedBy || "-"}</td>
-                      <td>{formatWazuhTimestamp(run.startedAt)}</td>
-                      <td>{formatWazuhTimestamp(run.finishedAt)}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-          <Pager
-            total={filteredRuns.length}
-            page={queuePage}
-            pageSize={queuePageSize}
-            onPageChange={setQueuePage}
-            onPageSizeChange={(size) => {
-              setQueuePageSize(size);
-              setQueuePage(1);
-            }}
-            pageSizeOptions={[25, 50, 100]}
-            label="executions"
-          />
         </div>
+        <div className="table-scroll">
+          <table className="table compact readable">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Action</th>
+                <th>Target</th>
+                <th>Approved By</th>
+                <th>Started</th>
+                <th>Finished</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredRuns.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="text-center">
+                    No executions found.
+                  </td>
+                </tr>
+              ) : (
+                pagedRuns.map((run) => (
+                  <tr
+                    key={run.id}
+                    onClick={() => {
+                      setSelected(run.id);
+                      setDrawerOpen(true);
+                    }}
+                    className={`clickable ${Number(selected) === Number(run.id) ? "selected" : ""}`}
+                  >
+                    <td>{run.id}</td>
+                    <td>
+                      <span className={`status-pill ${statusTone(run.status)}`}>{run.status || "-"}</span>
+                    </td>
+                    <td>{run.action || "-"}</td>
+                    <td>{run.agent || "-"}</td>
+                    <td>{run.approvedBy || "-"}</td>
+                    <td><RelativeTimestamp value={run.startedAt} /></td>
+                    <td><RelativeTimestamp value={run.finishedAt} /></td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <Pager
+          total={filteredRuns.length}
+          page={queuePage}
+          pageSize={queuePageSize}
+          onPageChange={setQueuePage}
+          onPageSizeChange={(size) => {
+            setQueuePageSize(size);
+            setQueuePage(1);
+          }}
+          pageSizeOptions={[25, 50, 100]}
+          label="executions"
+        />
+      </div>
 
-        <div className="panel-stack">
-          {selectedRun ? (
-            <>
+      {!drawerOpen ? <div className="empty-state">Select an execution to inspect output and step telemetry.</div> : null}
+
+      <SideDrawer
+        open={drawerOpen && Boolean(selectedRun)}
+        onClose={() => setDrawerOpen(false)}
+        title={selectedRun ? `Execution #${selectedRun.id}` : "Execution"}
+        subtitle={selectedRun ? `${selectedRun.action || "-"} | ${selectedRun.agent || "-"}` : ""}
+      >
+        {selectedRun ? (
+          <div className="drawer-grid">
+            <div className="panel-stack">
               <div className="card">
                 <div className="card-header">
                   <div>
@@ -290,11 +304,11 @@ export default function Executions() {
                   </div>
                   <div className="kv-row">
                     <span className="kv-key">Started At</span>
-                    <span className="kv-value">{formatWazuhTimestamp(selectedRun.startedAt)}</span>
+                    <span className="kv-value"><RelativeTimestamp value={selectedRun.startedAt} /></span>
                   </div>
                   <div className="kv-row">
                     <span className="kv-key">Finished At</span>
-                    <span className="kv-value">{formatWazuhTimestamp(selectedRun.finishedAt)}</span>
+                    <span className="kv-value"><RelativeTimestamp value={selectedRun.finishedAt} /></span>
                   </div>
                   <div className="kv-row">
                     <span className="kv-key">Runtime</span>
@@ -302,13 +316,11 @@ export default function Executions() {
                   </div>
                 </div>
               </div>
-              <ExecutionStream executionId={selectedRun.id} title={`Execution #${selectedRun.id}`} />
-            </>
-          ) : (
-            <div className="empty-state">Select an execution to inspect output and step telemetry.</div>
-          )}
-        </div>
-      </div>
+            </div>
+            <ExecutionStream executionId={selectedRun.id} />
+          </div>
+        ) : null}
+      </SideDrawer>
     </div>
   );
 }

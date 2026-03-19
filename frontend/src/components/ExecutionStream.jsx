@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { executionSocket } from "../api/socket";
-import api from "../api/client";
-import { getAlerts } from "../api/wazuh";
-import { formatWazuhTimestamp, nowUtcIso } from "../utils/time";
+import { getAlerts, getExecutionDetail, manualGateExecution } from "../api/wazuh";
+import RelativeTimestamp from "./RelativeTimestamp";
+import { nowUtcIso } from "../utils/time";
 import { buildHumanReadableOutput, normalizeOutputText } from "../utils/output";
 
 const UPDATE_ACTION_IDS = new Set([
@@ -14,6 +15,7 @@ const UPDATE_ACTION_IDS = new Set([
   "software-install-upgrade",
 ]);
 const SCAN_ACTION_IDS = new Set(["ioc-scan", "toc-scan", "yara-scan", "collect-forensics", "collect-memory", "malware-scan", "threat-hunt-persistence"]);
+const FLEET_TARGET_IDS = new Set(["all", "*", "fleet", "all-active"]);
 
 const resolveTargetStatus = (target, isUpdateAction) => {
   if (isUpdateAction) {
@@ -97,7 +99,6 @@ const normalizeEvidenceAlert = (alert) => {
     rule: rule.description || rule.id || alert.message || "Alert",
     level: rule.level ?? alert.level ?? "n/a",
     timestampRaw: tsRaw,
-    timestamp: formatWazuhTimestamp(tsRaw),
   };
 };
 
@@ -679,6 +680,101 @@ const resolveExecutionShellAndCommand = (actionId, argsValue) => {
 
 const normalizeCommandOutput = (value) => normalizeOutputText(value);
 
+const quoteShellArg = (value) => {
+  const text = String(value ?? "").trim();
+  if (!text) return "\"\"";
+  return /[\s"]/g.test(text) ? `"${text.replace(/"/g, '\\"')}"` : text;
+};
+
+const parseExecutionTargetScope = (rawValue) => {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return { targetMode: "fleet", targetValue: "", targetAgentIds: [] };
+  const lowered = raw.toLowerCase();
+  if (FLEET_TARGET_IDS.has(lowered)) {
+    return { targetMode: "fleet", targetValue: "", targetAgentIds: [] };
+  }
+  if (lowered.startsWith("multi:")) {
+    const ids = raw
+      .slice(raw.indexOf(":") + 1)
+      .split(",")
+      .map((item) => String(item || "").trim())
+      .filter(Boolean);
+    if (ids.length <= 1) {
+      return { targetMode: "agent", targetValue: ids[0] || "", targetAgentIds: ids };
+    }
+    return { targetMode: "multi", targetValue: "", targetAgentIds: ids };
+  }
+  if (lowered.startsWith("group:")) {
+    return {
+      targetMode: "group",
+      targetValue: raw.slice(raw.indexOf(":") + 1).trim(),
+      targetAgentIds: [],
+    };
+  }
+  return { targetMode: "agent", targetValue: raw, targetAgentIds: [] };
+};
+
+const derivePackageDebugCommand = (argsValue) => {
+  const parsed = parseExecutionArgs(argsValue);
+  const packageId = String(parsed?.package || parsed?.package_id || parsed?.id || "").trim();
+  const version = String(parsed?.version || "").trim();
+  const manager = String(parsed?.manager || "").trim().toLowerCase();
+
+  if (manager.includes("choco")) {
+    if (!packageId || packageId.toLowerCase() === "all") return "choco upgrade all -y";
+    return `choco upgrade ${quoteShellArg(packageId)} -y`;
+  }
+
+  if (!packageId || packageId.toLowerCase() === "all") {
+    return "winget upgrade --all";
+  }
+  if (version) {
+    return `winget install --id ${quoteShellArg(packageId)} --version ${quoteShellArg(version)} --exact --accept-package-agreements --accept-source-agreements`;
+  }
+  return `winget upgrade --id ${quoteShellArg(packageId)} --exact`;
+};
+
+const deriveShellDebugCommand = (execution, commandMeta) => {
+  const actionId = String(execution?.action || "").trim().toLowerCase();
+  if (commandMeta.command) {
+    return {
+      shell: commandMeta.shell === "CMD" ? "cmd" : "powershell",
+      command: commandMeta.command,
+      runAsSystem: false,
+    };
+  }
+  if (actionId === "package-update" || actionId === "software-install-upgrade") {
+    return {
+      shell: "powershell",
+      command: derivePackageDebugCommand(execution?.args),
+      runAsSystem: false,
+    };
+  }
+  if (actionId === "windows-os-update" || actionId === "patch-windows" || actionId === "fleet-software-update") {
+    return {
+      shell: "powershell",
+      command: "Get-WindowsUpdate -MicrosoftUpdate",
+      runAsSystem: true,
+    };
+  }
+  return null;
+};
+
+const buildShellPrefill = (execution, commandMeta, target = null) => {
+  const debug = deriveShellDebugCommand(execution, commandMeta);
+  if (!debug?.command) return null;
+  const scope = target?.agent_id
+    ? { targetMode: "agent", targetValue: target.agent_id, targetAgentIds: [] }
+    : parseExecutionTargetScope(execution?.agent || "");
+  return {
+    ...scope,
+    shell: debug.shell,
+    command: debug.command,
+    runAsSystem: Boolean(debug.runAsSystem),
+    justification: execution?.id ? `Copied from execution #${execution.id}` : "Copied from execution log",
+  };
+};
+
 const extractScanReportIssueFromContent = (content) => {
   if (!content || typeof content !== "object") return "";
   const format = String(content.format || "").trim().toLowerCase();
@@ -778,7 +874,7 @@ const extractTargetIssue = (target, { isUpdateAction, isScanAction }) => {
 };
 
 export default function ExecutionStream({ executionId }) {
-
+  const navigate = useNavigate();
   const [events, setEvents] = useState([]);
   const [targets, setTargets] = useState([]);
   const [selectedTargetId, setSelectedTargetId] = useState("");
@@ -801,7 +897,7 @@ export default function ExecutionStream({ executionId }) {
     setControlError("");
     setControlMessage("");
     autoStreamRef.current = null;
-    api.get(`/executions/${executionId}`)
+    getExecutionDetail(executionId)
       .then((res) => {
         const payload = res.data || {};
         const items = Array.isArray(payload.steps) ? payload.steps : [];
@@ -1043,6 +1139,14 @@ export default function ExecutionStream({ executionId }) {
     ),
     [selectedTarget?.stdout, selectedTarget?.stderr, selectedTarget?.status, selectedTarget?.ok]
   );
+  const executionShellPrefill = useMemo(
+    () => buildShellPrefill(execution, commandMeta),
+    [execution, commandMeta]
+  );
+  const selectedTargetShellPrefill = useMemo(
+    () => buildShellPrefill(execution, commandMeta, selectedTarget),
+    [execution, commandMeta, selectedTarget]
+  );
 
   const endpointIssues = useMemo(
     () => (targets || [])
@@ -1103,7 +1207,7 @@ export default function ExecutionStream({ executionId }) {
     setControlError("");
     setControlMessage("");
     try {
-      const res = await api.post(`/executions/${executionId}/control`, { command: normalized });
+      const res = await manualGateExecution(executionId, { command: normalized });
       const payload = res?.data || {};
       const nextStatus = String(payload.status || "").toUpperCase();
       if (nextStatus) {
@@ -1156,6 +1260,11 @@ export default function ExecutionStream({ executionId }) {
     }
   };
 
+  const openShellDebug = (prefill) => {
+    if (!prefill) return;
+    navigate("/global-shell", { state: { prefill } });
+  };
+
   return (
     <div className="card">
       <div className="card-header">
@@ -1168,6 +1277,11 @@ export default function ExecutionStream({ executionId }) {
           </p>
         </div>
         <div className="page-actions">
+          {executionShellPrefill ? (
+            <button className="btn secondary" onClick={() => openShellDebug(executionShellPrefill)}>
+              Copy To Shell
+            </button>
+          ) : null}
           <span className={`status-pill ${streamEnabled ? "success" : "neutral"}`}>
             {streamEnabled ? "Streaming On" : "Streaming Off"}
           </span>
@@ -1262,13 +1376,13 @@ export default function ExecutionStream({ executionId }) {
             {execution?.started_at ? (
               <div className="list-item split">
                 <span className="muted">Started</span>
-                <span>{formatWazuhTimestamp(execution.started_at)}</span>
+                <span><RelativeTimestamp value={execution.started_at} /></span>
               </div>
             ) : null}
             {execution?.finished_at ? (
               <div className="list-item split">
                 <span className="muted">Ended</span>
-                <span>{formatWazuhTimestamp(execution.finished_at)}</span>
+                <span><RelativeTimestamp value={execution.finished_at} /></span>
               </div>
             ) : null}
             {execution?.started_at && execution?.finished_at ? (
@@ -1573,7 +1687,7 @@ export default function ExecutionStream({ executionId }) {
 	                                  {a.level}
 	                                </span>
 	                              </td>
-	                              <td>{a.timestamp}</td>
+	                              <td><RelativeTimestamp value={a.timestampRaw} /></td>
 	                            </tr>
 	                          ))}
 	                        </tbody>
@@ -1584,6 +1698,13 @@ export default function ExecutionStream({ executionId }) {
 		              </div>
 		              <div className="list-item readable">
 		                <div className="muted">Clean Output (Human-readable)</div>
+		                {!selectedTarget?.ok && selectedTargetShellPrefill ? (
+		                  <div className="page-actions mt-8">
+		                    <button className="btn secondary" onClick={() => openShellDebug(selectedTargetShellPrefill)}>
+		                      Copy To Shell
+		                    </button>
+		                  </div>
+		                ) : null}
 		                <pre className="code-block">{selectedTargetCleanOutput || "-"}</pre>
 		                <div className="muted mt-10">Raw Output</div>
 		                <div className="muted">stdout</div>
@@ -1612,15 +1733,22 @@ export default function ExecutionStream({ executionId }) {
                 <div key={`${executionId}-${e.step}-${i}`} className="list-item readable">
                   <div className="page-actions justify-between">
                     <strong>{e.step || "-"}</strong>
-                    <span className={`status-pill ${String(e.status).toUpperCase() === "SUCCESS" ? "success" : String(e.status).toUpperCase() === "FAILED" ? "failed" : "pending"}`}>
-                      {e.status || "-"}
-                    </span>
+                    <div className="page-actions">
+                      {["FAILED", "ERROR", "KILLED", "CANCELLED"].includes(String(e.status).toUpperCase()) && executionShellPrefill ? (
+                        <button className="btn secondary" onClick={() => openShellDebug(executionShellPrefill)}>
+                          Copy To Shell
+                        </button>
+                      ) : null}
+                      <span className={`status-pill ${executionStatusTone(e.status)}`}>
+                        {e.status || "-"}
+                      </span>
+                    </div>
                   </div>
                   {e.stdout ? (
-                    <pre className="code-block mt-10">{String(e.stdout)}</pre>
+                    <pre className="code-block mt-10">{normalizeCommandOutput(e.stdout)}</pre>
                   ) : null}
                   {e.stderr ? (
-                    <pre className="code-block mt-10">{String(e.stderr)}</pre>
+                    <pre className="code-block mt-10">{normalizeCommandOutput(e.stderr)}</pre>
                   ) : null}
                 </div>
               ))}

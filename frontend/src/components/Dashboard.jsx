@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api/client";
-import { getAlerts, getIntegrationStatus } from "../api/wazuh";
+import { getAlerts, getApprovalExecutions, getCases, getIntegrationStatus, getPendingApprovals } from "../api/wazuh";
 import { alertSocket } from "../api/socket";
 import { APP_TIMEZONE_LABEL, formatWazuhTimestamp, nowUtcIso, parseWazuhTimestamp } from "../utils/time";
+import RelativeTimestamp from "./RelativeTimestamp";
 
 const normalizeAlerts = (data) => {
   let items = [];
@@ -128,7 +129,7 @@ const executionTone = (status) => {
   const key = String(status || "").toUpperCase();
   if (key === "SUCCESS") return "success";
   if (["FAILED", "ERROR", "KILLED"].includes(key)) return "failed";
-  if (["RUNNING", "PAUSED", "CANCELLED", "PENDING", "QUEUED"].includes(key)) return "pending";
+  if (["RUNNING", "PAUSED", "CANCELLED", "PENDING", "PENDING_VERIFICATION", "QUEUED"].includes(key)) return "pending";
   return "neutral";
 };
 
@@ -227,7 +228,7 @@ export default function Dashboard() {
     if (!silent) {
       setQueueLoading(true);
     }
-    Promise.all([getAlerts("", 12), api.get("/cases"), api.get("/approvals/pending"), api.get("/approvals/executions")])
+    Promise.all([getAlerts("", 12), getCases(), getPendingApprovals(), getApprovalExecutions()])
       .then(([alertsRes, casesRes, approvalsRes, executionsRes]) => {
         setRecentAlerts(normalizeAlerts(alertsRes.data).sort(byNewestAlert).slice(0, 12));
         setRecentCases((casesRes.data || []).slice(0, 10));
@@ -305,7 +306,7 @@ export default function Dashboard() {
   const runningCount = useMemo(
     () =>
       parsedExecutions.filter((row) =>
-        ["RUNNING", "PAUSED", "PENDING", "QUEUED"].includes(String(row.status || "").toUpperCase())
+        ["RUNNING", "PAUSED", "PENDING", "PENDING_VERIFICATION", "QUEUED"].includes(String(row.status || "").toUpperCase())
       ).length,
     [parsedExecutions]
   );
@@ -322,7 +323,7 @@ export default function Dashboard() {
         <div>
           <h2>Operations Command Board</h2>
           <p className="muted">
-            Active SOC picture for triage, approvals, and response. Last sync {formatWazuhTimestamp(lastRefreshAt)} (
+            Active SOC picture for triage, approvals, and response. Last sync <RelativeTimestamp value={lastRefreshAt} /> (
             {APP_TIMEZONE_LABEL}).
           </p>
         </div>
@@ -379,8 +380,8 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="split-view">
-        <div className="card">
+      <div className="dashboard-masonry">
+        <div className="card dashboard-span-7">
           <div className="card-header">
             <div>
               <h3>Alert Triage Queue</h3>
@@ -415,7 +416,7 @@ export default function Dashboard() {
                       <td>
                         <span className={`status-pill ${severityClass(alert.level)}`}>{alert.level}</span>
                       </td>
-                      <td>{formatWazuhTimestamp(alert.timestampRaw)}</td>
+                      <td><RelativeTimestamp value={alert.timestampRaw} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -424,7 +425,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        <div className="panel-stack">
+        <div className="panel-stack dashboard-span-5">
           <div className="card">
             <div className="card-header">
               <div>
@@ -460,7 +461,7 @@ export default function Dashboard() {
                         <td>
                           {item.approved}/{item.required}
                         </td>
-                        <td>{formatWazuhTimestamp(item.createdAt)}</td>
+                        <td><RelativeTimestamp value={item.createdAt} /></td>
                       </tr>
                     ))}
                   </tbody>
@@ -504,7 +505,7 @@ export default function Dashboard() {
                         <td>
                           <span className={`status-pill ${executionTone(item.status)}`}>{item.status}</span>
                         </td>
-                        <td>{formatWazuhTimestamp(item.startedAt)}</td>
+                        <td><RelativeTimestamp value={item.startedAt} /></td>
                       </tr>
                     ))}
                   </tbody>
@@ -515,8 +516,8 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid-2">
-        <div className="card">
+      <div className="dashboard-masonry mt-18">
+        <div className="card dashboard-span-7">
           <div className="card-header">
             <div>
               <h3>Threat Landscape</h3>
@@ -561,7 +562,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="card">
+        <div className="card dashboard-span-5">
           <div className="card-header">
             <div>
               <h3>Live Telemetry Stream</h3>
@@ -593,46 +594,48 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <h3>Integration & Governance Health</h3>
-            <p className="muted">Core pipeline status and governance workflow handoff.</p>
-          </div>
-          <div className="page-actions">
-            <button className="btn secondary" onClick={() => navigate("/audit")}>
-              Audit Log
-            </button>
-            <button className="btn secondary" onClick={() => navigate("/changes")}>
-              Change Control
-            </button>
-            <button className="btn" onClick={() => navigate("/cases")}>
-              Case Desk
-            </button>
-          </div>
-        </div>
-        <div className="grid-3">
-          <div className="list-item readable">
-            <div className="muted">Wazuh Manager</div>
-            <div className={`status-pill ${integration.wazuh_manager.ok ? "success" : "failed"}`}>
-              {integration.wazuh_manager.ok ? "Connected" : "Offline"}
+      <div className="dashboard-masonry mt-18">
+        <div className="card dashboard-span-12">
+          <div className="card-header">
+            <div>
+              <h3>Integration & Governance Health</h3>
+              <p className="muted">Core pipeline status and governance workflow handoff.</p>
             </div>
-            {integration.wazuh_manager.source ? <div className="meta-line">Check: {integration.wazuh_manager.source}</div> : null}
-            {managerError ? <div className="meta-line">Error: {managerError}</div> : null}
-          </div>
-          <div className="list-item readable">
-            <div className="muted">Indexer</div>
-            <div className={`status-pill ${integration.indexer.ok ? "success" : "failed"}`}>
-              {integration.indexer.ok ? integration.indexer.status || "Connected" : "Offline"}
+            <div className="page-actions">
+              <button className="btn secondary" onClick={() => navigate("/audit")}>
+                Audit Log
+              </button>
+              <button className="btn secondary" onClick={() => navigate("/changes")}>
+                Change Control
+              </button>
+              <button className="btn" onClick={() => navigate("/cases")}>
+                Case Desk
+              </button>
             </div>
-            {integration.indexer.cluster ? <div className="meta-line">Cluster: {integration.indexer.cluster}</div> : null}
-            {indexerError ? <div className="meta-line">Error: {indexerError}</div> : null}
           </div>
-          <div className="list-item readable">
-            <div className="muted">Workflow Totals</div>
-            <div className="meta-line">Scheduled playbooks: {summary.scheduled_enabled}/{summary.scheduled_total}</div>
-            <div className="meta-line">Recent case entries: {parsedCases.length}</div>
-            <div className="meta-line">Approvals pending: {summary.approvals_pending}</div>
+          <div className="grid-3">
+            <div className="list-item readable">
+              <div className="muted">Wazuh Manager</div>
+              <div className={`status-pill ${integration.wazuh_manager.ok ? "success" : "failed"}`}>
+                {integration.wazuh_manager.ok ? "Connected" : "Offline"}
+              </div>
+              {integration.wazuh_manager.source ? <div className="meta-line">Check: {integration.wazuh_manager.source}</div> : null}
+              {managerError ? <div className="meta-line">Error: {managerError}</div> : null}
+            </div>
+            <div className="list-item readable">
+              <div className="muted">Indexer</div>
+              <div className={`status-pill ${integration.indexer.ok ? "success" : "failed"}`}>
+                {integration.indexer.ok ? integration.indexer.status || "Connected" : "Offline"}
+              </div>
+              {integration.indexer.cluster ? <div className="meta-line">Cluster: {integration.indexer.cluster}</div> : null}
+              {indexerError ? <div className="meta-line">Error: {indexerError}</div> : null}
+            </div>
+            <div className="list-item readable">
+              <div className="muted">Workflow Totals</div>
+              <div className="meta-line">Scheduled playbooks: {summary.scheduled_enabled}/{summary.scheduled_total}</div>
+              <div className="meta-line">Recent case entries: {parsedCases.length}</div>
+              <div className="meta-line">Approvals pending: {summary.approvals_pending}</div>
+            </div>
           </div>
         </div>
       </div>

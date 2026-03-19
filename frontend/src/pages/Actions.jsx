@@ -67,6 +67,20 @@ const SPECIFIC_SOFTWARE_ACTION_ID = "software-install-upgrade";
 const CUSTOM_OS_COMMAND_ACTION_ID = "custom-os-command";
 const MULTILINE_INPUT_FIELDS = new Set(["command", "custom_command", "script"]);
 const WINGET_BACKED_ACTION_IDS = new Set([PACKAGE_UPDATE_ACTION_ID, SPECIFIC_SOFTWARE_ACTION_ID]);
+const PACKAGE_ID_EXAMPLES = [
+  { id: "Microsoft.Edge", label: "Microsoft Edge" },
+  { id: "Google.Chrome", label: "Google Chrome" },
+  { id: "Mozilla.Firefox", label: "Mozilla Firefox" },
+  { id: "Notepad++.Notepad++", label: "Notepad++" },
+  { id: "7zip.7zip", label: "7-Zip" },
+  { id: "Git.Git", label: "Git" },
+];
+const ACTION_SEARCH_PRIORITY = [
+  PACKAGE_UPDATE_ACTION_ID,
+  SPECIFIC_SOFTWARE_ACTION_ID,
+  "endpoint-healthcheck",
+  CUSTOM_OS_COMMAND_ACTION_ID,
+];
 
 export default function Actions() {
   const [actions, setActions] = useState([]);
@@ -92,6 +106,8 @@ export default function Actions() {
   const [isActionRunning, setIsActionRunning] = useState(false);
   const [matrixLoading, setMatrixLoading] = useState(false);
   const [matrixRows, setMatrixRows] = useState([]);
+  const [nativePanelExpanded, setNativePanelExpanded] = useState(true);
+  const [guideExpanded, setGuideExpanded] = useState(true);
 
   const selectedAction = useMemo(
     () => actions.find((a) => a.id === actionId) || null,
@@ -99,6 +115,18 @@ export default function Actions() {
   );
   const selectedActionIdLower = String(selectedAction?.id || "").trim().toLowerCase();
   const showNativePackagePanel = !selectedActionIdLower || WINGET_BACKED_ACTION_IDS.has(selectedActionIdLower);
+
+  useEffect(() => {
+    if (showNativePackagePanel) {
+      setNativePanelExpanded(true);
+    }
+  }, [showNativePackagePanel]);
+
+  useEffect(() => {
+    if (selectedAction?.docs) {
+      setGuideExpanded(true);
+    }
+  }, [selectedAction]);
 
   const loadActions = useCallback(async () => {
     setActionsLoading(true);
@@ -165,6 +193,28 @@ export default function Actions() {
       return label.includes(q) || id.includes(q) || cat.includes(q);
     });
   }, [actions, actionSearch]);
+
+  const actionSearchSuggestions = useMemo(() => {
+    const q = actionSearch.trim().toLowerCase();
+    const preferred = ACTION_SEARCH_PRIORITY
+      .map((id) => actions.find((action) => action?.id === id))
+      .filter(Boolean);
+    const pool = q ? filteredActions : preferred.length ? preferred : filteredActions;
+    return pool.slice(0, 5);
+  }, [actions, actionSearch, filteredActions]);
+
+  const packageInputValue = useMemo(
+    () => String(actionInputs.package || actionInputs.package_id || "").trim(),
+    [actionInputs]
+  );
+
+  const packageSuggestions = useMemo(() => {
+    const query = packageInputValue.toLowerCase();
+    const matches = PACKAGE_ID_EXAMPLES.filter((item) =>
+      !query || item.id.toLowerCase().includes(query) || item.label.toLowerCase().includes(query)
+    );
+    return matches.slice(0, 5);
+  }, [packageInputValue]);
 
   const targetPickList = useMemo(() => {
     const q = targetSearch.trim().toLowerCase();
@@ -455,6 +505,31 @@ export default function Actions() {
               placeholder="Search actions"
             />
           </div>
+          {actionSearchSuggestions.length ? (
+            <div className="page-actions mt-8">
+              {actionSearchSuggestions.map((action) => (
+                <button
+                  key={`suggest-${action.id}`}
+                  type="button"
+                  className="btn secondary"
+                  onClick={() => {
+                    if (WINGET_BACKED_ACTION_IDS.has(String(action.id || "").trim().toLowerCase())) {
+                      selectWingetQuickAction(action.id);
+                    } else {
+                      setActionId(action.id);
+                      setActionValidation(null);
+                    }
+                    setActionSearch(String(action.label || action.id || ""));
+                  }}
+                >
+                  {toDisplay(action.label || action.id)}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="meta-line mt-6">
+            Search suggestions surface common response paths and exact action IDs to reduce catalog guesswork.
+          </div>
           {actionsLoading ? (
             <div className="empty-state">Loading actions...</div>
           ) : filteredActions.length === 0 ? (
@@ -497,26 +572,40 @@ export default function Actions() {
 	                  <h3>Native Package Path</h3>
 	                  <p className="muted">Use package actions instead of manual shell scripts for installs and upgrades.</p>
 	                </div>
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={() => setNativePanelExpanded((prev) => !prev)}
+                  >
+                    {nativePanelExpanded ? "Collapse" : "Expand"}
+                  </button>
 	              </div>
-	              <div className="empty-state">
-	                Windows targets map to winget-backed remediation. If winget is missing, the backend attempts App Installer / WinGet bootstrap before retrying the package action.
-	              </div>
-	              <div className="page-actions mt-10">
-	                <button
-	                  className="btn secondary"
-	                  type="button"
-	                  onClick={() => selectWingetQuickAction(PACKAGE_UPDATE_ACTION_ID)}
-	                >
-	                  Upgrade Installed Packages
-	                </button>
-	                <button
-	                  className="btn secondary"
-	                  type="button"
-	                  onClick={() => selectWingetQuickAction(SPECIFIC_SOFTWARE_ACTION_ID)}
-	                >
-	                  Install / Upgrade Specific Package
-	                </button>
-	              </div>
+                {nativePanelExpanded ? (
+	                <>
+	                  <div className="empty-state">
+	                    Windows targets map to winget-backed remediation. If winget is missing, the backend attempts App Installer / WinGet bootstrap before retrying the package action.
+	                  </div>
+	                  <div className="page-actions mt-10">
+	                    <button
+	                      className="btn secondary"
+	                      type="button"
+	                      onClick={() => selectWingetQuickAction(PACKAGE_UPDATE_ACTION_ID)}
+	                    >
+	                      Upgrade Installed Packages
+	                    </button>
+	                    <button
+	                      className="btn secondary"
+	                      type="button"
+	                      onClick={() => selectWingetQuickAction(SPECIFIC_SOFTWARE_ACTION_ID)}
+	                    >
+	                      Install / Upgrade Specific Package
+	                    </button>
+	                  </div>
+                    <div className="meta-line mt-8">
+                      Preferred syntax: use exact winget IDs such as `Publisher.Product`. Use `all` only when targeting bulk upgrade actions.
+                    </div>
+                  </>
+                ) : null}
 	            </div>
 	          ) : null}
 
@@ -678,7 +767,7 @@ export default function Actions() {
 	                        Emergency fallback. This runs exactly what you type on endpoints; validate command safety before execution.
 	                      </div>
 	                    ) : null}
-	                    <div className="page-actions mt-8">
+                    <div className="page-actions mt-8">
 	                      <span className="chip">{toDisplay(selectedAction.category || "response")}</span>
                       <span className={`status-pill ${riskClass(selectedAction.risk)}`}>
                         {toDisplay(selectedAction.risk || "n/a")}
@@ -689,39 +778,52 @@ export default function Actions() {
                     </div>
                     {selectedAction.docs && typeof selectedAction.docs === "object" ? (
 	                      <div className="mt-10">
-	                        <div className="muted">Action Guide</div>
-	                        {selectedAction.docs.what_it_does ? (
-	                          <div className="mt-6">
-	                            <strong>What it does:</strong> {String(selectedAction.docs.what_it_does)}
-	                          </div>
-	                        ) : null}
-	                        {selectedAction.docs.when_to_use ? (
-	                          <div className="mt-6">
-	                            <strong>When to use:</strong> {String(selectedAction.docs.when_to_use)}
-	                          </div>
-	                        ) : null}
-	                        {selectedAction.docs.impact ? (
-	                          <div className="mt-6">
-	                            <strong>Impact:</strong> {String(selectedAction.docs.impact)}
-	                          </div>
-	                        ) : null}
-	                        {selectedAction.docs.rollback ? (
-	                          <div className="mt-6">
-	                            <strong>Rollback:</strong> {String(selectedAction.docs.rollback)}
-	                          </div>
-	                        ) : null}
-	                        {selectedAction.docs.requirements ? (
-	                          <div className="mt-6">
-	                            <strong>Requirements:</strong> {String(selectedAction.docs.requirements)}
-	                          </div>
-	                        ) : null}
-	                        {selectedAction.docs.examples ? (
-	                          <div className="mt-6">
-	                            <strong>Examples:</strong> {String(selectedAction.docs.examples)}
-	                          </div>
-	                        ) : null}
-                      </div>
-                    ) : null}
+	                        <div className="page-actions justify-between">
+                            <div className="muted">Action Guide</div>
+                            <button
+                              className="btn secondary"
+                              type="button"
+                              onClick={() => setGuideExpanded((prev) => !prev)}
+                            >
+                              {guideExpanded ? "Collapse" : "Expand"}
+                            </button>
+                          </div>
+                          {guideExpanded ? (
+                            <>
+	                          {selectedAction.docs.what_it_does ? (
+	                            <div className="mt-6">
+	                              <strong>What it does:</strong> {String(selectedAction.docs.what_it_does)}
+	                            </div>
+	                          ) : null}
+	                          {selectedAction.docs.when_to_use ? (
+	                            <div className="mt-6">
+	                              <strong>When to use:</strong> {String(selectedAction.docs.when_to_use)}
+	                            </div>
+	                          ) : null}
+	                          {selectedAction.docs.impact ? (
+	                            <div className="mt-6">
+	                              <strong>Impact:</strong> {String(selectedAction.docs.impact)}
+	                            </div>
+	                          ) : null}
+	                          {selectedAction.docs.rollback ? (
+	                            <div className="mt-6">
+	                              <strong>Rollback:</strong> {String(selectedAction.docs.rollback)}
+	                            </div>
+	                          ) : null}
+	                          {selectedAction.docs.requirements ? (
+	                            <div className="mt-6">
+	                              <strong>Requirements:</strong> {String(selectedAction.docs.requirements)}
+	                            </div>
+	                          ) : null}
+	                          {selectedAction.docs.examples ? (
+	                            <div className="mt-6">
+	                              <strong>Examples:</strong> {String(selectedAction.docs.examples)}
+	                            </div>
+	                          ) : null}
+                            </>
+                          ) : null}
+	                      </div>
+	                    ) : null}
                   </>
                 ) : (
 	                  <div className="meta-line mt-6">
@@ -750,19 +852,55 @@ export default function Actions() {
 	                    <input
 	                      className="input mt-8"
 	                      value={actionInputs[field.name] || ""}
-                      onChange={(e) =>
-                        setActionInputs((prev) => ({
-                          ...prev,
-                          [field.name]: e.target.value,
+                      list={
+                        WINGET_BACKED_ACTION_IDS.has(selectedActionIdLower) && String(field.name || "").trim().toLowerCase() === "package"
+                          ? "wingetPackageSuggestions"
+                          : undefined
+                      }
+	                      onChange={(e) =>
+	                        setActionInputs((prev) => ({
+	                          ...prev,
+	                          [field.name]: e.target.value,
                         }))
                       }
 	                      placeholder={field.placeholder || ""}
 	                    />
 	                  )}
 	                  {WINGET_BACKED_ACTION_IDS.has(selectedActionIdLower) && String(field.name || "").trim().toLowerCase() === "package" ? (
+                      <>
+                        <datalist id="wingetPackageSuggestions">
+                          {PACKAGE_ID_EXAMPLES.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </datalist>
 	                    <div className="meta-line ws-normal mt-6">
-	                      Prefer the winget ID on Windows, for example `Notepad++.Notepad++`. Friendly names may work, but IDs are more reliable.
+	                      Prefer the exact winget ID on Windows, for example `Notepad++.Notepad++`. Friendly names may work, but IDs are more reliable.
 	                    </div>
+                        <div className="meta-line ws-normal mt-6">
+                          Syntax hints: `Publisher.Product` for exact package IDs, or `all` for the bulk package-update action.
+                        </div>
+                        {packageSuggestions.length ? (
+                          <div className="page-actions mt-8">
+                            {packageSuggestions.map((item) => (
+                              <button
+                                key={`pkg-${item.id}`}
+                                type="button"
+                                className="btn secondary"
+                                onClick={() =>
+                                  setActionInputs((prev) => ({
+                                    ...prev,
+                                    [field.name]: item.id,
+                                  }))
+                                }
+                              >
+                                {item.id}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </>
 	                  ) : null}
 	                </div>
 	              ))}

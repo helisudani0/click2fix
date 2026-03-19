@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api/client";
-import { getAlerts, getApprovalExecutions, getCases, getIntegrationStatus, getPendingApprovals } from "../api/wazuh";
+import { getAlerts, getIntegrationStatus } from "../api/wazuh";
 import { alertSocket } from "../api/socket";
 import { APP_TIMEZONE_LABEL, formatWazuhTimestamp, nowUtcIso, parseWazuhTimestamp } from "../utils/time";
 import RelativeTimestamp from "./RelativeTimestamp";
@@ -44,6 +44,14 @@ const byNewestAlert = (left, right) => {
   const l = parseWazuhTimestamp(left?.timestampRaw)?.getTime() || 0;
   const r = parseWazuhTimestamp(right?.timestampRaw)?.getTime() || 0;
   return r - l;
+};
+
+const normalizeQueueItems = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.data?.items)) return payload.data.items;
+  return [];
 };
 
 const formatEvent = (event) => {
@@ -186,7 +194,7 @@ export default function Dashboard() {
       .get("/dashboard/summary")
       .then((r) => {
         setSummary(r.data);
-        setStats(r.data.mitre_heatmap || []);
+        setStats(Array.isArray(r.data?.mitre_heatmap) ? r.data.mitre_heatmap : []);
         setLastRefreshAt(nowUtcIso());
       })
       .catch(() => {
@@ -228,12 +236,17 @@ export default function Dashboard() {
     if (!silent) {
       setQueueLoading(true);
     }
-    Promise.all([getAlerts("", 12), getCases(), getPendingApprovals(), getApprovalExecutions()])
+    Promise.all([
+      getAlerts("", 12),
+      api.get("/cases"),
+      api.get("/approvals/pending"),
+      api.get("/approvals/executions"),
+    ])
       .then(([alertsRes, casesRes, approvalsRes, executionsRes]) => {
         setRecentAlerts(normalizeAlerts(alertsRes.data).sort(byNewestAlert).slice(0, 12));
-        setRecentCases((casesRes.data || []).slice(0, 10));
-        setPendingApprovals((approvalsRes.data || []).slice(0, 10));
-        setRecentExecutions((executionsRes.data || []).slice(0, 12));
+        setRecentCases(normalizeQueueItems(casesRes.data).slice(0, 10));
+        setPendingApprovals(normalizeQueueItems(approvalsRes.data).slice(0, 10));
+        setRecentExecutions(normalizeQueueItems(executionsRes.data).slice(0, 12));
       })
       .catch(() => {
         setRecentAlerts([]);
@@ -256,15 +269,16 @@ export default function Dashboard() {
   const parsedCases = useMemo(() => recentCases.map((row) => caseRow(row)), [recentCases]);
   const parsedExecutions = useMemo(() => recentExecutions.map((row) => executionRow(row)), [recentExecutions]);
 
-  const totalTactics = stats.length;
-  const totalAlerts = stats.reduce((acc, row) => acc + Number(row[1] || 0), 0);
+  const safeStats = Array.isArray(stats) ? stats : [];
+  const totalTactics = safeStats.length;
+  const totalAlerts = safeStats.reduce((acc, row) => acc + Number(row?.[1] || 0), 0);
   const managerError = integration.wazuh_manager?.error;
   const indexerError = integration.indexer?.error;
 
   const mitreRows = useMemo(() => {
-    if (!stats.length) return [];
-    return [...stats].sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0)).slice(0, 10);
-  }, [stats]);
+    if (!safeStats.length) return [];
+    return [...safeStats].sort((a, b) => Number(b?.[1] || 0) - Number(a?.[1] || 0)).slice(0, 10);
+  }, [safeStats]);
 
   const mitreBarRows = useMemo(() => {
     if (!mitreRows.length) return [];

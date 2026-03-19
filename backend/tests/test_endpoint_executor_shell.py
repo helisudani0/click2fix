@@ -8,7 +8,12 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from core.endpoint_executor import EndpointExecutor  # noqa: E402
+from core.action_execution import _requires_endpoint_transport  # noqa: E402
+from core.endpoint_executor import (  # noqa: E402
+    EndpointExecutor,
+    _ps_encoded_command,
+    _ps_encoded_command_args,
+)
 
 
 def _executor() -> EndpointExecutor:
@@ -57,6 +62,33 @@ def test_custom_os_command_script_executes_uploaded_file_directly():
     assert "ScriptBlock]::Create($CommandText)" not in script
 
 
+def test_windows_custom_command_normalization_unwraps_powershell_command():
+    wrapped_command = 'powershell.exe -Command "Invoke-WebRequest -Uri https://example.com/pkg.msi -OutFile $env:TEMP\\\\pkg.msi"'
+
+    normalized = EndpointExecutor._normalize_windows_custom_command(wrapped_command)
+
+    assert normalized == "Invoke-WebRequest -Uri https://example.com/pkg.msi -OutFile $env:TEMP\\\\pkg.msi"
+
+
+def test_windows_custom_command_normalization_decodes_encoded_powershell_wrapper():
+    inner = "Invoke-WebRequest -Uri https://example.com/pkg.msi -OutFile $env:TEMP\\pkg.msi"
+    wrapped_command = "powershell.exe " + " ".join(_ps_encoded_command_args(inner))
+
+    normalized = EndpointExecutor._normalize_windows_custom_command(wrapped_command)
+
+    assert normalized == inner
+
+
+def test_powershell_transport_uses_explicit_encoded_command():
+    command = "Write-Output 'transport-ok'"
+
+    args = _ps_encoded_command_args(command)
+
+    assert args[:4] == ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"]
+    assert args[4] == "-EncodedCommand"
+    assert _ps_encoded_command(command) == args[5]
+
+
 def test_package_update_script_contains_winget_bootstrap_path():
     executor = _executor()
 
@@ -69,3 +101,10 @@ def test_package_update_script_contains_winget_bootstrap_path():
     assert "post_verify_present_after_unknown_before" in script
     assert "afterInstalledDetected = (($afterRows -and $afterRows.Count -gt 0) -or $afterArpPresent)" in script
     assert "if (Test-C2FNoiseLine $lineNorm) { continue }" in script
+    assert "$skippedNoChange++" in script
+
+
+def test_global_shell_requires_endpoint_transport():
+    assert _requires_endpoint_transport("global-shell", {"action_command": "custom-os-command"}) is True
+    assert _requires_endpoint_transport("custom-os-command", {"action_command": "custom-os-command"}) is True
+    assert _requires_endpoint_transport("firewall-drop", {"action_command": "firewall-drop"}) is False

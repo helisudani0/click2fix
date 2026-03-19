@@ -71,6 +71,23 @@ def _sh_quote(value: str) -> str:
     return shlex.quote(str(value))
 
 
+def _ps_encoded_command(value: str) -> str:
+    payload = str(value or "")
+    return base64.b64encode(payload.encode("utf-16-le")).decode("ascii")
+
+
+def _ps_encoded_command_args(value: str, *, include_bypass: bool = True) -> List[str]:
+    args = ["-NoProfile", "-NonInteractive"]
+    if include_bypass:
+        args.extend(["-ExecutionPolicy", "Bypass"])
+    args.extend(["-EncodedCommand", _ps_encoded_command(value)])
+    return args
+
+
+def _ps_encoded_command_text(value: str, *, include_bypass: bool = True) -> str:
+    return " ".join(_ps_encoded_command_args(value, include_bypass=include_bypass))
+
+
 def _to_int(value: Any, default: int = 0) -> int:
     try:
         return int(value)
@@ -669,7 +686,7 @@ class EndpointExecutor:
 	  [string]$LogFile = "C:\Click2Fix\logs\executions.log",
 	  [string]$PackageSpec = "all",
 	  [string]$Version = "",
-	  [int]$MaxRuntimeSeconds = 1800
+	  [int]$MaxRuntimeSeconds = 3600
 	)
 
 	$ErrorActionPreference = "Stop"
@@ -2073,13 +2090,14 @@ class EndpointExecutor:
 				    exit 0
 				  }
 
-					  $perPackageTimeoutSeconds = 300
+					  $perPackageTimeoutSeconds = 900
 					  if ($allMode) {
-					    $perPackageTimeoutSeconds = 180
+					    $perPackageTimeoutSeconds = 420
 					  }
 				  if ($Version -and $Version -ne "") {
-				    $perPackageTimeoutSeconds = [Math]::Max($perPackageTimeoutSeconds, 480)
+				    $perPackageTimeoutSeconds = [Math]::Max($perPackageTimeoutSeconds, 1200)
 				  }
+				  $perPackageTimeoutSeconds = [Math]::Min($perPackageTimeoutSeconds, [Math]::Max(120, [int]$MaxRuntimeSeconds))
 
 		  foreach ($pkgId in $targets) {
 		    Assert-C2FWithinBudget
@@ -2348,11 +2366,12 @@ class EndpointExecutor:
 				            $finalized = $true
 				            break
 				          }
-				          $skipped++
-				          $noChangeHits++
-				          C2F-Evidence ("skipped_update_" + $idx + "=" + $lookupId + "|" + $disp + "|reason=no_applicable_update")
-				          $finalized = $true
-				          break
+					          $skipped++
+					          $noChangeHits++
+					          $skippedNoChange++
+					          C2F-Evidence ("skipped_update_" + $idx + "=" + $lookupId + "|" + $disp + "|reason=no_applicable_update")
+					          $finalized = $true
+					          break
 				        }
 				        if ($pending -eq $false) {
 					          $afterRows = @()
@@ -5965,26 +5984,39 @@ catch {
         raw = str(value or "").strip()
         if not raw:
             return ""
+        normalized = raw.replace("\r\n", "\n").replace("\r", "\n")
+        return cls._unwrap_windows_powershell_invocation(normalized)
 
-        # Convert "powershell ... -EncodedCommand <base64>" wrappers to raw script text.
-        enc_match = re.search(r"(?is)-(?:encodedcommand|enc)\s+([A-Za-z0-9+/=]+)", raw)
-        if enc_match:
-            try:
-                decoded = base64.b64decode(enc_match.group(1))
-                script = decoded.decode("utf-16-le", errors="replace").strip()
-                if script:
-                    return script
-            except Exception:
-                pass
+    @classmethod
+    def _unwrap_windows_powershell_invocation(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        match = re.match(r"(?is)^\s*(?:powershell|pwsh)(?:\.exe)?\b(?P<rest>.*)$", text)
+        if not match:
+            return text
+        rest = str(match.group("rest") or "").strip()
+        if not rest:
+            return text
 
-        # Convert "powershell ... -Command <script>" wrappers to raw script text.
-        cmd_match = re.search(r"(?is)\b(?:powershell|pwsh)(?:\.exe)?\b.*?-command\s+(.+)$", raw)
-        if cmd_match:
-            payload = cls._strip_wrapping_quotes(cmd_match.group(1)).strip()
+        encoded_match = re.search(r"(?is)(?:^|\s)-(?:encodedcommand|enc)\s+(?P<payload>\"[^\"]*\"|'[^']*'|\S+)", rest)
+        if encoded_match:
+            payload = cls._strip_wrapping_quotes(encoded_match.group("payload"))
             if payload:
-                return payload
+                try:
+                    decoded = base64.b64decode(payload).decode("utf-16-le").strip()
+                except Exception:
+                    decoded = ""
+                if decoded:
+                    return decoded.replace("\r\n", "\n").replace("\r", "\n")
 
-        return raw
+        command_match = re.search(r"(?is)(?:^|\s)-(?:command|c)\s+(?P<payload>.+)$", rest)
+        if not command_match:
+            return text
+        payload = cls._strip_wrapping_quotes(command_match.group("payload"))
+        if not payload:
+            return text
+        return payload.replace("\r\n", "\n").replace("\r", "\n")
 
     @staticmethod
     def _build_windows_kb_fallback_command(kb: str) -> str:
@@ -6238,11 +6270,13 @@ catch {
 
         # schtasks.exe /TR has a hard length limit (~261 chars). Keep it short and let the
         # script derive default log/result paths from ExecId.
-        tr = (
-            "powershell.exe -NoProfile -ExecutionPolicy Bypass "
-            f'-File "{script_path}" '
-            f"-ExecId {exec_tag} -AgentId {agent_id} -ActionId {effective_action_id}"
+        launch_script = (
+            f"& {_ps_quote(script_path)} "
+            f"-ExecId {_ps_quote(exec_tag)} "
+            f"-AgentId {_ps_quote(agent_id)} "
+            f"-ActionId {_ps_quote(effective_action_id)}"
         )
+        tr = _ps_encoded_command_text(launch_script)
 
         start_script = (
             "$ErrorActionPreference='Stop';"
@@ -6452,7 +6486,7 @@ catch {
             "package-update": {
                 "PackageSpec": "all",
                 "Version": "",
-                "MaxRuntimeSeconds": 1800,
+                "MaxRuntimeSeconds": 3600,
             },
             "malware-scan": {
                 "Scope": "quick",
@@ -6532,23 +6566,8 @@ catch {
             if not run_as_system:
                 return _run_direct_script()
 
-        tr = (
-            "-NoProfile -ExecutionPolicy Bypass "
-            f'-File "{script_path}" '
-            + " ".join(param_tokens)
-        )
-        if action_id == "package-update":
-            package_spec = str((script_args or {}).get("PackageSpec") or "all")
-            has_space_sensitive_arg = any(ch.isspace() for ch in package_spec.strip()) or ('"' in package_spec)
-            if len(tr) >= 250 or has_space_sensitive_arg:
-                version = str((script_args or {}).get("Version") or "")
-                direct_script = self._build_windows_script(
-                    action_id,
-                    [package_spec, version],
-                    context=context,
-                    target=target,
-                )
-                return self._run_winrm(target, direct_script, timeout_seconds=timeout_seconds)
+        launch_script = f"& {_ps_quote(script_path)} {_build_invoke_tokens()}".strip()
+        tr = _ps_encoded_command_text(launch_script)
 
         start_script = (
             "$ErrorActionPreference='Stop';"
@@ -7091,6 +7110,8 @@ catch {
         attempt_errors: List[str] = []
         last_exc: Exception | None = None
 
+        ps_args = _ps_encoded_command_args(script)
+
         for scheme, port in deduped:
             endpoint = f"{scheme}://{ip}:{port}/wsman"
             session_kwargs = dict(base_session_kwargs)
@@ -7102,7 +7123,7 @@ catch {
                     session_kwargs.pop("operation_timeout_sec", None)
                     session_kwargs.pop("read_timeout_sec", None)
                     session = winrm.Session(endpoint, **session_kwargs)
-                result = session.run_ps(script)
+                result = session.run_cmd("powershell.exe", ps_args)
                 stdout = (result.std_out or b"").decode(errors="replace")
                 stderr = (result.std_err or b"").decode(errors="replace")
                 return int(result.status_code), stdout, stderr
@@ -7334,6 +7355,12 @@ catch {
             # This action's logic is installed as a local script to avoid WinRM encoded-command length limits.
             script_path = self._windows_action_script_path("patch-windows")
             timeout_seconds = self._action_timeout_seconds(aid)
+            task_launcher = _ps_encoded_command_text(
+                f"& {_ps_quote(script_path)} "
+                f"-ExecId $c2fExec "
+                f"-AgentId $c2fAgent "
+                f"-ActionId $c2fAction"
+            )
             inner = (
                 f"$sp={_ps_quote(script_path)};"
                 "if(-not (Test-Path $sp)){ throw ('patch-windows script missing at '+$sp); };"
@@ -7342,7 +7369,7 @@ catch {
                 "$rf=Join-Path $rd ('patch-windows-'+$c2fExec+'.json');"
                 "Remove-Item -Path $rf -Force -ErrorAction SilentlyContinue;"
                 "$tn=('C2F_patch_windows_'+$c2fExec);"
-                "$tr=('powershell.exe -NoProfile -ExecutionPolicy Bypass -File '+$sp+' -ExecId '+$c2fExec+' -AgentId '+$c2fAgent+' -ActionId '+$c2fAction+' -LogFile '+$logFile+' -ResultFile '+$rf);"
+                f"$tr={_ps_quote(task_launcher)};"
                 "try { Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch { };"
                 "$dt=(Get-Date).AddMinutes(5);"
                 "$act=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $tr;"
@@ -7380,7 +7407,7 @@ catch {
         if aid == "custom-os-command":
             if not args or not str(args[0]).strip():
                 raise HTTPException(status_code=400, detail="custom-os-command requires command argument")
-            cmd = _ps_quote(args[0])
+            cmd = _ps_quote(self._normalize_windows_custom_command(args[0]))
             verify_kb = _ps_quote(args[1] if len(args) > 1 else "")
             verify_min_build = _ps_quote(args[2] if len(args) > 2 else "")
             verify_stdout_contains = _ps_quote(args[3] if len(args) > 3 else "")

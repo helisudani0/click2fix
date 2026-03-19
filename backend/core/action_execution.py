@@ -61,6 +61,12 @@ def _active_response_endpoint_fallback_enabled() -> bool:
     return bool(value)
 
 
+def _requires_endpoint_transport(action_id: str, dispatch: Dict[str, Any]) -> bool:
+    requested = str(action_id or "").strip().lower()
+    resolved = str((dispatch or {}).get("action_command") or "").strip().lower()
+    return requested == "global-shell" or resolved == "custom-os-command"
+
+
 def _resolve_manager_api_action(action_id: str, dispatch: Dict[str, Any]) -> str:
     candidates = [
         str(action_id or "").strip().lower(),
@@ -496,7 +502,10 @@ def execute_action(
     agent_ids: Iterable[str],
     execution_id: int | None = None,
 ) -> Dict[str, Any]:
-    mode = orchestration_mode()
+    requested_mode = orchestration_mode()
+    mode = requested_mode
+    if _requires_endpoint_transport(action_id, dispatch):
+        mode = "endpoint"
     endpoint_error = None
     manager_error = None
     ar_fallback_enabled = _active_response_endpoint_fallback_enabled()
@@ -516,6 +525,8 @@ def execute_action(
         try:
             payload = _run_endpoint(client, action_id, dispatch, agent_ids, execution_id=execution_id)
             payload["mode"] = mode
+            if mode != requested_mode:
+                payload["requested_mode"] = requested_mode
             if manager_error:
                 payload["manager_api_error"] = manager_error
             return payload
@@ -532,6 +543,8 @@ def execute_action(
                     try:
                         payload = _run_active_response(client, dispatch, agent_ids, execution_id=execution_id)
                         payload["mode"] = "endpoint_with_active_response_fallback"
+                        if requested_mode != "endpoint":
+                            payload["requested_mode"] = requested_mode
                         payload["endpoint_error"] = detail_text
                         if manager_error:
                             payload["manager_api_error"] = manager_error
@@ -553,6 +566,8 @@ def execute_action(
         try:
             payload = _run_active_response(client, dispatch, agent_ids, execution_id=execution_id)
             payload["mode"] = mode
+            if mode != requested_mode:
+                payload["requested_mode"] = requested_mode
             if endpoint_error:
                 payload["endpoint_error"] = endpoint_error
             if manager_error:
@@ -567,6 +582,8 @@ def execute_action(
                 try:
                     endpoint_payload = _run_endpoint(client, action_id, dispatch, agent_ids, execution_id=execution_id)
                     endpoint_payload["mode"] = "active_response_with_endpoint_fallback"
+                    if requested_mode != "active_response":
+                        endpoint_payload["requested_mode"] = requested_mode
                     endpoint_payload["active_response_error"] = str(exc.detail)
                     if manager_error:
                         endpoint_payload["manager_api_error"] = manager_error

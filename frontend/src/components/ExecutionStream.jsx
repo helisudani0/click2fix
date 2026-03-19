@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { executionSocket } from "../api/socket";
-import { getAlerts, getExecutionDetail, manualGateExecution } from "../api/wazuh";
+import { requestDualStack } from "../api/dualStack";
+import { getAlerts } from "../api/wazuh";
 import RelativeTimestamp from "./RelativeTimestamp";
 import { nowUtcIso } from "../utils/time";
 import { buildHumanReadableOutput, normalizeOutputText } from "../utils/output";
@@ -16,6 +17,35 @@ const UPDATE_ACTION_IDS = new Set([
 ]);
 const SCAN_ACTION_IDS = new Set(["ioc-scan", "toc-scan", "yara-scan", "collect-forensics", "collect-memory", "malware-scan", "threat-hunt-persistence"]);
 const FLEET_TARGET_IDS = new Set(["all", "*", "fleet", "all-active"]);
+
+const getExecutionDetailRequest = (executionId) =>
+  requestDualStack({
+    method: "get",
+    v1Path: `/executions/${executionId}`,
+  });
+
+const sendExecutionControlRequest = (executionId, payload = {}) => {
+  const requested = String(
+    payload?.command || payload?.action || payload?.decision || payload?.status || ""
+  ).trim().toLowerCase();
+  const commandMap = {
+    approve: "resume",
+    continue: "resume",
+    resume: "resume",
+    reject: "cancel",
+    deny: "cancel",
+    cancel: "cancel",
+    kill: "kill",
+    pause: "pause",
+  };
+  const command = commandMap[requested] || requested || "resume";
+  return requestDualStack({
+    method: "post",
+    v1Path: `/executions/${executionId}/control`,
+    v2Path: `/v2/executions/${executionId}/manual-gate`,
+    data: { ...payload, command },
+  });
+};
 
 const resolveTargetStatus = (target, isUpdateAction) => {
   if (isUpdateAction) {
@@ -897,7 +927,7 @@ export default function ExecutionStream({ executionId }) {
     setControlError("");
     setControlMessage("");
     autoStreamRef.current = null;
-    getExecutionDetail(executionId)
+    getExecutionDetailRequest(executionId)
       .then((res) => {
         const payload = res.data || {};
         const items = Array.isArray(payload.steps) ? payload.steps : [];
@@ -1207,7 +1237,7 @@ export default function ExecutionStream({ executionId }) {
     setControlError("");
     setControlMessage("");
     try {
-      const res = await manualGateExecution(executionId, { command: normalized });
+      const res = await sendExecutionControlRequest(executionId, { command: normalized });
       const payload = res?.data || {};
       const nextStatus = String(payload.status || "").toUpperCase();
       if (nextStatus) {

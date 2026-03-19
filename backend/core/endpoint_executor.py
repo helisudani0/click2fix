@@ -285,6 +285,54 @@ class EndpointExecutor:
             return parsed if parsed > 0 else fallback
         return fallback
 
+    @staticmethod
+    def _looks_like_long_running_windows_command(command: Any) -> bool:
+        text = str(command or "").strip().lower()
+        if not text:
+            return False
+        markers = (
+            "winget ",
+            "winget.exe",
+            "msiexec",
+            "invoke-webrequest",
+            "start-bitstransfer",
+            "install-module",
+            "install-packageprovider",
+            "repair-wingetpackagemanager",
+            "install-windowsupdate",
+            "pswindowsupdate",
+            "add-appxpackage",
+            "add-apppackage",
+            "dism /online",
+            "usoclient",
+            "wuauclt",
+            "windows update",
+        )
+        if any(marker in text for marker in markers):
+            return True
+        if re.search(r"\b(?:install|upgrade|update|download|bootstrap)\b", text):
+            return True
+        return False
+
+    def _effective_action_timeout_seconds(
+        self,
+        action_id: str,
+        action_args: Optional[List[str]] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        base = max(1, int(self._action_timeout_seconds(action_id)))
+        aid = str(action_id or "").strip().lower()
+
+        if aid in {"patch-windows", "windows-os-update", "fleet-software-update"}:
+            return max(base, 5400)
+        if aid in {"package-update", "software-install-upgrade"}:
+            return max(base, 3600)
+        if aid == "custom-os-command":
+            command = str((action_args or [""])[0] if action_args else "").strip()
+            if self._looks_like_long_running_windows_command(command):
+                return max(base, 3600)
+        return base
+
     def _execution_tag(self, context: Optional[Dict[str, Any]]) -> str:
         if not isinstance(context, dict):
             return f"adhoc-{int(time.time() * 1000)}"
@@ -1674,22 +1722,55 @@ class EndpointExecutor:
 			    }
 			  }
 
-			  function Wait-C2FPause {
-			    Assert-C2FWithinBudget
-			    if (-not (Test-Path $pauseFlag)) { return }
-			    try { C2F-Evidence "control=pause_requested" } catch { }
-			    while (Test-Path $pauseFlag) {
+				  function Wait-C2FPause {
+				    Assert-C2FWithinBudget
+				    if (-not (Test-Path $pauseFlag)) { return }
+				    try { C2F-Evidence "control=pause_requested" } catch { }
+				    while (Test-Path $pauseFlag) {
 			      Assert-C2FWithinBudget
 			      Assert-C2FNotCancelled
 			      Start-Sleep -Seconds 2
-			    }
-			    try { C2F-Evidence "control=pause_released" } catch { }
-			  }
+				    }
+				    try { C2F-Evidence "control=pause_released" } catch { }
+				  }
 
-			  $wingetReady = $true
-			  $wingetError = ""
-			  try {
-			    $probe = Invoke-C2FWinget -WingetArgs @('--version') -TimeoutSeconds 30
+				  function Bootstrap-C2FWinget {
+				    $previousProgress = $global:ProgressPreference
+				    try {
+				      Assert-C2FWithinBudget
+				      $global:ProgressPreference = 'SilentlyContinue'
+				      if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
+				        Install-PackageProvider -Name NuGet -Force -Scope AllUsers -ErrorAction Stop | Out-Null
+				      }
+				      $module = Get-Module -ListAvailable -Name Microsoft.WinGet.Client | Sort-Object Version -Descending | Select-Object -First 1
+				      if (-not $module) {
+				        Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery -Scope AllUsers -AllowClobber -ErrorAction Stop | Out-Null
+				      }
+				      Import-Module Microsoft.WinGet.Client -Force -ErrorAction Stop | Out-Null
+				      $repairCommand = Get-Command Repair-WinGetPackageManager -ErrorAction Stop
+				      $repairArgs = @{ AllUsers = $true; ErrorAction = 'Stop' }
+				      if ($repairCommand.Parameters.ContainsKey('Force')) { $repairArgs['Force'] = $true }
+				      if ($repairCommand.Parameters.ContainsKey('Latest')) { $repairArgs['Latest'] = $true }
+				      Repair-WinGetPackageManager @repairArgs | Out-Null
+				      Start-Sleep -Seconds 5
+				      return @{
+				        "ok" = $true
+				        "message" = "repair_winget_package_manager"
+				      }
+				    } catch {
+				      return @{
+				        "ok" = $false
+				        "message" = [string]$_.Exception.Message
+				      }
+				    } finally {
+				      $global:ProgressPreference = $previousProgress
+				    }
+				  }
+
+				  $wingetReady = $true
+				  $wingetError = ""
+				  try {
+				    $probe = Invoke-C2FWinget -WingetArgs @('--version') -TimeoutSeconds 30
 			    if ([int]$probe.exit_code -ne 0) {
 			      $wingetReady = $false
 			      $wingetError = [string]$probe.output
@@ -1722,15 +1803,35 @@ class EndpointExecutor:
 		          }
 		        }
 		      }
-		    } catch {
-		      C2F-Evidence ("winget_bootstrap_error=" + $_.Exception.Message)
-		    }
-		  }
+			    } catch {
+			      C2F-Evidence ("winget_bootstrap_error=" + $_.Exception.Message)
+			    }
+			  }
 
 			  if (-not $wingetReady) {
-			    $wu = whoami
-			    throw ("winget unavailable/inaccessible for account " + $wu + ": " + $wingetError + ". Use endpoint credentials for a user profile where winget is installed (or run windows-os-update for OS vulnerabilities).")
+			    try {
+			      $bootstrap = Bootstrap-C2FWinget
+			      if ($bootstrap.ok) {
+			        C2F-Evidence ("winget_bootstrap=" + [string]$bootstrap.message)
+			      } elseif ($bootstrap.message) {
+			        C2F-Evidence ("winget_bootstrap_error=" + [string]$bootstrap.message)
+			      }
+			      $probe3 = Invoke-C2FWinget -WingetArgs @('--version') -TimeoutSeconds 45
+			      if ([int]$probe3.exit_code -eq 0) {
+			        $wingetReady = $true
+			        $wingetError = ""
+			      } elseif ($bootstrap.ok) {
+			        $wingetError = [string]$probe3.output
+			      }
+			    } catch {
+			      C2F-Evidence ("winget_bootstrap_error=" + $_.Exception.Message)
+			    }
 			  }
+
+				  if (-not $wingetReady) {
+				    $wu = whoami
+				    throw ("winget unavailable/inaccessible for account " + $wu + ": " + $wingetError + ". Automatic App Installer/Repair-WinGetPackageManager bootstrap was attempted. Use endpoint credentials for a user profile where winget is installed (or run windows-os-update for OS vulnerabilities).")
+				  }
 			  try { [void](Repair-C2FWingetSources) } catch { }
 
 				  $installed = 0
@@ -2407,11 +2508,7 @@ class EndpointExecutor:
 			  $err = $_.Exception.Message
 			  $cmdText = [string]$cmd
 			  $runAsSystemText = [string]$RunAsSystem
-			  if (
-			    $cmdText -match '(?i)^\s*winget(?:\.exe)?\b'
-			    -and $runAsSystemText -match '^(?i:true|1|yes|on)$'
-			    -and $err -match '(?i)file cannot be accessed by the system'
-			  ) {
+			  if ($cmdText -match '(?i)^\s*winget(?:\.exe)?\b' -and $runAsSystemText -match '^(?i:true|1|yes|on)$' -and $err -match '(?i)file cannot be accessed by the system') {
 			    $err = $err + " | winget is not accessible under SYSTEM on this endpoint; disable Run as SYSTEM for winget commands."
 			  }
 			  C2F-Evidence ("error=" + $err)
@@ -2497,10 +2594,10 @@ class EndpointExecutor:
 			  return 0
 			}
 
-			function C2F-RunCommand {
-			  param([string]$CommandText)
+			function C2F-RunCommandFile {
+			  param([string]$CommandPath)
 			  $global:LASTEXITCODE = 0
-			  $rawOut = (& ([ScriptBlock]::Create($CommandText)) 2>&1 | Out-String)
+			  $rawOut = (& $CommandPath 2>&1 | Out-String)
 			  $code = 0
 			  if ($LASTEXITCODE -ne $null) {
 			    try { $code = [int]$LASTEXITCODE } catch { $code = 1 }
@@ -2663,7 +2760,7 @@ class EndpointExecutor:
 			  C2F-Evidence ("custom_command=" + $safe)
 			  C2F-Evidence ("run_as_system=" + [string]$RunAsSystem)
 
-				  $run = C2F-RunCommand $cmd
+					  $run = C2F-RunCommandFile -CommandPath $CommandFile
 				  $out = [string]$run.output
 				  # Some native tools emit UTF-16/UTF-8 mixed output with embedded nulls.
 				  # Normalize early so history/output previews remain readable.
@@ -5565,7 +5662,7 @@ catch {
         target: Dict[str, Any],
         context: Dict[str, Any],
     ) -> Dict[str, Any]:
-        timeout_seconds = self._action_timeout_seconds(action_id)
+        timeout_seconds = self._effective_action_timeout_seconds(action_id, action_args, context)
         requested_action_id = str((context or {}).get("action_id") or action_id).strip()
         logical_action_id = requested_action_id or str(action_id or "").strip()
         aid = str(action_id or "").strip().lower()
@@ -7235,12 +7332,15 @@ catch {
             script_path = self._windows_action_script_path("package-update")
             pkg = _ps_quote(args[0] if args else "all")
             ver = _ps_quote(args[1] if len(args) > 1 else "")
+            timeout_seconds = self._effective_action_timeout_seconds(aid, args, context or {})
+            max_runtime = max(180, int(timeout_seconds))
             inner = (
                 f"$sp={_ps_quote(script_path)};"
                 "if(-not (Test-Path $sp)){ throw ('package-update script missing at '+$sp); };"
                 f"$pkg={pkg};"
                 f"$ver={ver};"
-                "$out=(& $sp -ExecId $c2fExec -AgentId $c2fAgent -ActionId $c2fAction -LogFile $logFile -PackageSpec $pkg -Version $ver 2>&1 | Out-String);"
+                f"$maxRuntime={max_runtime};"
+                "$out=(& $sp -ExecId $c2fExec -AgentId $c2fAgent -ActionId $c2fAction -LogFile $logFile -PackageSpec $pkg -Version $ver -MaxRuntimeSeconds $maxRuntime 2>&1 | Out-String);"
                 "if($LASTEXITCODE -ne 0){ throw $out };"
                 "Write-Output $out"
             )
@@ -7274,11 +7374,19 @@ catch {
                 "$safe=$cmd.Replace('|','/');"
                 "if($safe.Length -gt 220){ $safe=$safe.Substring(0,220)+'...' };"
                 "C2F-Evidence ('custom_command='+$safe);"
+                "$cmdDir='C:\\\\Click2Fix\\\\scripts\\\\inputs';"
+                "New-Item -ItemType Directory -Path $cmdDir -Force | Out-Null;"
+                "$cmdFile=Join-Path $cmdDir ('inline-custom-'+$c2fExec+'-'+[guid]::NewGuid().ToString('N')+'.ps1');"
+                "Set-Content -Path $cmdFile -Value $cmd -Encoding UTF8;"
                 "$global:LASTEXITCODE=0;"
-                "$out=(& ([ScriptBlock]::Create($cmd)) 2>&1 | Out-String);"
+                "try {"
+                "$out=(& $cmdFile 2>&1 | Out-String);"
                 "$rc=0;"
                 "if($LASTEXITCODE -ne $null){ try{ $rc=[int]$LASTEXITCODE } catch { $rc=1 } };"
                 "if($rc -ne 0){ throw ('custom-os-command failed rc='+$rc+' output='+$out) };"
+                "} finally {"
+                "try { Remove-Item -Path $cmdFile -Force -ErrorAction SilentlyContinue } catch { }"
+                "};"
                 "$verifyKbRaw=($verifyKbRaw -replace '(?i)^\\s*kb','KB').Trim();"
                 "if($verifyKbRaw){"
                 "$kbDigits=($verifyKbRaw -replace '(?i)^KB','').Trim();"

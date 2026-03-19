@@ -62,9 +62,11 @@ const riskClass = (risk) => {
   return "neutral";
 };
 
+const PACKAGE_UPDATE_ACTION_ID = "package-update";
 const SPECIFIC_SOFTWARE_ACTION_ID = "software-install-upgrade";
 const CUSTOM_OS_COMMAND_ACTION_ID = "custom-os-command";
 const MULTILINE_INPUT_FIELDS = new Set(["command", "custom_command", "script"]);
+const WINGET_BACKED_ACTION_IDS = new Set([PACKAGE_UPDATE_ACTION_ID, SPECIFIC_SOFTWARE_ACTION_ID]);
 
 export default function Actions() {
   const [actions, setActions] = useState([]);
@@ -202,6 +204,27 @@ export default function Actions() {
       else args[name] = "test";
     });
     return args;
+  };
+
+  const selectWingetQuickAction = (nextActionId) => {
+    setActionId(nextActionId);
+    setActionValidation(null);
+    setActionInputs((prev) => {
+      const next = { ...prev };
+      if (nextActionId === PACKAGE_UPDATE_ACTION_ID && !String(next.package || "").trim()) {
+        next.package = "all";
+      }
+      if (nextActionId === SPECIFIC_SOFTWARE_ACTION_ID && next.package === undefined) {
+        next.package = "";
+      }
+      if (next.version === undefined) {
+        next.version = "";
+      }
+      return next;
+    });
+    setActionStatus(
+      "Selected native package action. Windows endpoints use winget-backed remediation and the backend bootstraps winget when it is missing."
+    );
   };
 
   const validateAllActionsForTarget = async () => {
@@ -438,21 +461,21 @@ export default function Actions() {
             <div className="list-scroll tall">
               <div className="list">
                 {filteredActions.map((a) => (
-	                  <button
-	                    key={a.id}
-	                    type="button"
-	                    className={`list-item clickable readable text-left ${a.id === actionId ? "selected" : ""}`}
-	                    onClick={() => setActionId(a.id)}
+		                  <button
+		                    key={a.id}
+		                    type="button"
+		                    className={`list-item clickable readable text-left ${a.id === actionId ? "selected" : ""}`}
+		                    onClick={() => setActionId(a.id)}
 	                  >
 	                    <div className="flex-between">
 	                      <strong>{toDisplay(a.label || a.id)}</strong>
-	                      <div className="page-actions gap-6">
-	                        <span className="chip">{toDisplay(a.category || "response")}</span>
-	                        {String(a.id || "").trim().toLowerCase() === SPECIFIC_SOFTWARE_ACTION_ID ? (
-	                          <span className="status-pill success">Recommended</span>
-	                        ) : null}
-	                      </div>
-	                    </div>
+		                      <div className="page-actions gap-6">
+		                        <span className="chip">{toDisplay(a.category || "response")}</span>
+		                        {WINGET_BACKED_ACTION_IDS.has(String(a.id || "").trim().toLowerCase()) ? (
+		                          <span className="status-pill success">Recommended</span>
+		                        ) : null}
+		                      </div>
+		                    </div>
 	                    <div className="meta-line ws-normal">{a.id}</div>
 	                    {a.description ? (
 	                      <div className="meta-line ws-normal">{a.description}</div>
@@ -464,10 +487,38 @@ export default function Actions() {
           )}
         </div>
 
-	        <div className="stack-col gap-18">
-          <div className="card">
-            <div className="card-header">
-              <div>
+		        <div className="stack-col gap-18">
+	          <div className="card">
+	            <div className="card-header">
+	              <div>
+	                <h3>Native Package Path</h3>
+	                <p className="muted">Use package actions instead of manual shell scripts for installs and upgrades.</p>
+	              </div>
+	            </div>
+	            <div className="empty-state">
+	              Windows targets map to winget-backed remediation. If winget is missing, the backend attempts App Installer / WinGet bootstrap before retrying the package action.
+	            </div>
+	            <div className="page-actions mt-10">
+	              <button
+	                className="btn secondary"
+	                type="button"
+	                onClick={() => selectWingetQuickAction(PACKAGE_UPDATE_ACTION_ID)}
+	              >
+	                Upgrade Installed Packages
+	              </button>
+	              <button
+	                className="btn secondary"
+	                type="button"
+	                onClick={() => selectWingetQuickAction(SPECIFIC_SOFTWARE_ACTION_ID)}
+	              >
+	                Install / Upgrade Specific Package
+	              </button>
+	            </div>
+	          </div>
+
+	          <div className="card">
+	            <div className="card-header">
+	              <div>
                 <h3>Execute Action</h3>
                 <p className="muted">Targets, justification, and live execution details.</p>
               </div>
@@ -613,11 +664,11 @@ export default function Actions() {
 	                    {selectedAction.description ? (
 	                      <div className="meta-line ws-normal">{selectedAction.description}</div>
 	                    ) : null}
-	                    {String(selectedAction.id || "").trim().toLowerCase() === SPECIFIC_SOFTWARE_ACTION_ID ? (
-	                      <div className="empty-state mt-8">
-	                        Recommended for software-specific vulnerability remediation on selected endpoints.
-	                      </div>
-	                    ) : null}
+		                    {WINGET_BACKED_ACTION_IDS.has(String(selectedAction.id || "").trim().toLowerCase()) ? (
+		                      <div className="empty-state mt-8">
+		                        Native package-manager path. Windows endpoints use winget-backed remediation instead of manual shell scripting.
+		                      </div>
+		                    ) : null}
 	                    {String(selectedAction.id || "").trim().toLowerCase() === CUSTOM_OS_COMMAND_ACTION_ID ? (
 	                      <div className="empty-state mt-8">
 	                        Emergency fallback. This runs exactly what you type on endpoints; validate command safety before execution.

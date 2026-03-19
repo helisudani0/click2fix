@@ -97,6 +97,8 @@ export default function Actions() {
     () => actions.find((a) => a.id === actionId) || null,
     [actions, actionId]
   );
+  const selectedActionIdLower = String(selectedAction?.id || "").trim().toLowerCase();
+  const showNativePackagePanel = !selectedActionIdLower || WINGET_BACKED_ACTION_IDS.has(selectedActionIdLower);
 
   const loadActions = useCallback(async () => {
     setActionsLoading(true);
@@ -488,33 +490,35 @@ export default function Actions() {
         </div>
 
 		        <div className="stack-col gap-18">
-	          <div className="card">
-	            <div className="card-header">
-	              <div>
-	                <h3>Native Package Path</h3>
-	                <p className="muted">Use package actions instead of manual shell scripts for installs and upgrades.</p>
+	          {showNativePackagePanel ? (
+	            <div className="card">
+	              <div className="card-header">
+	                <div>
+	                  <h3>Native Package Path</h3>
+	                  <p className="muted">Use package actions instead of manual shell scripts for installs and upgrades.</p>
+	                </div>
+	              </div>
+	              <div className="empty-state">
+	                Windows targets map to winget-backed remediation. If winget is missing, the backend attempts App Installer / WinGet bootstrap before retrying the package action.
+	              </div>
+	              <div className="page-actions mt-10">
+	                <button
+	                  className="btn secondary"
+	                  type="button"
+	                  onClick={() => selectWingetQuickAction(PACKAGE_UPDATE_ACTION_ID)}
+	                >
+	                  Upgrade Installed Packages
+	                </button>
+	                <button
+	                  className="btn secondary"
+	                  type="button"
+	                  onClick={() => selectWingetQuickAction(SPECIFIC_SOFTWARE_ACTION_ID)}
+	                >
+	                  Install / Upgrade Specific Package
+	                </button>
 	              </div>
 	            </div>
-	            <div className="empty-state">
-	              Windows targets map to winget-backed remediation. If winget is missing, the backend attempts App Installer / WinGet bootstrap before retrying the package action.
-	            </div>
-	            <div className="page-actions mt-10">
-	              <button
-	                className="btn secondary"
-	                type="button"
-	                onClick={() => selectWingetQuickAction(PACKAGE_UPDATE_ACTION_ID)}
-	              >
-	                Upgrade Installed Packages
-	              </button>
-	              <button
-	                className="btn secondary"
-	                type="button"
-	                onClick={() => selectWingetQuickAction(SPECIFIC_SOFTWARE_ACTION_ID)}
-	              >
-	                Install / Upgrade Specific Package
-	              </button>
-	            </div>
-	          </div>
+	          ) : null}
 
 	          <div className="card">
 	            <div className="card-header">
@@ -755,8 +759,13 @@ export default function Actions() {
 	                      placeholder={field.placeholder || ""}
 	                    />
 	                  )}
-                </div>
-              ))}
+	                  {WINGET_BACKED_ACTION_IDS.has(selectedActionIdLower) && String(field.name || "").trim().toLowerCase() === "package" ? (
+	                    <div className="meta-line ws-normal mt-6">
+	                      Prefer the winget ID on Windows, for example `Notepad++.Notepad++`. Friendly names may work, but IDs are more reliable.
+	                    </div>
+	                  ) : null}
+	                </div>
+	              ))}
 
               <div className="list-item readable">
                 <div className="muted">Justification (if required)</div>

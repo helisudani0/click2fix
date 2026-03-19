@@ -1047,7 +1047,14 @@ class EndpointExecutor:
 		    $isListLike = (($raw -match '(?im)^Name\s+Id\s+Version\s+Available') -or ($raw -match '(?im)^\d+\s+upgrades?\s+available') -or ($raw -match 'No installed package found') -or ($raw -match 'No applicable update found') -or ($raw -match 'No available upgrade found'))
 		    if (-not $isHelp) {
 		      try {
-		        $previewLines = @($raw -split "`r?`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -First 6)
+		        $previewLines = @()
+		        foreach ($lineRaw in ($raw -split "`r?`n")) {
+		          $lineNorm = Normalize-C2FToken $lineRaw
+		          if (-not $lineNorm) { continue }
+		          if (Test-C2FNoiseLine $lineNorm) { continue }
+		          $previewLines += $lineNorm
+		          if ($previewLines.Count -ge 6) { break }
+		        }
 		        $preview = [string]::Join(" / ", $previewLines)
 		        if ($preview.Length -gt 600) { $preview = $preview.Substring(0, 600) }
 		        if ($preview) { C2F-Evidence ("winget_list_preview=" + $used + " :: " + $preview.Replace("|", "/")) }
@@ -2269,6 +2276,7 @@ class EndpointExecutor:
 				        break
 				      }
 				      if ($rc -eq 0) {
+				        Start-Sleep -Seconds 2
 				        if ($isRemovalMode) {
 				          $afterRowsRemoved = @()
 				          try { $afterRowsRemoved = Get-C2FWingetInstalledRows -PackageId $lookupId } catch { $afterRowsRemoved = @() }
@@ -2317,15 +2325,20 @@ class EndpointExecutor:
 				          }
 					          $afterRowsNoChange = @()
 					          try { $afterRowsNoChange = Get-C2FWingetInstalledRows -PackageId $lookupId } catch { $afterRowsNoChange = @() }
-				          $afterVersionsNoChange = @($afterRowsNoChange | ForEach-Object { $_.version } | Where-Object { $_ } | Select-Object -Unique)
-				          $afterVersionSummaryNoChange = [string]::Join(",", $afterVersionsNoChange)
-				          $afterCleanNoChange = $afterVersionSummaryNoChange.Replace("`r", " ").Replace("`n", " ").Replace("|", "/").Trim()
-				          if ($forceInstall -and $pending -eq $false -and $afterVersionsNoChange.Count -gt 0) {
-				            $installed++
-				            C2F-Evidence ("installed_update_" + $idx + "=" + $lookupId + "|" + $disp + "|rc=0|attempt=" + $attempt + "|installed_before=" + $installedBefore + "|installed_after=" + $afterCleanNoChange + "|message=no_applicable_update")
-				            $finalized = $true
-				            break
-				          }
+					          $afterArpPresentNoChange = $false
+					          try { $afterArpPresentNoChange = Test-C2FArpEntryPresent -LookupId $lookupId -DisplayName $disp } catch { $afterArpPresentNoChange = $false }
+					          $afterInstalledDetectedNoChange = (($afterRowsNoChange -and $afterRowsNoChange.Count -gt 0) -or $afterArpPresentNoChange)
+					          $afterVersionsNoChange = @($afterRowsNoChange | ForEach-Object { $_.version } | Where-Object { $_ } | Select-Object -Unique)
+					          $afterVersionSummaryNoChange = [string]::Join(",", $afterVersionsNoChange)
+					          $afterCleanNoChange = $afterVersionSummaryNoChange.Replace("`r", " ").Replace("`n", " ").Replace("|", "/").Trim()
+					          if (($forceInstall -or $allowInstall) -and $pending -eq $false -and ($afterVersionsNoChange.Count -gt 0 -or ((-not $installedDetected) -and $afterInstalledDetectedNoChange))) {
+					            $installed++
+					            $afterDisplayNoChange = $afterCleanNoChange
+					            if (-not $afterDisplayNoChange -and $afterInstalledDetectedNoChange) { $afterDisplayNoChange = "<present_version_unknown>" }
+					            C2F-Evidence ("installed_update_" + $idx + "=" + $lookupId + "|" + $disp + "|rc=0|attempt=" + $attempt + "|installed_before=" + $installedBefore + "|installed_after=" + $afterDisplayNoChange + "|message=no_applicable_update")
+					            $finalized = $true
+					            break
+					          }
 				          if ($notFound -or $notInstalled) {
 				            $skipped++
 				            $unresolved++
@@ -2342,11 +2355,14 @@ class EndpointExecutor:
 				          break
 				        }
 				        if ($pending -eq $false) {
-				          $afterRows = @()
-				          try { $afterRows = Get-C2FWingetInstalledRows -PackageId $lookupId } catch { $afterRows = @() }
-				          $afterVersions = @($afterRows | ForEach-Object { $_.version } | Where-Object { $_ } | Select-Object -Unique)
-				          $afterVersionSummary = [string]::Join(",", $afterVersions)
-				          $afterClean = $afterVersionSummary.Replace("`r", " ").Replace("`n", " ").Replace("|", "/").Trim()
+					          $afterRows = @()
+					          try { $afterRows = Get-C2FWingetInstalledRows -PackageId $lookupId } catch { $afterRows = @() }
+					          $afterArpPresent = $false
+					          try { $afterArpPresent = Test-C2FArpEntryPresent -LookupId $lookupId -DisplayName $disp } catch { $afterArpPresent = $false }
+					          $afterInstalledDetected = (($afterRows -and $afterRows.Count -gt 0) -or $afterArpPresent)
+					          $afterVersions = @($afterRows | ForEach-Object { $_.version } | Where-Object { $_ } | Select-Object -Unique)
+					          $afterVersionSummary = [string]::Join(",", $afterVersions)
+					          $afterClean = $afterVersionSummary.Replace("`r", " ").Replace("`n", " ").Replace("|", "/").Trim()
 
 				          $norm = { param([string]$v) if (-not $v) { return "" }; return $v.Trim() }
 				          $comparable = { param([string]$v)
@@ -2368,12 +2384,17 @@ class EndpointExecutor:
 				          $versionOk = $null
 				          $versionReason = ""
 
-				          if ($afterComparable.Count -eq 0) {
-				            $versionOk = $null
-				            $versionReason = "post_verify_after_version_unknown"
-				          } elseif ($expectedComparable) {
-				            $exp = $expectedComparable.ToLower()
-				            $match = $false
+					          if ($afterComparable.Count -eq 0) {
+					            if ((-not $installedDetected) -and $afterInstalledDetected) {
+					              $versionOk = $true
+					              $versionReason = "post_verify_fresh_install_present_no_version"
+					            } else {
+					              $versionOk = $null
+					              $versionReason = "post_verify_after_version_unknown"
+					            }
+					          } elseif ($expectedComparable) {
+					            $exp = $expectedComparable.ToLower()
+					            $match = $false
 				            foreach ($v in $afterComparable) {
 				              $vl = ([string]$v).ToLower()
 				              if ($vl -eq $exp -or $vl.StartsWith($exp) -or $exp.StartsWith($vl)) { $match = $true; break }
@@ -2384,12 +2405,17 @@ class EndpointExecutor:
 				              $versionOk = $false
 				              $versionReason = "post_verify_after_version_mismatch"
 				            }
-				          } elseif ($beforeComparable.Count -eq 0) {
-				            $versionOk = $null
-				            $versionReason = "post_verify_before_version_unknown"
-				          } else {
-				            $intersection = @($beforeComparable | Where-Object { $afterComparable -contains $_ })
-				            if ($intersection.Count -gt 0) {
+					          } elseif ($beforeComparable.Count -eq 0) {
+					            if ($afterInstalledDetected) {
+					              $versionOk = $true
+					              $versionReason = "post_verify_present_after_unknown_before"
+					            } else {
+					              $versionOk = $null
+					              $versionReason = "post_verify_before_version_unknown"
+					            }
+					          } else {
+					            $intersection = @($beforeComparable | Where-Object { $afterComparable -contains $_ })
+					            if ($intersection.Count -gt 0) {
 				              $newOnes = @($afterComparable | Where-Object { -not ($beforeComparable -contains $_) })
 				              if ($newOnes.Count -gt 0) {
 				                $versionOk = $false
@@ -2404,12 +2430,14 @@ class EndpointExecutor:
 				          }
 				          if (-not $versionReason) { $versionReason = "post_verify_version_unknown" }
 
-				          if ($versionOk -eq $true) {
-				            $installed++
-				            C2F-Evidence ("installed_update_" + $idx + "=" + $lookupId + "|" + $disp + "|rc=0|attempt=" + $attempt + "|installed_before=" + $installedBefore + "|installed_after=" + $afterClean + "|available_before=" + $availableVer)
-				            $finalized = $true
-				            break
-				          }
+					          if ($versionOk -eq $true) {
+					            $installed++
+					            $afterDisplay = $afterClean
+					            if (-not $afterDisplay -and $afterInstalledDetected) { $afterDisplay = "<present_version_unknown>" }
+					            C2F-Evidence ("installed_update_" + $idx + "=" + $lookupId + "|" + $disp + "|rc=0|attempt=" + $attempt + "|installed_before=" + $installedBefore + "|installed_after=" + $afterDisplay + "|available_before=" + $availableVer + "|message=" + $versionReason)
+					            $finalized = $true
+					            break
+					          }
 
 				          if ($attempt -lt $maxAttempts) {
 				            continue
@@ -2418,7 +2446,9 @@ class EndpointExecutor:
 				          $remaining++
 				          $failed++
 				          C2F-Evidence ("remaining_update_" + $idx + "=" + $lookupId + "|" + $disp + "|reason=" + $versionReason + "|attempts=" + $maxAttempts)
-				          C2F-Evidence ("failed_update_" + $idx + "=" + $lookupId + "|" + $disp + "|rc=0|message=" + $versionReason + "|attempts=" + $maxAttempts + "|installed_before=" + $installedBefore + "|installed_after=" + $afterClean + "|available_before=" + $availableVer)
+					          $afterFailureDisplay = $afterClean
+					          if (-not $afterFailureDisplay -and $afterInstalledDetected) { $afterFailureDisplay = "<present_version_unknown>" }
+					          C2F-Evidence ("failed_update_" + $idx + "=" + $lookupId + "|" + $disp + "|rc=0|message=" + $versionReason + "|attempts=" + $maxAttempts + "|installed_before=" + $installedBefore + "|installed_after=" + $afterFailureDisplay + "|available_before=" + $availableVer)
 				          $finalized = $true
 				          break
 				        }
@@ -6399,6 +6429,7 @@ catch {
         safe_agent = "".join(ch for ch in str(agent_id or "") if ch.isalnum() or ch in {"-", "_"})
         if not safe_agent:
             safe_agent = "agent"
+        task_time_limit_seconds = max(900, int(timeout_seconds or 120) + 600)
         # SYSTEM-run scheduled tasks may not be able to append to files created under
         # service-user-owned paths. Use a shared public path so both WinRM user and
         # SYSTEM context can write/read the same execution log reliably.
@@ -6531,11 +6562,12 @@ catch {
             "else { try { New-Item -ItemType File -Path $lf -Force | Out-Null } catch { } };"
             f"$tn={_ps_quote(task_name)};"
             f"$tr={_ps_quote(tr)};"
+            f"$ttl={int(task_time_limit_seconds)};"
             "try { Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch { };"
             "$dt=(Get-Date).AddMinutes(5);"
             "$act=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $tr;"
             "$trg=New-ScheduledTaskTrigger -Once -At $dt;"
-            "$set=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 60) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries;"
+            "$set=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Seconds $ttl) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries;"
             "Register-ScheduledTask -TaskName $tn -Action $act -Trigger $trg -Settings $set -User 'SYSTEM' -RunLevel Highest -Force | Out-Null;"
             "Start-ScheduledTask -TaskName $tn;"
             "Write-Output 'task started';"

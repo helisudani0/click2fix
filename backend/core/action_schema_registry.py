@@ -247,7 +247,7 @@ class ActionRegistry:
             supported_platforms=["windows", "linux"],
             requires_approval=True,
             requires_agent_credentials=True,
-            timeout_seconds=3600,
+            timeout_seconds=5400,
             inputs=[
                 ActionInput(
                     name="package",
@@ -280,7 +280,7 @@ class ActionRegistry:
             supported_platforms=["windows", "linux"],
             requires_approval=True,
             requires_agent_credentials=True,
-            timeout_seconds=1800,
+            timeout_seconds=3600,
             inputs=[
                 ActionInput(
                     name="command",
@@ -327,7 +327,7 @@ class ActionRegistry:
             supported_platforms=["windows"],
             requires_approval=True,
             requires_agent_credentials=True,
-            timeout_seconds=3600,
+            timeout_seconds=5400,
             idempotency=IdempotencyRule(
                 mode=IdempotencyMode.STATE_AWARE,
                 recent_threshold_seconds=1800,

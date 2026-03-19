@@ -266,7 +266,7 @@ active_response:
         preferred_channel: "endpoint"
         requires_credentials: true
         requires_network: true
-        timeout_seconds: 3600
+        timeout_seconds: 5400
         validation: []
     - id: "fleet-software-update"
       label: "Fleet Software Update"
@@ -287,7 +287,7 @@ active_response:
         preferred_channel: "endpoint"
         requires_credentials: true
         requires_network: true
-        timeout_seconds: 3600
+        timeout_seconds: 5400
         validation: []
     - id: "package-update"
       label: "Update Package"
@@ -311,7 +311,7 @@ active_response:
         preferred_channel: "endpoint"
         requires_credentials: true
         requires_network: true
-        timeout_seconds: 1800
+        timeout_seconds: 3600
         validation:
           - field: "package"
             type: "string"
@@ -351,7 +351,7 @@ active_response:
         preferred_channel: "endpoint"
         requires_credentials: true
         requires_network: true
-        timeout_seconds: 1800
+        timeout_seconds: 3600
         validation:
           - field: "package"
             type: "string"
@@ -399,7 +399,7 @@ active_response:
         preferred_channel: "endpoint"
         requires_credentials: true
         requires_network: false
-        timeout_seconds: 1800
+        timeout_seconds: 3600
         validation:
           - field: "command"
             type: "string"

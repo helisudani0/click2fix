@@ -65,3 +65,7 @@ def test_package_update_script_contains_winget_bootstrap_path():
     assert "Install-Module -Name Microsoft.WinGet.Client" in script
     assert "Repair-WinGetPackageManager" in script
     assert "Automatic App Installer/Repair-WinGetPackageManager bootstrap was attempted" in script
+    assert "post_verify_fresh_install_present_no_version" in script
+    assert "post_verify_present_after_unknown_before" in script
+    assert "afterInstalledDetected = (($afterRows -and $afterRows.Count -gt 0) -or $afterArpPresent)" in script
+    assert "if (Test-C2FNoiseLine $lineNorm) { continue }" in script

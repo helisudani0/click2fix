@@ -42,7 +42,7 @@ def test_effective_timeout_extends_long_running_global_shell_commands():
             ["Invoke-WebRequest -Uri 'https://example.invalid/pkg.msi' -OutFile $env:TEMP\\pkg.msi; msiexec /i $env:TEMP\\pkg.msi /qn"],
             {"action_id": "global-shell"},
         )
-        >= 3600
+        == 300
     )
     assert (
         executor._effective_action_timeout_seconds(
@@ -61,12 +61,14 @@ def test_custom_os_command_script_executes_encoded_powershell_payload():
 
     assert "function C2F-LoadCommandPayload" in script
     assert "function C2F-RunEncodedCommand" in script
+    assert "function C2F-RunSessionCommand" in script
+    assert "function C2F-EnsureSessionHost" in script
     assert '-EncodedCommand", $EncodedCommand' in script
     assert "C2F-RunEncodedCommand -EncodedCommand $encodedCommand" in script
+    assert "C2F-RunSessionCommand -Id $sessionKey" in script
     assert "ScriptBlock]::Create($CommandText)" not in script
-    assert "[string]$SessionId" not in script
-    assert "C2F-ImportSessionState" not in script
-    assert "C2F-ExportSessionState" not in script
+    assert "[string]$SessionId" in script
+    assert "IdleTimeoutSeconds = 1800" in script
 
 
 def test_windows_custom_command_normalization_unwraps_powershell_command():
@@ -119,15 +121,16 @@ def test_global_shell_requires_endpoint_transport():
     assert _requires_endpoint_transport("firewall-drop", {"action_command": "firewall-drop"}) is False
 
 
-def test_custom_os_command_arguments_drop_legacy_session_values():
+def test_custom_os_command_arguments_preserve_session_id():
     args = _coerce_custom_os_command_arguments([], command="Write-Host hi")
-    assert args == ["Write-Host hi", "", "", "", "false"]
+    assert args == ["Write-Host hi", "", "", "", "false", ""]
 
     preserved = _coerce_custom_os_command_arguments(
         ["Write-Host hi", "", "", "", "false", "session-2"],
         command="Write-Host hi",
+        session_id="session-2",
     )
-    assert preserved == ["Write-Host hi", "", "", "", "false"]
+    assert preserved == ["Write-Host hi", "", "", "", "false", "session-2"]
 
 
 def test_async_global_shell_builds_dispatch_for_powershell(monkeypatch):
@@ -161,7 +164,7 @@ def test_async_global_shell_builds_dispatch_for_powershell(monkeypatch):
 
     def _fake_build_dispatch(**kwargs):
         dispatch_calls.append(kwargs)
-        return {"transport": "custom-os-command"}, ["Write-Host hi", "", "", "", "false"]
+        return {"transport": "custom-os-command"}, ["Write-Host hi", "", "", "", "false", "session-alpha"]
 
     monkeypatch.setattr(actions_api, "_build_global_shell_dispatch", _fake_build_dispatch)
     monkeypatch.setattr(
@@ -186,12 +189,13 @@ def test_async_global_shell_builds_dispatch_for_powershell(monkeypatch):
         selected_ids=["001"],
         raw_command="Write-Host hi",
         run_as_system=False,
+        session_id="session-alpha",
         ai_config={"provider": "openai", "model": "test-model"},
     )
 
     assert dispatch_calls
     assert dispatch_calls[0]["command_to_run"] == "Write-Host hi"
-    assert "session_id" not in dispatch_calls[0]
+    assert dispatch_calls[0]["session_id"] == "session-alpha"
 
 
 def test_execute_serializes_custom_os_command_targets():

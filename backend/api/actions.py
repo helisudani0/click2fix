@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import threading
 from typing import Any
 
@@ -70,10 +71,11 @@ def _coerce_custom_os_command_arguments(
     verify_min_build: str = "",
     verify_stdout_contains: str = "",
     run_as_system: bool = False,
+    session_id: str = "",
 ) -> list[str]:
     """
     Enforce the custom-os-command positional schema:
-    [command, verify_kb, verify_min_build, verify_stdout_contains, run_as_system]
+    [command, verify_kb, verify_min_build, verify_stdout_contains, run_as_system, session_id]
 
     This keeps Global Shell stable even if an older container loads a stale action
     schema that does not yet include optional trailing fields.
@@ -91,6 +93,7 @@ def _coerce_custom_os_command_arguments(
         str(verify_min_build or ""),
         str(verify_stdout_contains or ""),
         "true" if bool(run_as_system) else "false",
+        str(session_id or ""),
     ]
     return normalized
 
@@ -308,6 +311,20 @@ def _coerce_assist_attempts(value: Any, default: int = 3) -> int:
     return parsed
 
 
+def _normalize_session_id(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if len(raw) > 120:
+        raise HTTPException(status_code=400, detail="session_id must be 120 characters or fewer")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", raw):
+        raise HTTPException(
+            status_code=400,
+            detail="session_id may contain only letters, numbers, dot, dash, or underscore",
+        )
+    return raw
+
+
 def _coerce_vulnerability_context(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -481,6 +498,7 @@ def _build_global_shell_dispatch(
     verify_kb: str,
     verify_min_build: str,
     verify_stdout_contains: str,
+    session_id: str = "",
 ) -> tuple[dict[str, Any], list[str]]:
     transport_action_id = "custom-os-command"
     action = get_action(transport_action_id)
@@ -493,6 +511,7 @@ def _build_global_shell_dispatch(
                 "verify_min_build": verify_min_build,
                 "verify_stdout_contains": verify_stdout_contains,
                 "run_as_system": "true" if bool(run_as_system) else "false",
+                "session_id": session_id,
             },
         ),
         command=command_to_run,
@@ -500,6 +519,7 @@ def _build_global_shell_dispatch(
         verify_min_build=verify_min_build,
         verify_stdout_contains=verify_stdout_contains,
         run_as_system=bool(run_as_system),
+        session_id=session_id,
     )
     dispatch = resolve_action_dispatch(action, arguments)
     return dispatch, arguments
@@ -556,6 +576,7 @@ def _run_global_shell_async_job(
     verify_kb: str = "",
     verify_min_build: str = "",
     verify_stdout_contains: str = "",
+    session_id: str = "",
     assistant_plan: dict[str, Any] | None = None,
     auto_remediate: bool = False,
     max_attempts: int = 1,
@@ -670,6 +691,7 @@ def _run_global_shell_async_job(
                 verify_kb=current_verify_kb,
                 verify_min_build=current_verify_min_build,
                 verify_stdout_contains=current_verify_stdout_contains,
+                session_id=session_id,
             )
 
             publish_event(
@@ -737,6 +759,7 @@ def _run_global_shell_async_job(
                 "command": current_raw_command,
                 "command_used": command_to_run,
                 "run_as_system": bool(current_run_as_system),
+                "session_id": session_id,
                 "verify_kb": current_verify_kb,
                 "verify_min_build": current_verify_min_build,
                 "verify_stdout_contains": current_verify_stdout_contains,
@@ -1269,6 +1292,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         raise HTTPException(status_code=400, detail="shell must be 'powershell' or 'cmd'")
     async_raw = body.get("async")
     async_mode = True if async_raw is None else _to_bool(async_raw, True)
+    session_id = _normalize_session_id(body.get("session_id"))
 
     assistant_prompt = str(body.get("assistant_prompt") or body.get("prompt") or "").strip()
     vulnerability_context = _coerce_vulnerability_context(
@@ -1458,6 +1482,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         verify_kb=verify_kb,
         verify_min_build=verify_min_build,
         verify_stdout_contains=verify_stdout_contains,
+        session_id=session_id,
     )
     actor = user.get("sub") if isinstance(user, dict) else str(user)
     org_id = user.get("org_id") if isinstance(user, dict) else None
@@ -1531,6 +1556,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
                 verify_kb,
                 verify_min_build,
                 verify_stdout_contains,
+                session_id,
                 assistant_plan if isinstance(assistant_plan, dict) else {},
                 bool(auto_remediate),
                 int(max_attempts),
@@ -1581,6 +1607,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
             "command": raw_command,
             "command_used": command_to_run,
             "run_as_system": effective_run_as_system,
+            "session_id": session_id,
             "execution_id": execution_id,
             "agent_ids": selected_ids,
             "summary": summary,
@@ -1663,6 +1690,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
             verify_kb=current_verify_kb,
             verify_min_build=current_verify_min_build,
             verify_stdout_contains=current_verify_stdout_contains,
+            session_id=session_id,
         )
         attempt_ok = False
         failure = ""
@@ -1700,6 +1728,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
                 "command": current_raw_command,
                 "command_used": current_command_used,
                 "run_as_system": bool(current_run_as_system),
+                "session_id": session_id,
                 "verify_kb": current_verify_kb,
                 "verify_min_build": current_verify_min_build,
                 "verify_stdout_contains": current_verify_stdout_contains,
@@ -1770,6 +1799,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         "command": raw_command,
         "command_used": attempt_records[-1].get("command_used") if attempt_records else command_to_run,
         "run_as_system": effective_run_as_system,
+        "session_id": session_id,
         "channel": last_execution.get("channel") if isinstance(last_execution, dict) else "endpoint",
         "mode": last_execution.get("mode") if isinstance(last_execution, dict) else "endpoint",
         "attempts": [row.get("command") for row in attempt_records if row.get("command")],

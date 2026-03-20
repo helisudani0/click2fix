@@ -79,6 +79,23 @@ const UPGRADE_PRESETS = [
     command: TARGETED_UPGRADE_PRESET_COMMAND,
   },
 ];
+const GLOBAL_SHELL_SESSION_STORAGE_KEY = "c2f.globalShell.sessionId";
+const GLOBAL_SHELL_SESSION_PATTERN = /^[A-Za-z0-9._-]+$/;
+const createGlobalShellSessionId = () =>
+  `gs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+const loadInitialGlobalShellSessionId = () => {
+  const fallback = createGlobalShellSessionId();
+  if (typeof window === "undefined") return fallback;
+  try {
+    const saved = String(window.localStorage.getItem(GLOBAL_SHELL_SESSION_STORAGE_KEY) || "").trim();
+    if (saved && saved.length <= 120 && GLOBAL_SHELL_SESSION_PATTERN.test(saved)) {
+      return saved;
+    }
+  } catch {
+    return fallback;
+  }
+  return fallback;
+};
 
 const normalizeAgents = (data) => {
   if (Array.isArray(data)) return data;
@@ -284,6 +301,7 @@ export default function GlobalShell() {
 
   const [shell, setShell] = useState("powershell");
   const [command, setCommand] = useState("");
+  const [sessionId, setSessionId] = useState(() => loadInitialGlobalShellSessionId());
   const [runAsSystem, setRunAsSystem] = useState(false);
   const [assistantPrompt, setAssistantPrompt] = useState("");
   const [assistantLoading, setAssistantLoading] = useState(false);
@@ -372,6 +390,16 @@ export default function GlobalShell() {
     loadHistory();
   }, [loadAgents, loadHistory]);
 
+  useEffect(() => {
+    const value = String(sessionId || "").trim();
+    if (!value || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(GLOBAL_SHELL_SESSION_STORAGE_KEY, value);
+    } catch {
+      // Ignore localStorage failures; session still works for the current page lifetime.
+    }
+  }, [sessionId]);
+
   const connectedAgents = useMemo(
     () => agents.filter((agent) => CONNECTED_STATUSES.has(agent.status)),
     [agents]
@@ -425,6 +453,16 @@ export default function GlobalShell() {
     }
     if (typeof prefill.command === "string") {
       setCommand(prefill.command);
+    }
+    if (typeof prefill.sessionId === "string") {
+      const nextSessionId = prefill.sessionId.trim();
+      if (
+        nextSessionId
+        && nextSessionId.length <= 120
+        && GLOBAL_SHELL_SESSION_PATTERN.test(nextSessionId)
+      ) {
+        setSessionId(nextSessionId);
+      }
     }
     if (typeof prefill.assistantPrompt === "string") {
       setAssistantPrompt(prefill.assistantPrompt.trim());
@@ -716,6 +754,8 @@ export default function GlobalShell() {
         run_as_system: effectiveRunAsSystem,
         justification: effectiveJustification,
       };
+      const effectiveSessionId = String(sessionId || "").trim();
+      if (effectiveSessionId) payload.session_id = effectiveSessionId;
       if (raw) payload.command = raw;
       if (prompt) payload.assistant_prompt = prompt;
       if (hasVulnerabilityContext) payload.vulnerability_context = vulnerabilityContext;
@@ -860,13 +900,18 @@ export default function GlobalShell() {
                       {targetPickList.length === 0 ? (
                         <div className="empty-state">No connected Windows agents match your search.</div>
                       ) : (
-                        targetPickList.map((agent) => {
-                          const checked = selectedAgentSet.has(agent.id);
-                          return (
-                            <label key={`target-${agent.id}`} className="list-item clickable readable">
+	                        targetPickList.map((agent) => {
+	                          const checked = selectedAgentSet.has(agent.id);
+	                          return (
+	                            <label
+	                              key={`target-${agent.id}`}
+	                              className="list-item clickable readable"
+	                              data-agent-id={agent.id}
+                            >
                               <input
                                 type="checkbox"
                                 checked={checked}
+                                data-agent-id={agent.id}
                                 onChange={(e) => {
                                   const next = e.target.checked;
                                   setTargetAgentIds((prev) => {
@@ -903,6 +948,7 @@ export default function GlobalShell() {
                     onChange={(e) => setTargetValue(e.target.value)}
                     placeholder="Agent ID (example: 004)"
                     list="globalShellAgentIds"
+                    data-agent-id={normalizedTargetValue || ""}
                   />
                   <datalist id="globalShellAgentIds">
                     {connectedWindows.slice(0, 150).map((agent) => (
@@ -931,6 +977,32 @@ export default function GlobalShell() {
                 />
                 <span className="muted">Run as SYSTEM (administrator context)</span>
               </label>
+            </div>
+
+            <div className="list-item readable">
+              <div className="muted">Session ID</div>
+              <input
+                className="input mt-8 mono"
+                value={sessionId}
+                onChange={(e) => {
+                  const next = String(e.target.value || "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 120);
+                  setSessionId(next);
+                }}
+                placeholder="Reuse this ID to keep PowerShell state alive across runs"
+                data-session-id={sessionId || ""}
+              />
+              <div className="page-actions mt-8">
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => setSessionId(createGlobalShellSessionId())}
+                >
+                  New Session ID
+                </button>
+              </div>
+              <div className="meta-line mt-8">
+                Reuse the same session ID to keep variables and functions alive. Idle sessions expire after 30 minutes.
+              </div>
             </div>
 
             <div className="list-item readable">
@@ -1110,7 +1182,7 @@ export default function GlobalShell() {
                     </tr>
                   ) : (
                     pagedTargets.map((agent) => (
-                      <tr key={`target-${agent.id}`}>
+                      <tr key={`target-${agent.id}`} data-agent-id={agent.id}>
                         <td>{agent.id}</td>
                         <td>{agent.name || "-"}</td>
                         <td>{agent.groupText || "-"}</td>

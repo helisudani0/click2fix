@@ -444,10 +444,26 @@ def _windows_kill_script(exec_id: int | None = None, delay_seconds: int = 3) -> 
         "$ProgressPreference='SilentlyContinue';"
         "$killed=@();"
         f"$execId='{safe_exec}';"
+        "$dir='C:\\\\Click2Fix\\\\control';"
+        "New-Item -ItemType Directory -Path $dir -Force | Out-Null;"
         "if($execId){"
+        "$kill=Join-Path $dir ('kill-'+$execId+'.flag');"
+        "$cancel=Join-Path $dir ('cancel-'+$execId+'.flag');"
+        "try{ New-Item -ItemType File -Path $kill -Force | Out-Null; $killed += ('created_flag='+$kill) }catch{};"
+        "try{ New-Item -ItemType File -Path $cancel -Force | Out-Null; $killed += ('created_flag='+$cancel) }catch{};"
         "$c2f=Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -match '\\\\Click2Fix\\\\scripts\\\\' -and $_.CommandLine -match ('-ExecId\\s+'+$execId) };"
         "foreach($p in $c2f){"
         "try{ Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; $killed += ('killed_pid='+$p.ProcessId+' name='+$p.Name+' reason=exec_id_match') }catch{ $killed += ('kill_failed_pid='+$p.ProcessId+' err='+$_.Exception.Message) }"
+        "};"
+        "$roots=Get-ChildItem -Path 'C:\\\\Click2Fix\\\\shell-sessions' -Directory -Recurse -ErrorAction SilentlyContinue;"
+        "foreach($root in $roots){"
+        "$current=Join-Path $root.FullName 'current.json';"
+        "if(-not (Test-Path -LiteralPath $current)){ continue };"
+        "try{ $info=Get-Content -Path $current -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }catch{ continue };"
+        "if([string]$info.exec_id -ne $execId){ continue };"
+        "try{ if($info.pid){ Stop-Process -Id ([int][string]$info.pid) -Force -ErrorAction Stop; $killed += ('killed_session_pid='+[string]$info.pid+' root='+$root.FullName) } }catch{ $killed += ('kill_failed_session_pid='+[string]$info.pid+' err='+$_.Exception.Message) };"
+        "$hostPid=Join-Path $root.FullName 'host.pid';"
+        "try{ if(Test-Path -LiteralPath $hostPid){ $pidRaw=[string](Get-Content -Path $hostPid -Raw -ErrorAction Stop); if($pidRaw.Trim()){ Stop-Process -Id ([int]$pidRaw.Trim()) -Force -ErrorAction Stop; $killed += ('killed_session_host='+$pidRaw.Trim()+' root='+$root.FullName) } } }catch{ $killed += ('kill_failed_session_host root='+$root.FullName+' err='+$_.Exception.Message) };"
         "};"
         "$tasks=(& schtasks.exe /Query /FO LIST /V 2>$null | Out-String);"
         "foreach($tn in ([regex]::Matches($tasks,'(?im)^TaskName:\\s*(.+)$') | ForEach-Object { $_.Groups[1].Value.Trim() })){"
@@ -689,6 +705,20 @@ def control_execution(
         }
     finally:
         db.close()
+
+
+@router.post("/{execution_id}/cancel")
+def cancel_execution(execution_id: int, payload: dict = Body(default={}), user=Depends(require_role("admin"))):
+    body = dict(payload or {})
+    body["command"] = "cancel"
+    return control_execution(execution_id, body, user)
+
+
+@router.post("/{execution_id}/kill")
+def kill_execution(execution_id: int, payload: dict = Body(default={}), user=Depends(require_role("admin"))):
+    body = dict(payload or {})
+    body["command"] = "kill"
+    return control_execution(execution_id, body, user)
 
 
 @router.get("/{execution_id}")

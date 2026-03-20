@@ -5,26 +5,24 @@ It gives IT/security teams one console for triage, response, remote command exec
 
 ## Current Release
 
-- Current codebase target: `v1.1.0`
-- Latest published stable tag: `v1.0.2`
+- Current codebase target: `v1.1.4`
+- Latest published stable tag: `v1.1.4`
 - Deployment model: appliance installer + Docker images (GHCR)
 
-## What's New in v1.1.0 (Current Codebase)
+## What's New in v1.1.4 (Current Codebase)
 
-- SOC signal quality upgrades:
+- Detection and analyst workflow upgrades:
   - IOC enrichment extraction/normalization and confidence scoring hardening
   - deeper MITRE ATT&CK mapping with ranking and confidence persistence
   - tighter analyst summary/recommendation generation in analytics outputs
-- Incident and governance upgrades:
-  - incident correlation/grouping + queue workflows
-  - assignment, priority, SLA, and due-state lifecycle endpoints
-  - trusted automation context profiles and execution-alert correlation
-- Response and operations upgrades:
-  - dry-run simulation semantics and audit trail hardening
-  - verification correctness and execution reconciliation improvements
+  - incident correlation/grouping, assignment, priority, SLA, and due-state lifecycle workflows
+- Response and verification upgrades:
+  - winget-backed Windows package remediation with bootstrap fallback and cleaner verification output
+  - Global Shell command-file execution on Windows, reusable shell sessions, and optional assistant-guided command planning/retry
+  - post-action verification reconciliation for already-satisfied package states and pending SCA verification loops
   - scheduler jobs API parity with lifecycle actions (`create`, `update`, `run-now`, pause/resume via toggle)
   - fleet and per-agent SCA rollups + recommendation APIs
-  - circuit-breaker transition telemetry and audit events
+  - circuit-breaker transition telemetry, audit events, and execution reconciliation improvements
 
 ## Remaining v1.1 Scope (Single Backlog)
 
@@ -33,12 +31,27 @@ It gives IT/security teams one console for triage, response, remote command exec
   - `docs/VNEXT_IMPLEMENTATION_BLUEPRINT.md`
   - `docs/REQUESTED_IMPROVEMENTS_ROADMAP.md`
 
+## v2 UESOP Program Tracking
+
+- Enterprise architecture blueprint:
+  - `docs/VNEXT_UESOP_ENTERPRISE_ARCHITECTURE.md`
+- Canonical done vs remaining tracker:
+  - `docs/V2_UESOP_MASTER_TRACKER.md`
+- Canonical implementation backlog:
+  - `docs/V2_UESOP_IMPLEMENTATION_BACKLOG.md`
+- Full requirement checklist:
+  - `docs/V2_UESOP_FULL_REQUIREMENTS_TASK_LIST.md`
+- Execution plan:
+  - `docs/VNEXT_IMPLEMENTATION_PLAN.md`
+- Monolith extraction milestones:
+  - `docs/V2_MONOLITH_EXTRACTION_MILESTONES.md`
+
 ## What Click2Fix Does
 
 - Ingests and operationalizes Wazuh alerts, vulnerabilities, and agent data.
 - Executes response actions across endpoints with approvals and audit trails.
-- Provides Global Shell for direct `PowerShell` / `CMD` execution on selected Windows agents.
-- Tracks execution lifecycle with evidence, endpoint output, and result summaries.
+- Provides Global Shell for direct `PowerShell` / `CMD` execution on selected Windows agents, with reusable session IDs and optional assistant-guided command generation.
+- Tracks execution lifecycle with evidence, endpoint output, post-action verification, and result summaries.
 - Supports scheduler-driven jobs (health checks, recurring operations).
 - Preserves forensic integrity workflows and chain-of-custody evidence handling.
 - Keeps governance visibility through approvals, audit logs, changes, and case tracking.
@@ -192,12 +205,18 @@ Required configuration (environment-driven):
 - v1.1 remaining work (active): `docs/V1_1_REMAINING.md`
 - v1.1 archived blueprint: `docs/VNEXT_IMPLEMENTATION_BLUEPRINT.md`
 - v1.1 archived roadmap: `docs/REQUESTED_IMPROVEMENTS_ROADMAP.md`
+- v2 UESOP architecture: `docs/VNEXT_UESOP_ENTERPRISE_ARCHITECTURE.md`
+- v2 UESOP tracker: `docs/V2_UESOP_MASTER_TRACKER.md`
+- v2 UESOP backlog: `docs/V2_UESOP_IMPLEMENTATION_BACKLOG.md`
+- v2 UESOP full requirements task list: `docs/V2_UESOP_FULL_REQUIREMENTS_TASK_LIST.md`
+- v2 UESOP execution plan: `docs/VNEXT_IMPLEMENTATION_PLAN.md`
+- v2 monolith extraction milestones: `docs/V2_MONOLITH_EXTRACTION_MILESTONES.md`
 - Safe GitHub publish checklist: `docs/SAFE_GITHUB_PUBLISH.md`
 
 ## Release Status
 
-- Current repo target version: `v1.1.0`
-- Latest published release: `v1.0.2`
+- Current repo target version: `v1.1.4`
+- Latest published release: `v1.1.4`
 - Published images:
   - `ghcr.io/helisudani0/click2fix-backend:<version>`
   - `ghcr.io/helisudani0/click2fix-frontend:<version>`

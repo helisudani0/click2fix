@@ -42,13 +42,5 @@ backend/playbooks/GeneratedPlaybook*.json
 !docker/.env.example
 !deploy/appliance/.env.appliance.template
 
-# Documentation workspace defaults:
-# keep docs ignored by default, but version key architecture/roadmap files.
-docs/*
-!docs/VNEXT_UESOP_ENTERPRISE_ARCHITECTURE.md
-!docs/VNEXT_IMPLEMENTATION_PLAN.md
-!docs/V2_UESOP_MASTER_TRACKER.md
-!docs/V2_UESOP_IMPLEMENTATION_BACKLOG.md
-!docs/V2_UESOP_FULL_REQUIREMENTS_TASK_LIST.md
-!docs/V3_UESOP_MASTER_TRACKER.md
-!docs/V3_UESOP_IMPLEMENTATION_BACKLOG.md
+# Internal documentation
+docs/

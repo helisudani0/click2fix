@@ -24,28 +24,6 @@ It gives IT/security teams one console for triage, response, remote command exec
   - fleet and per-agent SCA rollups + recommendation APIs
   - circuit-breaker transition telemetry, audit events, and execution reconciliation improvements
 
-## Remaining v1.1 Scope (Single Backlog)
-
-- `docs/V1_1_REMAINING.md` is the only active remaining-work document.
-- Archived references:
-  - `docs/VNEXT_IMPLEMENTATION_BLUEPRINT.md`
-  - `docs/REQUESTED_IMPROVEMENTS_ROADMAP.md`
-
-## v2 UESOP Program Tracking
-
-- Enterprise architecture blueprint:
-  - `docs/VNEXT_UESOP_ENTERPRISE_ARCHITECTURE.md`
-- Canonical done vs remaining tracker:
-  - `docs/V2_UESOP_MASTER_TRACKER.md`
-- Canonical implementation backlog:
-  - `docs/V2_UESOP_IMPLEMENTATION_BACKLOG.md`
-- Full requirement checklist:
-  - `docs/V2_UESOP_FULL_REQUIREMENTS_TASK_LIST.md`
-- Execution plan:
-  - `docs/VNEXT_IMPLEMENTATION_PLAN.md`
-- Monolith extraction milestones:
-  - `docs/V2_MONOLITH_EXTRACTION_MILESTONES.md`
-
 ## What Click2Fix Does
 
 - Ingests and operationalizes Wazuh alerts, vulnerabilities, and agent data.
@@ -138,7 +116,6 @@ It gives IT/security teams one console for triage, response, remote command exec
 - `backend/`: FastAPI APIs, orchestration, execution engine, scheduler, integrations.
 - `deploy/`: Wazuh active-response artifacts and appliance packaging/install tooling.
 - `docker/`: container build files and compose stack for runtime deployment.
-- `docs/`: operations docs, release safety checklist, roadmap/planning notes.
 
 ## Tech Stack
 
@@ -197,21 +174,6 @@ Required configuration (environment-driven):
 - Disable demo users in production.
 - Restrict UI access to authorized admin/analyst roles.
 - Back up database volumes and operational evidence stores.
-
-## Documentation Index
-
-- Appliance install/upgrade: `deploy/appliance/README.md`
-- OVA packaging blueprint: `deploy/appliance/OVA_BUILD_BLUEPRINT.md`
-- v1.1 remaining work (active): `docs/V1_1_REMAINING.md`
-- v1.1 archived blueprint: `docs/VNEXT_IMPLEMENTATION_BLUEPRINT.md`
-- v1.1 archived roadmap: `docs/REQUESTED_IMPROVEMENTS_ROADMAP.md`
-- v2 UESOP architecture: `docs/VNEXT_UESOP_ENTERPRISE_ARCHITECTURE.md`
-- v2 UESOP tracker: `docs/V2_UESOP_MASTER_TRACKER.md`
-- v2 UESOP backlog: `docs/V2_UESOP_IMPLEMENTATION_BACKLOG.md`
-- v2 UESOP full requirements task list: `docs/V2_UESOP_FULL_REQUIREMENTS_TASK_LIST.md`
-- v2 UESOP execution plan: `docs/VNEXT_IMPLEMENTATION_PLAN.md`
-- v2 monolith extraction milestones: `docs/V2_MONOLITH_EXTRACTION_MILESTONES.md`
-- Safe GitHub publish checklist: `docs/SAFE_GITHUB_PUBLISH.md`
 
 ## Release Status
 

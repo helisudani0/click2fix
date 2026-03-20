@@ -1,9 +1,9 @@
 import asyncio
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from core.origin_policy import configured_cors_origins, normalize_origin
 from core.ws_bus import subscribe, unsubscribe
 from core.security import COOKIE_NAME, decode_token
-from core.settings import SETTINGS
 
 router = APIRouter()
 
@@ -25,15 +25,11 @@ def _ws_candidates(ws: WebSocket) -> list[str]:
 
 
 def _allowed_origins() -> set[str]:
-    cfg = SETTINGS.get("security", {}) if isinstance(SETTINGS, dict) else {}
-    raw = cfg.get("cors_origins")
-    if isinstance(raw, list):
-        return {str(item).strip() for item in raw if str(item).strip()}
-    return {"http://localhost:5173", "http://localhost:3000"}
+    return set(configured_cors_origins())
 
 
 def _validate_ws_origin(ws: WebSocket) -> None:
-    origin = (ws.headers.get("origin") or "").strip()
+    origin = normalize_origin(ws.headers.get("origin"))
     if not origin:
         return
     allowed = _allowed_origins()

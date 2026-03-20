@@ -36,6 +36,7 @@ services:
       - DATABASE_URL=postgresql+psycopg2://click2fix:click2fix@db:5432/click2fix
       - JWT_SECRET=${JWT_SECRET:-PLEASE_CHANGE_ME_USE_32_PLUS_RANDOM_CHARACTERS}
       - C2F_ORCHESTRATION_MODE=endpoint
+      - C2F_CORS_ORIGINS=${C2F_CORS_ORIGINS:-http://localhost:5173}
       - WAZUH_URL=${WAZUH_URL:-https://WAZUH_MANAGER_IP:55000}
       - WAZUH_USER=${WAZUH_USER:-c2f_api}
       - WAZUH_PASSWORD=${WAZUH_PASSWORD:-}

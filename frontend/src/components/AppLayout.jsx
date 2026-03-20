@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import api, {
   clearLegacyToken,
   decodeLegacyTokenPayload,
@@ -10,6 +10,10 @@ import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
 const SIDEBAR_STORAGE_KEY = "c2f-sidebar-collapsed";
 const PRIORITY_PANEL_STORAGE_KEY = "c2f-priority-panel-collapsed";
+const PRIORITY_PANEL_HEIGHT_STORAGE_KEY = "c2f-priority-panel-height";
+const DEFAULT_PRIORITY_PANEL_HEIGHT = 320;
+const MIN_PRIORITY_PANEL_HEIGHT = 170;
+const MAX_PRIORITY_PANEL_HEIGHT = 520;
 
 const ROUTE_LABELS = {
   "/": "Dashboard",
@@ -86,9 +90,16 @@ const shortLabel = (value) =>
     .slice(0, 3)
     .toUpperCase() || "NAV";
 
+const clampPriorityPanelHeight = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return DEFAULT_PRIORITY_PANEL_HEIGHT;
+  return Math.min(MAX_PRIORITY_PANEL_HEIGHT, Math.max(MIN_PRIORITY_PANEL_HEIGHT, Math.round(numeric)));
+};
+
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const priorityResizeRef = useRef(null);
   const [user, setUser] = useState(null);
   const [search, setSearch] = useState("");
   const [appVersion, setAppVersion] = useState(UI_APP_VERSION);
@@ -100,6 +111,10 @@ export default function AppLayout() {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(PRIORITY_PANEL_STORAGE_KEY) === "1";
   });
+  const [priorityPanelHeight, setPriorityPanelHeight] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_PRIORITY_PANEL_HEIGHT;
+    return clampPriorityPanelHeight(window.localStorage.getItem(PRIORITY_PANEL_HEIGHT_STORAGE_KEY));
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -110,6 +125,47 @@ export default function AppLayout() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(PRIORITY_PANEL_STORAGE_KEY, priorityPanelCollapsed ? "1" : "0");
   }, [priorityPanelCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(PRIORITY_PANEL_HEIGHT_STORAGE_KEY, String(priorityPanelHeight));
+  }, [priorityPanelHeight]);
+
+  const stopPriorityResize = useCallback(() => {
+    if (typeof window !== "undefined" && priorityResizeRef.current) {
+      window.removeEventListener("mousemove", priorityResizeRef.current.onMove);
+      window.removeEventListener("mouseup", priorityResizeRef.current.onUp);
+      priorityResizeRef.current = null;
+    }
+    if (typeof document !== "undefined") {
+      document.body.style.removeProperty("cursor");
+      document.body.style.removeProperty("user-select");
+    }
+  }, []);
+
+  useEffect(() => () => stopPriorityResize(), [stopPriorityResize]);
+
+  const startPriorityResize = useCallback((event) => {
+    if (sidebarCollapsed || priorityPanelCollapsed || typeof window === "undefined" || window.innerWidth <= 1024) {
+      return;
+    }
+    event.preventDefault();
+    stopPriorityResize();
+    const startY = event.clientY;
+    const startHeight = priorityPanelHeight;
+    const onMove = (moveEvent) => {
+      const delta = moveEvent.clientY - startY;
+      setPriorityPanelHeight(clampPriorityPanelHeight(startHeight + delta));
+    };
+    const onUp = () => stopPriorityResize();
+    priorityResizeRef.current = { onMove, onUp };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    if (typeof document !== "undefined") {
+      document.body.style.cursor = "row-resize";
+      document.body.style.userSelect = "none";
+    }
+  }, [priorityPanelCollapsed, priorityPanelHeight, sidebarCollapsed, stopPriorityResize]);
 
   useEffect(() => {
     let active = true;
@@ -229,8 +285,9 @@ export default function AppLayout() {
         </div>
 
         <div
-          className={`priority-panel${priorityPanelCollapsed ? " collapsed" : ""}`}
+          className={`priority-panel${priorityPanelCollapsed ? " collapsed" : " resizable"}`}
           aria-label="Priority navigation"
+          style={!priorityPanelCollapsed && !sidebarCollapsed ? { "--priority-panel-height": `${priorityPanelHeight}px` } : undefined}
         >
           <div className="priority-panel-header">
             <div className="priority-title">Priority Queue</div>
@@ -263,6 +320,18 @@ export default function AppLayout() {
             </div>
           ) : null}
         </div>
+        {!sidebarCollapsed ? (
+          <div className={`sidebar-divider${priorityPanelCollapsed ? " disabled" : ""}`} aria-hidden="true">
+            <button
+              type="button"
+              className="sidebar-divider-handle"
+              onMouseDown={startPriorityResize}
+              onDoubleClick={() => setPriorityPanelHeight(DEFAULT_PRIORITY_PANEL_HEIGHT)}
+              disabled={priorityPanelCollapsed}
+              title="Drag to resize priority queue. Double-click to reset."
+            />
+          </div>
+        ) : null}
 
         <nav className="nav-groups" aria-label="Primary navigation">
           {NAV_SECTIONS.map((section) => (

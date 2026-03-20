@@ -58,7 +58,7 @@ export default function Executions() {
   const [executionSearch, setExecutionSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [queuePage, setQueuePage] = useState(1);
-  const [queuePageSize, setQueuePageSize] = useState(25);
+  const [queuePageSize, setQueuePageSize] = useState(15);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [queueCollapsed, setQueueCollapsed] = useState(false);
 
@@ -271,7 +271,7 @@ export default function Executions() {
                 setQueuePageSize(size);
                 setQueuePage(1);
               }}
-              pageSizeOptions={[25, 50, 100]}
+              pageSizeOptions={[15, 25, 50]}
               label="executions"
             />
           </>

@@ -9,6 +9,7 @@ import { APP_TIMEZONE_LABEL } from "../utils/time";
 import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
 const SIDEBAR_STORAGE_KEY = "c2f-sidebar-collapsed";
+const PRIORITY_PANEL_STORAGE_KEY = "c2f-priority-panel-collapsed";
 
 const ROUTE_LABELS = {
   "/": "Dashboard",
@@ -95,11 +96,20 @@ export default function AppLayout() {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === "1";
   });
+  const [priorityPanelCollapsed, setPriorityPanelCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(PRIORITY_PANEL_STORAGE_KEY) === "1";
+  });
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(SIDEBAR_STORAGE_KEY, sidebarCollapsed ? "1" : "0");
   }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(PRIORITY_PANEL_STORAGE_KEY, priorityPanelCollapsed ? "1" : "0");
+  }, [priorityPanelCollapsed]);
 
   useEffect(() => {
     let active = true;
@@ -218,21 +228,40 @@ export default function AppLayout() {
           </button>
         </div>
 
-        <div className="priority-panel" aria-label="Priority navigation">
-          <div className="priority-title">Priority Queue</div>
-          <div className="priority-links">
-            {PRIORITY_LINKS.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                title={item.label}
-                className={({ isActive }) => `priority-link${isActive ? " active" : ""}`}
-              >
-                <span className="nav-link-badge">{shortLabel(item.label)}</span>
-                <span className="nav-link-label">{item.label}</span>
-              </NavLink>
-            ))}
+        <div
+          className={`priority-panel${priorityPanelCollapsed ? " collapsed" : ""}`}
+          aria-label="Priority navigation"
+        >
+          <div className="priority-panel-header">
+            <div className="priority-title">Priority Queue</div>
+            <button
+              type="button"
+              className="panel-collapse-btn"
+              onClick={() => setPriorityPanelCollapsed((prev) => !prev)}
+              aria-expanded={!priorityPanelCollapsed}
+              aria-label={priorityPanelCollapsed ? "Expand priority queue" : "Collapse priority queue"}
+              title={priorityPanelCollapsed ? "Expand priority queue" : "Collapse priority queue"}
+            >
+              {priorityPanelCollapsed ? "+" : "-"}
+            </button>
           </div>
+          {!priorityPanelCollapsed ? (
+            <div className="priority-panel-body">
+              <div className="priority-links">
+                {PRIORITY_LINKS.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    title={item.label}
+                    className={({ isActive }) => `priority-link${isActive ? " active" : ""}`}
+                  >
+                    <span className="nav-link-badge">{shortLabel(item.label)}</span>
+                    <span className="nav-link-label">{item.label}</span>
+                  </NavLink>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <nav className="nav-groups" aria-label="Primary navigation">

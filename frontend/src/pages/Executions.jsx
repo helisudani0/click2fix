@@ -58,8 +58,9 @@ export default function Executions() {
   const [executionSearch, setExecutionSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [queuePage, setQueuePage] = useState(1);
-  const [queuePageSize, setQueuePageSize] = useState(50);
+  const [queuePageSize, setQueuePageSize] = useState(25);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [queueCollapsed, setQueueCollapsed] = useState(false);
 
   const load = useCallback((force = false) => {
     setLoading(true);
@@ -201,64 +202,84 @@ export default function Executions() {
             <h3>Execution Queue</h3>
             <p className="muted">Select a run for live stream and forensic detail.</p>
           </div>
+          <div className="page-actions">
+            <span className="muted">{filteredRuns.length} visible runs</span>
+            <button type="button" className="btn secondary" onClick={() => setQueueCollapsed((prev) => !prev)}>
+              {queueCollapsed ? "Expand Queue" : "Collapse Queue"}
+            </button>
+          </div>
         </div>
-        <div className="table-scroll">
-          <table className="table compact readable">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Status</th>
-                <th>Action</th>
-                <th>Target</th>
-                <th>Approved By</th>
-                <th>Started</th>
-                <th>Finished</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRuns.length === 0 ? (
-                <tr>
-                  <td colSpan="7" className="text-center">
-                    No executions found.
-                  </td>
-                </tr>
-              ) : (
-                pagedRuns.map((run) => (
-                  <tr
-                    key={run.id}
-                    onClick={() => {
-                      setSelected(run.id);
-                      setDrawerOpen(true);
-                    }}
-                    className={`clickable ${Number(selected) === Number(run.id) ? "selected" : ""}`}
-                  >
-                    <td>{run.id}</td>
-                    <td>
-                      <span className={`status-pill ${statusTone(run.status)}`}>{run.status || "-"}</span>
-                    </td>
-                    <td>{run.action || "-"}</td>
-                    <td>{run.agent || "-"}</td>
-                    <td>{run.approvedBy || "-"}</td>
-                    <td><RelativeTimestamp value={run.startedAt} /></td>
-                    <td><RelativeTimestamp value={run.finishedAt} /></td>
+        {!queueCollapsed ? (
+          <>
+            <div className="table-scroll execution-queue-scroll">
+              <table className="table compact readable execution-queue-table">
+                <thead>
+                  <tr>
+                    <th className="execution-col-id">ID</th>
+                    <th className="execution-col-status">Status</th>
+                    <th className="execution-col-action">Action</th>
+                    <th className="execution-col-target">Target</th>
+                    <th className="execution-col-approver">Approved By</th>
+                    <th className="execution-col-time">Started</th>
+                    <th className="execution-col-time">Finished</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        <Pager
-          total={filteredRuns.length}
-          page={queuePage}
-          pageSize={queuePageSize}
-          onPageChange={setQueuePage}
-          onPageSizeChange={(size) => {
-            setQueuePageSize(size);
-            setQueuePage(1);
-          }}
-          pageSizeOptions={[25, 50, 100]}
-          label="executions"
-        />
+                </thead>
+                <tbody>
+                  {filteredRuns.length === 0 ? (
+                    <tr>
+                      <td colSpan="7" className="text-center">
+                        No executions found.
+                      </td>
+                    </tr>
+                  ) : (
+                    pagedRuns.map((run) => (
+                      <tr
+                        key={run.id}
+                        onClick={() => {
+                          setSelected(run.id);
+                          setDrawerOpen(true);
+                        }}
+                        className={`clickable ${Number(selected) === Number(run.id) ? "selected" : ""}`}
+                      >
+                        <td className="execution-col-id">{run.id}</td>
+                        <td className="execution-col-status">
+                          <span className={`status-pill ${statusTone(run.status)}`}>{run.status || "-"}</span>
+                        </td>
+                        <td className="execution-col-action" title={run.action || "-"}>
+                          <span className="execution-cell-text">{run.action || "-"}</span>
+                        </td>
+                        <td className="execution-col-target" title={run.agent || "-"}>
+                          <span className="execution-cell-text">{run.agent || "-"}</span>
+                        </td>
+                        <td className="execution-col-approver" title={run.approvedBy || "-"}>
+                          <span className="execution-cell-text">{run.approvedBy || "-"}</span>
+                        </td>
+                        <td className="execution-col-time"><RelativeTimestamp value={run.startedAt} /></td>
+                        <td className="execution-col-time"><RelativeTimestamp value={run.finishedAt} /></td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <Pager
+              total={filteredRuns.length}
+              page={queuePage}
+              pageSize={queuePageSize}
+              onPageChange={setQueuePage}
+              onPageSizeChange={(size) => {
+                setQueuePageSize(size);
+                setQueuePage(1);
+              }}
+              pageSizeOptions={[25, 50, 100]}
+              label="executions"
+            />
+          </>
+        ) : (
+          <div className="empty-state">
+            Queue collapsed. Expand it to resume row-by-row navigation.
+          </div>
+        )}
       </div>
 
       {!drawerOpen ? <div className="empty-state">Select an execution to inspect output and step telemetry.</div> : null}

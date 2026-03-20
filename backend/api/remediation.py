@@ -1,9 +1,12 @@
 import json
+import os
+import threading
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy import text
 
+from core.active_defense import action_requires_approval_handshake
 from core.actions import get_action, normalize_args, resolve_action_dispatch
 from core.action_execution import execute_action, resolve_agent_ids
 from core.audit import log_audit
@@ -20,6 +23,22 @@ from db.database import connect
 
 router = APIRouter()
 client = WazuhClient()
+
+
+def _fleet_batch_size() -> int:
+    raw = os.getenv("C2F_EXECUTION_BATCH_SIZE", "20")
+    try:
+        return max(1, min(int(raw), 100))
+    except Exception:
+        return 20
+
+
+def _fleet_async_threshold() -> int:
+    raw = os.getenv("C2F_EXECUTION_BATCH_THRESHOLD", "")
+    try:
+        return max(2, int(raw))
+    except Exception:
+        return max(21, _fleet_batch_size() + 1)
 
 
 def _to_text(value):
@@ -63,6 +82,481 @@ def _store_execution_targets(conn, execution_id: int, rows) -> None:
         )
 
 
+def _result_execution_status(payload) -> str:
+    result = payload if isinstance(payload, dict) else {}
+    total = int(result.get("total") or 0)
+    success = int(result.get("success") or 0)
+    failed = int(result.get("failed") or 0)
+    if total > 0 and success > 0 and failed > 0:
+        return "PARTIAL"
+    if total > 0 and success > 0 and failed == 0:
+        return "SUCCESS"
+    return "FAILED"
+
+
+def _result_counts(rows, *, fallback_total: int = 0) -> dict:
+    valid_rows = [row for row in (rows or []) if isinstance(row, dict)]
+    success = sum(1 for row in valid_rows if row.get("ok"))
+    failed = sum(1 for row in valid_rows if not row.get("ok"))
+    completed = len(valid_rows)
+    total = max(int(fallback_total or 0), completed)
+    return {
+        "total": total,
+        "completed": completed,
+        "success": success,
+        "failed": failed,
+    }
+
+
+def _update_execution_progress(
+    conn,
+    execution_id: int,
+    *,
+    status: str | None = None,
+    finished: bool = False,
+    target_total: int | None = None,
+    target_completed: int | None = None,
+    target_success: int | None = None,
+    target_failed: int | None = None,
+    batch_size: int | None = None,
+) -> None:
+    assignments = []
+    params = {"id": int(execution_id)}
+    if status:
+        assignments.append("status=:status")
+        params["status"] = str(status)
+    if target_total is not None:
+        assignments.append("target_total=:target_total")
+        params["target_total"] = int(target_total)
+    if target_completed is not None:
+        assignments.append("target_completed=:target_completed")
+        params["target_completed"] = int(target_completed)
+    if target_success is not None:
+        assignments.append("target_success=:target_success")
+        params["target_success"] = int(target_success)
+    if target_failed is not None:
+        assignments.append("target_failed=:target_failed")
+        params["target_failed"] = int(target_failed)
+    if batch_size is not None:
+        assignments.append("batch_size=:batch_size")
+        params["batch_size"] = int(batch_size)
+    if finished:
+        assignments.append("finished_at=:finished_at")
+        params["finished_at"] = utc_now_naive()
+    if not assignments:
+        return
+    conn.execute(
+        text(
+            f"""
+            UPDATE executions
+            SET {", ".join(assignments)}
+            WHERE id=:id
+            """
+        ),
+        params,
+    )
+
+
+def _insert_execution_record(
+    *,
+    target: str,
+    action_id: str,
+    arguments,
+    actor: str,
+    org_id,
+    alert_id: str | None,
+    justification: str | None,
+    initial_status: str,
+    target_total: int,
+    batch_size: int,
+) -> int:
+    db = connect()
+    try:
+        inserted = db.execute(
+            text(
+                """
+                INSERT INTO executions
+                (approval_id, agent, playbook, action, args, status, approved_by, started_at, alert_id, org_id,
+                 target_total, target_completed, target_success, target_failed, batch_size)
+                VALUES (:approval_id, :agent, :playbook, :action, :args, :status, :approved_by, :started_at, :alert_id, :org_id,
+                        :target_total, :target_completed, :target_success, :target_failed, :batch_size)
+                RETURNING id
+                """
+            ),
+            {
+                "approval_id": None,
+                "agent": target,
+                "playbook": action_id,
+                "action": action_id,
+                "args": json.dumps(arguments, default=str),
+                "status": initial_status,
+                "approved_by": actor,
+                "started_at": utc_now_naive(),
+                "alert_id": alert_id,
+                "org_id": org_id,
+                "target_total": int(target_total or 0),
+                "target_completed": 0,
+                "target_success": 0,
+                "target_failed": 0,
+                "batch_size": int(batch_size or 0),
+            },
+        )
+        execution_id = int(inserted.scalar())
+        if justification:
+            db.execute(
+                text(
+                    """
+                    INSERT INTO execution_metadata (execution_id, justification)
+                    VALUES (:execution_id, :justification)
+                    """
+                ),
+                {
+                    "execution_id": execution_id,
+                    "justification": str(justification),
+                },
+            )
+        db.commit()
+        return execution_id
+    finally:
+        db.close()
+
+
+def _log_case_events(
+    conn,
+    *,
+    alert_id: str | None,
+    case_id: int | None,
+    action_id: str,
+    actor: str,
+    execution_id: int,
+    execution_status: str,
+    group: str | None = None,
+) -> None:
+    if not alert_id and not case_id:
+        return
+    from core.case_timeline import case_ids_for_alert, log_case_event
+
+    target_cases = []
+    if case_id:
+        target_cases = [case_id]
+    elif alert_id:
+        target_cases = case_ids_for_alert(alert_id, conn=conn)
+
+    for cid in target_cases:
+        start_msg = f"Execution started for action {action_id}"
+        finish_msg = f"Execution finished with status {execution_status}"
+        if group:
+            start_msg += f" on group {group}"
+            finish_msg += f" on group {group}"
+        log_case_event(
+            cid,
+            "execution_started",
+            message=start_msg,
+            actor=actor,
+            alert_id=alert_id,
+            execution_id=execution_id,
+            action=action_id,
+            conn=conn,
+        )
+        log_case_event(
+            cid,
+            "execution_finished",
+            message=finish_msg,
+            actor=actor,
+            alert_id=alert_id,
+            execution_id=execution_id,
+            action=action_id,
+            conn=conn,
+        )
+    if target_cases:
+        conn.commit()
+
+
+def _run_async_remediation_job(
+    *,
+    execution_id: int,
+    action_id: str,
+    dispatch,
+    agent_ids: list[str],
+    target: str,
+    actor: str,
+    org_id,
+    alert_id: str | None,
+    case_id: int | None,
+    group: str | None,
+    request_ip: str | None,
+) -> None:
+    db = connect()
+    execution = None
+    target_rows = None
+    result_payload = {}
+    verification_result = None
+    reconcile_result = None
+    step_name = "orchestration"
+    step_stdout = ""
+    step_stderr = ""
+    execution_status = "FAILED"
+    step_status = "FAILED"
+    incremental_rows_persisted = False
+    batch_size = _fleet_batch_size()
+
+    def _batch_progress_callback(progress: dict) -> None:
+        nonlocal incremental_rows_persisted
+        rows = progress.get("rows") if isinstance(progress, dict) else []
+        if rows:
+            _store_execution_targets(db, execution_id, rows)
+            incremental_rows_persisted = True
+        _update_execution_progress(
+            db,
+            execution_id,
+            status="PARTIAL",
+            target_total=int(progress.get("total") or len(agent_ids)),
+            target_completed=int(progress.get("completed") or 0),
+            target_success=int(progress.get("success") or 0),
+            target_failed=int(progress.get("failed") or 0),
+            batch_size=batch_size,
+        )
+        db.commit()
+
+    try:
+        _update_execution_progress(
+            db,
+            execution_id,
+            status="RUNNING",
+            target_total=len(agent_ids),
+            batch_size=batch_size if len(agent_ids) >= batch_size else len(agent_ids),
+        )
+        db.commit()
+
+        publish_event(
+            execution_id,
+            {
+                "type": "execution_started",
+                "step": "orchestration",
+                "status": "RUNNING",
+                "stdout": f"action={action_id}; target={target}; targets={len(agent_ids)}",
+                "stderr": "",
+            },
+        )
+
+        try:
+            execution = execute_action(
+                client,
+                action_id,
+                dispatch,
+                agent_ids,
+                execution_id=execution_id,
+                context={"_batch_progress_callback": _batch_progress_callback},
+            )
+            step_name = execution.get("channel") or "orchestration"
+            detail = f"channel={execution.get('channel')}; command={execution.get('command_used')}"
+            attempts = execution.get("attempts") or []
+            if attempts:
+                detail += f"; attempts={','.join(attempts)}"
+            result_payload = execution.get("result") if isinstance(execution.get("result"), dict) else {}
+            step_stdout = f"{detail}\n{json.dumps(result_payload, default=str)}"
+            execution_status = _result_execution_status(result_payload)
+            step_status = execution_status if execution_status != "FAILED" else "FAILED"
+            if isinstance(result_payload.get("results"), list):
+                target_rows = result_payload.get("results")
+                verification_result = run_post_action_verification(
+                    client,
+                    action_id,
+                    execution_id,
+                    target_rows or [],
+                )
+        except HTTPException as exc:
+            execution_status = "FAILED"
+            step_status = "FAILED"
+            if isinstance(exc.detail, dict):
+                step_name = "endpoint"
+                step_stderr = _to_text(exc.detail.get("message") or exc.detail)
+                result_payload = exc.detail.get("result") if isinstance(exc.detail.get("result"), dict) else {}
+                if isinstance(result_payload.get("results"), list):
+                    target_rows = result_payload.get("results")
+            else:
+                step_name = "active_response" if "active response" in _to_text(exc.detail).lower() else "orchestration"
+                step_stderr = _to_text(exc.detail)
+        except Exception as exc:
+            execution_status = "FAILED"
+            step_status = "FAILED"
+            step_stderr = _to_text(exc)
+
+        counts = _result_counts(target_rows, fallback_total=len(agent_ids))
+        if target_rows and not incremental_rows_persisted:
+            _store_execution_targets(db, execution_id, target_rows)
+
+        db.execute(
+            text(
+                """
+                INSERT INTO execution_steps
+                (execution_id, step, stdout, stderr, status)
+                VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                """
+            ),
+            {
+                "execution_id": execution_id,
+                "step": step_name,
+                "stdout": step_stdout,
+                "stderr": step_stderr,
+                "status": step_status,
+            },
+        )
+
+        verification_state = derive_verification_state(verification_result)
+        if verification_state.get("execution_status") and execution_status == "SUCCESS":
+            execution_status = str(verification_state.get("execution_status") or execution_status)
+        _update_execution_progress(
+            db,
+            execution_id,
+            status=execution_status,
+            finished=True,
+            target_total=counts["total"],
+            target_completed=counts["completed"],
+            target_success=counts["success"],
+            target_failed=counts["failed"],
+            batch_size=batch_size if len(agent_ids) >= batch_size else len(agent_ids),
+        )
+
+        if verification_state.get("applicable"):
+            db.execute(
+                text(
+                    """
+                    INSERT INTO execution_steps
+                    (execution_id, step, stdout, stderr, status)
+                    VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                    """
+                ),
+                {
+                    "execution_id": execution_id,
+                    "step": "post_action_verification",
+                    "stdout": json.dumps(verification_result, default=str),
+                    "stderr": str(verification_state.get("step_error") or ""),
+                    "status": str(verification_state.get("step_status") or "SUCCESS"),
+                },
+            )
+
+        successful_agent_ids = [
+            str(row.get("agent_id") or "").strip()
+            for row in (target_rows or [])
+            if isinstance(row, dict) and row.get("ok") and str(row.get("agent_id") or "").strip()
+        ]
+        if str(action_id or "").strip().lower() == "sca-rescan" and successful_agent_ids:
+            reconcile_result = reconcile_pending_verifications_for_agents(
+                client,
+                successful_agent_ids,
+                source_execution_id=execution_id,
+                source_action_id=action_id,
+            )
+            if isinstance(reconcile_result, dict) and int(reconcile_result.get("updated") or 0) > 0:
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO execution_steps
+                        (execution_id, step, stdout, stderr, status)
+                        VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                        """
+                    ),
+                    {
+                        "execution_id": execution_id,
+                        "step": "pending_verification_reconcile",
+                        "stdout": json.dumps(reconcile_result, default=str),
+                        "stderr": "",
+                        "status": "SUCCESS",
+                    },
+                )
+        db.commit()
+        _log_case_events(
+            db,
+            alert_id=alert_id,
+            case_id=case_id,
+            action_id=action_id,
+            actor=actor,
+            execution_id=execution_id,
+            execution_status=execution_status,
+            group=group,
+        )
+
+        publish_event(
+            execution_id,
+            {
+                "type": "execution_finished",
+                "step": step_name,
+                "status": execution_status,
+                "stdout": json.dumps(
+                    {
+                        "success": counts["success"],
+                        "failed": counts["failed"],
+                        "total": counts["total"],
+                    },
+                    default=str,
+                ),
+                "stderr": step_stderr if step_status == "FAILED" else "",
+            },
+        )
+    finally:
+        db.close()
+
+    log_audit(
+        "execution_finished",
+        actor=actor,
+        entity_type="execution",
+        entity_id=str(execution_id),
+        detail=f"target={target}; status={execution_status}; action={action_id}",
+        org_id=org_id,
+        ip_address=request_ip,
+    )
+
+
+def queue_remediation_execution(
+    *,
+    target: str,
+    action_id: str,
+    dispatch,
+    arguments,
+    agent_ids: list[str],
+    actor: str,
+    org_id,
+    alert_id: str | None,
+    case_id: int | None,
+    group: str | None,
+    justification: str | None,
+    request_ip: str | None,
+) -> int:
+    batch_size = _fleet_batch_size()
+    execution_id = _insert_execution_record(
+        target=target,
+        action_id=action_id,
+        arguments=arguments,
+        actor=actor,
+        org_id=org_id,
+        alert_id=alert_id,
+        justification=justification,
+        initial_status="QUEUED",
+        target_total=len(agent_ids),
+        batch_size=batch_size if len(agent_ids) >= batch_size else len(agent_ids),
+    )
+    worker = threading.Thread(
+        target=_run_async_remediation_job,
+        kwargs={
+            "execution_id": execution_id,
+            "action_id": action_id,
+            "dispatch": dispatch,
+            "agent_ids": list(agent_ids),
+            "target": target,
+            "actor": actor,
+            "org_id": org_id,
+            "alert_id": alert_id,
+            "case_id": case_id,
+            "group": group,
+            "request_ip": request_ip,
+        },
+        daemon=True,
+    )
+    worker.start()
+    return execution_id
+
+
 @router.post("")
 async def remediate(
     request: Request,
@@ -93,6 +587,7 @@ async def remediate(
     case_id = body.get("case_id") or case_id
     group = body.get("group") or group
     justification = body.get("justification") or body.get("reason")
+    async_raw = body.get("async")
     exclude_agent_ids = body.get("exclude_agent_ids") or body.get("exclude_agents") or []
 
     if not action_id or (not agent_id and not group and not agent_ids):
@@ -114,6 +609,96 @@ async def remediate(
         raise HTTPException(status_code=404, detail="No agents resolved for target")
     actor = user.get("sub") if isinstance(user, dict) else str(user)
     org_id = user.get("org_id") if isinstance(user, dict) else None
+    if action_requires_approval_handshake(action_id, target_count=len(agent_ids), context={"tenant_id": org_id}):
+        from api.approvals import create_approval_request_record
+
+        approval = create_approval_request_record(
+            request=request,
+            user=user,
+            agent_ids=agent_ids,
+            action_id=action_id,
+            args=args,
+            alert_id=alert_id,
+            case_id=case_id,
+            justification=justification,
+            incident_priority=body.get("incident_priority") or body.get("priority"),
+            incident_score=body.get("incident_score") or body.get("score"),
+        )
+        return {
+            "agent": target,
+            "action": action_id,
+            "status": "PENDING_APPROVAL",
+            "approval_id": approval.get("approval_id") or approval.get("id"),
+            "approval": approval,
+            "result": None,
+            "summary": {
+                "total": len(agent_ids),
+                "completed": 0,
+                "success": 0,
+                "failed": 0,
+                "remaining": len(agent_ids),
+                "percent_complete": 0,
+                "status": "PENDING_APPROVAL",
+            },
+        }
+    if async_raw is None:
+        async_mode = len(agent_ids) >= _fleet_async_threshold()
+    else:
+        async_mode = str(async_raw).strip().lower() in {"1", "true", "yes", "on"}
+
+    if async_mode:
+        execution_id = queue_remediation_execution(
+            target=target,
+            action_id=action_id,
+            dispatch=dispatch,
+            arguments=arguments,
+            agent_ids=agent_ids,
+            actor=actor,
+            org_id=org_id,
+            alert_id=alert_id,
+            case_id=case_id,
+            group=group,
+            justification=justification,
+            request_ip=request.client.host if request.client else None,
+        )
+        log_audit(
+            "execution_queued",
+            actor=actor,
+            entity_type="execution",
+            entity_id=str(execution_id),
+            detail=f"target={target}; status=QUEUED; action={action_id}; targets={len(agent_ids)}",
+            org_id=org_id,
+            ip_address=request.client.host if request.client else None,
+        )
+        return {
+            "agent": target,
+            "action": action_id,
+            "execution_id": execution_id,
+            "status": "QUEUED",
+            "channel": "endpoint",
+            "mode": "endpoint_batched",
+            "command_used": action_id,
+            "attempts": [action_id],
+            "result": {
+                "ok": False,
+                "queued": True,
+                "total": len(agent_ids),
+                "success": 0,
+                "failed": 0,
+                "results": [],
+            },
+            "summary": {
+                "total": len(agent_ids),
+                "completed": 0,
+                "success": 0,
+                "failed": 0,
+                "remaining": len(agent_ids),
+                "percent_complete": 0,
+                "status": "QUEUED",
+            },
+            "post_action_verification": None,
+            "pending_verification_reconcile": None,
+        }
 
     db = connect()
     execution_id = None
@@ -133,8 +718,10 @@ async def remediate(
             text(
                 """
                 INSERT INTO executions
-                (approval_id, agent, playbook, action, args, status, approved_by, started_at, alert_id, org_id)
-                VALUES (:approval_id, :agent, :playbook, :action, :args, :status, :approved_by, :started_at, :alert_id, :org_id)
+                (approval_id, agent, playbook, action, args, status, approved_by, started_at, alert_id, org_id,
+                 target_total, target_completed, target_success, target_failed, batch_size)
+                VALUES (:approval_id, :agent, :playbook, :action, :args, :status, :approved_by, :started_at, :alert_id, :org_id,
+                        :target_total, :target_completed, :target_success, :target_failed, :batch_size)
                 RETURNING id
                 """
             ),
@@ -149,6 +736,11 @@ async def remediate(
                 "started_at": started_at,
                 "alert_id": alert_id,
                 "org_id": org_id,
+                "target_total": len(agent_ids),
+                "target_completed": 0,
+                "target_success": 0,
+                "target_failed": 0,
+                "batch_size": _fleet_batch_size() if len(agent_ids) >= _fleet_batch_size() else len(agent_ids),
             },
         )
         execution_id = inserted.scalar()
@@ -195,6 +787,8 @@ async def remediate(
             result_payload = execution.get("result")
             if isinstance(result_payload, dict) and isinstance(result_payload.get("results"), list):
                 target_rows = result_payload.get("results")
+                execution_status = _result_execution_status(result_payload)
+                step_status = execution_status if execution_status != "FAILED" else "FAILED"
                 verification_result = await run_in_threadpool(
                     lambda: run_post_action_verification(
                         client,
@@ -239,31 +833,24 @@ async def remediate(
                 "status": step_status,
             },
         )
-        db.execute(
-            text(
-                """
-                UPDATE executions
-                SET status=:status, finished_at=:finished_at
-                WHERE id=:id
-                """
-            ),
-            {"status": execution_status, "finished_at": utc_now_naive(), "id": execution_id},
+        counts = _result_counts(target_rows, fallback_total=len(agent_ids))
+        _update_execution_progress(
+            db,
+            execution_id,
+            status=execution_status,
+            finished=True,
+            target_total=counts["total"],
+            target_completed=counts["completed"],
+            target_success=counts["success"],
+            target_failed=counts["failed"],
+            batch_size=_fleet_batch_size() if len(agent_ids) >= _fleet_batch_size() else len(agent_ids),
         )
         if target_rows:
             _store_execution_targets(db, int(execution_id), target_rows)
         verification_state = derive_verification_state(verification_result)
         if verification_state.get("execution_status") and execution_status == "SUCCESS":
             execution_status = str(verification_state.get("execution_status") or execution_status)
-            db.execute(
-                text(
-                    """
-                    UPDATE executions
-                    SET status=:status
-                    WHERE id=:id
-                    """
-                ),
-                {"status": execution_status, "id": execution_id},
-            )
+            _update_execution_progress(db, execution_id, status=execution_status)
         if verification_state.get("applicable"):
             db.execute(
                 text(
@@ -370,6 +957,7 @@ async def remediate(
             detail=f"{_to_text(raised_http_exception.detail)} | execution_id={execution_id}",
         )
 
+    summary_counts = _result_counts(target_rows, fallback_total=len(agent_ids))
     return {
         "agent": target,
         "action": action_id,
@@ -380,6 +968,16 @@ async def remediate(
         "command_used": execution.get("command_used") if execution else action_id,
         "attempts": execution.get("attempts") if execution else [action_id],
         "result": execution.get("result") if execution else {"ok": False},
+        "summary": {
+            **summary_counts,
+            "remaining": max(0, summary_counts["total"] - summary_counts["completed"]),
+            "percent_complete": (
+                int(round((summary_counts["completed"] / max(1, summary_counts["total"])) * 100))
+                if summary_counts["total"] > 0
+                else 0
+            ),
+            "status": execution_status,
+        },
         "post_action_verification": verification_result,
         "pending_verification_reconcile": reconcile_result,
     }

@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any, Dict, List
 
-from fastapi import APIRouter, HTTPException, WebSocket
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from core.indexer_client import IndexerClient
 from core.security import COOKIE_NAME, decode_token
@@ -111,8 +111,17 @@ async def alerts_socket(ws: WebSocket):
     seen_ids: set[str] = set()
     seen_order: List[str] = []
     heartbeat_counter = 0
+    receiver_task = None
+
+    async def _receive_client_messages() -> None:
+        while True:
+            payload = await ws.receive_text()
+            if str(payload or "").strip().lower() != "ping":
+                continue
+            await ws.send_json({"event": "heartbeat", "kind": "pong"})
 
     try:
+        receiver_task = asyncio.create_task(_receive_client_messages())
         while True:
             alerts = await asyncio.to_thread(_latest_alerts, 25)
             new_batch: List[Dict[str, Any]] = []
@@ -140,8 +149,12 @@ async def alerts_socket(ws: WebSocket):
                 await ws.send_json({"event": "heartbeat"})
 
             await asyncio.sleep(5)
+    except WebSocketDisconnect:
+        pass
     except Exception:
         pass
     finally:
+        if receiver_task:
+            receiver_task.cancel()
         if ws in clients:
             clients.remove(ws)

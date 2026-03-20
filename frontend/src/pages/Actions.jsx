@@ -677,7 +677,7 @@ export default function Actions() {
         className="actions-workspace"
         style={{ "--actions-sidebar-width": `${catalogWidth}px` }}
       >
-        <aside className="actions-sidebar-pane card">
+        <aside className="actions-sidebar-pane card" data-tour-id="action-catalog">
           <div className="card-header">
             <div>
               <h3>Action Catalog</h3>

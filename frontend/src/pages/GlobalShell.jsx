@@ -244,10 +244,11 @@ const formatTargetLabel = (raw) => {
 };
 
 const formatTargetHealth = (row) => {
-  const total = Number(row?.targetCount || 0);
-  const success = Number(row?.targetSuccess || 0);
+  const total = Number(row?.summary?.total || row?.targetCount || 0);
+  const success = Number(row?.summary?.success || row?.targetSuccess || 0);
+  const failed = Number(row?.summary?.failed || row?.targetFailed || 0);
   if (!total) return "";
-  return `${success}/${total} ok`;
+  return failed > 0 ? `${success}/${total} ok | ${failed} failed` : `${success}/${total} ok`;
 };
 
 const normalizeExecutions = (rows) => {
@@ -278,6 +279,8 @@ const normalizeExecutions = (rows) => {
         cleanOutputPreview: cleanOutputPreview || "",
         targetCount: Number(row?.target_count || 0),
         targetSuccess: Number(row?.target_success || 0),
+        targetFailed: Number(row?.target_failed || row?.summary?.failed || 0),
+        summary: row?.summary || null,
       };
     })
     .filter((row) => row.id && String(row.action || "").toLowerCase().includes("global-shell"));
@@ -287,7 +290,7 @@ const statusTone = (status) => {
   const value = String(status || "").toUpperCase();
   if (value === "SUCCESS") return "success";
   if (["FAILED", "ERROR", "KILLED"].includes(value)) return "failed";
-  if (["RUNNING", "PAUSED", "PENDING", "PENDING_VERIFICATION", "QUEUED", "CANCELLED"].includes(value)) return "pending";
+  if (["RUNNING", "PAUSED", "PENDING", "PENDING_VERIFICATION", "QUEUED", "CANCELLED", "PARTIAL"].includes(value)) return "pending";
   return "neutral";
 };
 
@@ -1156,7 +1159,7 @@ export default function GlobalShell() {
         </div>
 
         <div className="panel-stack">
-          <div className="card">
+          <div className="card" data-tour-id="global-shell-drawer">
             <div className="card-header">
               <div>
                 <h3>Target Preview</h3>

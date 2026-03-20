@@ -16,6 +16,12 @@ const executionRow = (row) => {
       approvedBy: row[4],
       startedAt: row[5],
       finishedAt: row[6],
+      targetTotal: 0,
+      targetCompleted: 0,
+      targetSuccess: 0,
+      targetFailed: 0,
+      batchSize: 0,
+      summary: null,
     };
   }
   return {
@@ -26,6 +32,12 @@ const executionRow = (row) => {
     approvedBy: row?.approved_by,
     startedAt: row?.started_at,
     finishedAt: row?.finished_at,
+    targetTotal: Number(row?.target_total || row?.summary?.total || 0),
+    targetCompleted: Number(row?.target_completed || row?.summary?.completed || row?.target_count || 0),
+    targetSuccess: Number(row?.target_success || row?.summary?.success || 0),
+    targetFailed: Number(row?.target_failed || row?.summary?.failed || 0),
+    batchSize: Number(row?.batch_size || row?.summary?.batch_size || 0),
+    summary: row?.summary || null,
   };
 };
 
@@ -33,8 +45,40 @@ const statusTone = (status) => {
   const value = String(status || "").toUpperCase();
   if (value === "SUCCESS") return "success";
   if (["FAILED", "ERROR", "KILLED"].includes(value)) return "failed";
-  if (["RUNNING", "PAUSED", "PENDING", "PENDING_VERIFICATION", "QUEUED", "CANCELLED"].includes(value)) return "pending";
+  if (["RUNNING", "PAUSED", "PENDING", "PENDING_VERIFICATION", "QUEUED", "CANCELLED", "PARTIAL"].includes(value)) return "pending";
   return "neutral";
+};
+
+const progressSummary = (run) => {
+  const total = Math.max(0, Number(run?.summary?.total || run?.targetTotal || 0));
+  const completed = Math.max(0, Number(run?.summary?.completed || run?.targetCompleted || 0));
+  const success = Math.max(0, Number(run?.summary?.success || run?.targetSuccess || 0));
+  const failed = Math.max(0, Number(run?.summary?.failed || run?.targetFailed || Math.max(completed - success, 0)));
+  const remaining = Math.max(0, Number(run?.summary?.remaining || Math.max(total - completed, 0)));
+  const percentComplete = total > 0
+    ? Math.round((completed / total) * 100)
+    : Number(run?.summary?.percent_complete || 0);
+  const final = Boolean(run?.summary?.final || run?.finishedAt);
+  return {
+    total,
+    completed,
+    success,
+    failed,
+    remaining,
+    percentComplete,
+    final,
+    show: total > 1,
+    label: total > 0 ? `${success}/${total}` : "0/0",
+  };
+};
+
+const isLaggingRun = (run) => {
+  if (!run || run.finishedAt) return false;
+  const status = String(run.status || "").toUpperCase();
+  if (!["QUEUED", "RUNNING", "PARTIAL", "PENDING", "PENDING_VERIFICATION", "PAUSED"].includes(status)) return false;
+  const started = parseWazuhTimestamp(run.startedAt);
+  if (!started) return false;
+  return Date.now() - started.getTime() >= 10000;
 };
 
 const formatDuration = (start, end) => {
@@ -87,6 +131,13 @@ export default function Executions() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      load(true);
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
   const parsedRuns = useMemo(() => runs.map((row) => executionRow(row)), [runs]);
 
   const filteredRuns = useMemo(() => {
@@ -132,7 +183,8 @@ export default function Executions() {
       const status = String(run.status || "").toUpperCase();
       if (status === "SUCCESS") totals.success += 1;
       else if (["FAILED", "ERROR", "KILLED"].includes(status)) totals.failed += 1;
-      else if (["RUNNING", "PAUSED", "PENDING", "PENDING_VERIFICATION", "QUEUED"].includes(status)) totals.running += 1;
+      else if (status === "PARTIAL" && run.finishedAt) totals.other += 1;
+      else if (["RUNNING", "PAUSED", "PENDING", "PENDING_VERIFICATION", "QUEUED", "PARTIAL"].includes(status)) totals.running += 1;
       else totals.other += 1;
     });
     return totals;
@@ -162,6 +214,7 @@ export default function Executions() {
             <option value="PENDING">PENDING</option>
             <option value="PENDING_VERIFICATION">PENDING_VERIFICATION</option>
             <option value="QUEUED">QUEUED</option>
+            <option value="PARTIAL">PARTIAL</option>
             <option value="SUCCESS">SUCCESS</option>
             <option value="FAILED">FAILED</option>
             <option value="KILLED">KILLED</option>
@@ -232,32 +285,52 @@ export default function Executions() {
                       </td>
                     </tr>
                   ) : (
-                    pagedRuns.map((run) => (
-                      <tr
-                        key={run.id}
-                        onClick={() => {
-                          setSelected(run.id);
-                          setDrawerOpen(true);
-                        }}
-                        className={`clickable ${Number(selected) === Number(run.id) ? "selected" : ""}`}
-                      >
-                        <td className="execution-col-id">{run.id}</td>
-                        <td className="execution-col-status">
-                          <span className={`status-pill ${statusTone(run.status)}`}>{run.status || "-"}</span>
-                        </td>
-                        <td className="execution-col-action" title={run.action || "-"}>
-                          <span className="execution-cell-text">{run.action || "-"}</span>
-                        </td>
-                        <td className="execution-col-target" title={run.agent || "-"}>
-                          <span className="execution-cell-text">{run.agent || "-"}</span>
-                        </td>
-                        <td className="execution-col-approver" title={run.approvedBy || "-"}>
-                          <span className="execution-cell-text">{run.approvedBy || "-"}</span>
-                        </td>
-                        <td className="execution-col-time"><RelativeTimestamp value={run.startedAt} /></td>
-                        <td className="execution-col-time"><RelativeTimestamp value={run.finishedAt} /></td>
-                      </tr>
-                    ))
+                    pagedRuns.map((run) => {
+                      const summaryState = progressSummary(run);
+                      const lagging = isLaggingRun(run);
+                      return (
+                        <tr
+                          key={run.id}
+                          onClick={() => {
+                            setSelected(run.id);
+                            setDrawerOpen(true);
+                          }}
+                          className={`clickable ${Number(selected) === Number(run.id) ? "selected" : ""}`}
+                        >
+                          <td className="execution-col-id">{run.id}</td>
+                          <td className="execution-col-status">
+                            <div className="execution-status-stack">
+                              <span className={`status-pill ${statusTone(run.status)}${lagging ? " lagging" : ""}`}>{run.status || "-"}</span>
+                              {summaryState.show ? (
+                                <div className="fraction-progress">
+                                  <div className="fraction-progress-bar">
+                                    <span className="fraction-progress-segment success" style={{ width: `${summaryState.total ? (summaryState.success / summaryState.total) * 100 : 0}%` }} />
+                                    <span className="fraction-progress-segment failed" style={{ width: `${summaryState.total ? (summaryState.failed / summaryState.total) * 100 : 0}%` }} />
+                                    <span className="fraction-progress-segment remaining" style={{ width: `${summaryState.total ? (summaryState.remaining / summaryState.total) * 100 : 0}%` }} />
+                                  </div>
+                                  <div className="fraction-progress-meta">
+                                    <span>{summaryState.label} passed</span>
+                                    <span>{summaryState.percentComplete}% complete</span>
+                                  </div>
+                                </div>
+                              ) : null}
+                              {lagging ? <span className="lag-indicator">Lagging, platform alive</span> : null}
+                            </div>
+                          </td>
+                          <td className="execution-col-action" title={run.action || "-"}>
+                            <span className="execution-cell-text">{run.action || "-"}</span>
+                          </td>
+                          <td className="execution-col-target" title={run.agent || "-"}>
+                            <span className="execution-cell-text">{run.agent || "-"}</span>
+                          </td>
+                          <td className="execution-col-approver" title={run.approvedBy || "-"}>
+                            <span className="execution-cell-text">{run.approvedBy || "-"}</span>
+                          </td>
+                          <td className="execution-col-time"><RelativeTimestamp value={run.startedAt} /></td>
+                          <td className="execution-col-time"><RelativeTimestamp value={run.finishedAt} /></td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>

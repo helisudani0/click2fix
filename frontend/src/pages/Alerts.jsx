@@ -276,14 +276,28 @@ export default function Alerts() {
         <div className="table-scroll">
           <table className="table readable">
             <thead>
-              <tr>
-                <th>ID</th>
-                <th>Severity</th>
-                <th>Rule</th>
-                <th>Agent</th>
-                <th>Groups</th>
-                <th>Timestamp</th>
-              </tr>
+                <tr>
+                  <th>ID</th>
+                  <th>
+                    <span className="column-guide">
+                      Severity
+                      <span className="column-guide-popover">
+                        Wazuh severity maps to rule level. Higher values signal faster escalation and response urgency.
+                      </span>
+                    </span>
+                  </th>
+                  <th>Rule</th>
+                  <th>Agent</th>
+                  <th>
+                    <span className="column-guide">
+                      Groups
+                      <span className="column-guide-popover">
+                        Groups show the rule families attached to the alert so we can separate real signal from noisy control categories.
+                      </span>
+                    </span>
+                  </th>
+                  <th>Timestamp</th>
+                </tr>
             </thead>
             <tbody>
               {alerts.length === 0 ? (

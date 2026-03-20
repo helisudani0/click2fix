@@ -104,6 +104,11 @@ executions = Table(
     Column("org_id", Integer),
     Column("started_at", DateTime),
     Column("finished_at", DateTime),
+    Column("target_total", Integer, server_default=text("0")),
+    Column("target_completed", Integer, server_default=text("0")),
+    Column("target_success", Integer, server_default=text("0")),
+    Column("target_failed", Integer, server_default=text("0")),
+    Column("batch_size", Integer, server_default=text("0")),
 )
 
 execution_steps = Table(
@@ -661,6 +666,36 @@ def init():
     else:
         allow_demo_users = str(allow_demo_users_env).strip().lower() in {"1", "true", "yes", "on"}
     with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE executions ADD COLUMN IF NOT EXISTS target_total INTEGER DEFAULT 0"))
+            conn.execute(text("ALTER TABLE executions ADD COLUMN IF NOT EXISTS target_completed INTEGER DEFAULT 0"))
+            conn.execute(text("ALTER TABLE executions ADD COLUMN IF NOT EXISTS target_success INTEGER DEFAULT 0"))
+            conn.execute(text("ALTER TABLE executions ADD COLUMN IF NOT EXISTS target_failed INTEGER DEFAULT 0"))
+            conn.execute(text("ALTER TABLE executions ADD COLUMN IF NOT EXISTS batch_size INTEGER DEFAULT 0"))
+            conn.execute(
+                text(
+                    """
+                    UPDATE executions
+                    SET
+                        target_total = COALESCE(target_total, 0),
+                        target_completed = COALESCE(target_completed, 0),
+                        target_success = COALESCE(target_success, 0),
+                        target_failed = COALESCE(target_failed, 0),
+                        batch_size = COALESCE(batch_size, 0)
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_executions_status_started
+                    ON executions (status, started_at DESC)
+                    """
+                )
+            )
+        except Exception:
+            pass
+
         # Best-effort schema evolution for existing deployments that already
         # have mitre_alerts without confidence/source metadata columns.
         try:

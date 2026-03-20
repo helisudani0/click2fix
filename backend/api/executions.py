@@ -2,11 +2,12 @@ import json
 import os
 import re
 import shlex
+from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import text
 
-from core.actions import get_action
+from core.actions import get_action, normalize_args, resolve_action_dispatch
 from core.action_execution import resolve_agent_ids
 from core.endpoint_executor import EndpointExecutor
 from core.playbook_generator import build_playbook_path
@@ -80,6 +81,69 @@ _HEALTHCHECK_ACTION_IDS = {
 
 def _serialize_row(row):
     return serialize_row(row)
+
+
+def _to_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _is_active_execution_status(status: str, finished_at: Any = None) -> bool:
+    value = str(status or "").strip().upper()
+    if finished_at:
+        return False
+    return value in {"QUEUED", "RUNNING", "PARTIAL", "PENDING", "PENDING_VERIFICATION", "PAUSED"}
+
+
+def _execution_summary(execution: dict[str, Any], targets: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    payload = execution if isinstance(execution, dict) else {}
+    total = _to_int(payload.get("target_total"), 0)
+    completed = _to_int(payload.get("target_completed"), 0)
+    success = _to_int(payload.get("target_success"), 0)
+    failed = _to_int(payload.get("target_failed"), 0)
+
+    if isinstance(targets, list):
+        actual_completed = len([row for row in targets if isinstance(row, dict)])
+        actual_success = sum(1 for row in targets if isinstance(row, dict) and row.get("ok"))
+        actual_failed = actual_completed - actual_success
+        completed = max(completed, actual_completed)
+        success = max(success, actual_success)
+        failed = max(failed, actual_failed)
+        total = max(total, actual_completed)
+
+    if total == 0:
+        total = max(_to_int(payload.get("target_count"), 0), completed)
+    if completed == 0:
+        completed = max(_to_int(payload.get("target_count"), 0), success + failed)
+    if success == 0:
+        success = max(_to_int(payload.get("target_success"), 0), success)
+    if failed == 0 and completed >= success:
+        failed = max(failed, completed - success)
+
+    remaining = max(0, total - completed)
+    percent_complete = int(round((completed / total) * 100)) if total > 0 else 0
+    finished_at = payload.get("finished_at")
+    status = str(payload.get("status") or "").strip().upper()
+    final = bool(finished_at) or (total > 0 and completed >= total and not _is_active_execution_status(status, finished_at))
+    mixed_results = total > 0 and success > 0 and failed > 0
+    retry_failed_available = final and failed > 0 and bool(payload.get("action")) and str(payload.get("action") or "").strip().lower() != "global-shell"
+    return {
+        "total": total,
+        "completed": completed,
+        "success": success,
+        "failed": failed,
+        "remaining": remaining,
+        "percent_complete": percent_complete,
+        "final": final,
+        "mixed_results": mixed_results,
+        "active": _is_active_execution_status(status, finished_at),
+        "retry_failed_available": retry_failed_available,
+        "fraction_label": f"{success}/{total}" if total > 0 else "0/0",
+        "batch_size": _to_int(payload.get("batch_size"), 0),
+        "status": status or "UNKNOWN",
+    }
 
 
 def _extract_c2f_evidence_lines(stdout: str) -> list[str]:
@@ -523,6 +587,11 @@ def list_executions(
                     e.alert_id,
                     e.started_at,
                     e.finished_at,
+                    COALESCE(e.target_total, 0) AS target_total,
+                    COALESCE(e.target_completed, 0) AS target_completed,
+                    COALESCE(e.target_success, 0) AS target_success,
+                    COALESCE(e.target_failed, 0) AS target_failed,
+                    COALESCE(e.batch_size, 0) AS batch_size,
                     (
                         SELECT COUNT(*)
                         FROM execution_targets et
@@ -556,9 +625,162 @@ def list_executions(
             ),
             params,
         ).fetchall()
-        return [_serialize_row(r) for r in rows]
+        items = []
+        for row in rows:
+            item = _serialize_row(row)
+            item["summary"] = _execution_summary(item)
+            items.append(item)
+        return items
     finally:
         db.close()
+
+
+@router.get("/health")
+def executions_health(user=Depends(current_user)):
+    db = connect()
+    try:
+        active_count = db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM executions
+                WHERE finished_at IS NULL
+                  AND UPPER(COALESCE(status, '')) IN ('QUEUED', 'RUNNING', 'PARTIAL', 'PENDING', 'PENDING_VERIFICATION', 'PAUSED')
+                """
+            )
+        ).scalar() or 0
+        queued_count = db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM executions
+                WHERE finished_at IS NULL
+                  AND UPPER(COALESCE(status, '')) = 'QUEUED'
+                """
+            )
+        ).scalar() or 0
+        return {
+            "active_executions": int(active_count),
+            "queued_executions": int(queued_count),
+        }
+    finally:
+        db.close()
+
+
+@router.post("/{execution_id}/retry-failed")
+def retry_failed_targets(
+    execution_id: int,
+    payload: dict = Body(default={}),
+    user=Depends(require_role("admin")),
+):
+    actor = user.get("sub") if isinstance(user, dict) else str(user)
+    org_id = user.get("org_id") if isinstance(user, dict) else None
+    requested_reason = str((payload or {}).get("justification") or (payload or {}).get("reason") or "").strip()
+
+    db = connect()
+    try:
+        row = db.execute(
+            text(
+                """
+                SELECT id, agent, action, playbook, args, alert_id
+                FROM executions
+                WHERE id=:id
+                """
+            ),
+            {"id": execution_id},
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Execution not found")
+        execution = _serialize_row(row)
+        action_id = str(execution.get("action") or execution.get("playbook") or "").strip()
+        if not action_id or action_id.lower() == "global-shell":
+            raise HTTPException(status_code=400, detail="Retry on failed targets is only available for remediation actions")
+
+        failed_rows = db.execute(
+            text(
+                """
+                SELECT DISTINCT agent_id
+                FROM execution_targets
+                WHERE execution_id=:id
+                  AND COALESCE(ok, FALSE) = FALSE
+                  AND COALESCE(agent_id, '') <> ''
+                ORDER BY agent_id
+                """
+            ),
+            {"id": execution_id},
+        ).fetchall()
+        failed_agent_ids = [str(row[0] or "").strip() for row in failed_rows if str(row[0] or "").strip()]
+        if not failed_agent_ids:
+            raise HTTPException(status_code=400, detail="No failed targets are available to retry")
+
+        raw_args = execution.get("args")
+        if isinstance(raw_args, dict):
+            arguments = raw_args
+        else:
+            try:
+                arguments = json.loads(str(raw_args or "{}"))
+            except Exception:
+                arguments = {}
+        action = get_action(action_id)
+        normalized_args = normalize_args(action, arguments)
+        dispatch = resolve_action_dispatch(action, normalized_args)
+        target = "multi:" + ",".join(failed_agent_ids)
+        justification = requested_reason or f"Retry failed targets from execution #{execution_id}"
+
+        from api.remediation import queue_remediation_execution
+
+        retry_execution_id = queue_remediation_execution(
+            target=target,
+            action_id=action_id,
+            dispatch=dispatch,
+            arguments=normalized_args,
+            agent_ids=failed_agent_ids,
+            actor=actor,
+            org_id=org_id,
+            alert_id=execution.get("alert_id"),
+            case_id=None,
+            group=None,
+            justification=justification,
+            request_ip=None,
+        )
+    finally:
+        db.close()
+
+    publish_event(
+        execution_id,
+        {
+            "type": "execution_retry_queued",
+            "step": "retry_failed",
+            "status": "SUCCESS",
+            "stdout": json.dumps(
+                {
+                    "source_execution_id": execution_id,
+                    "retry_execution_id": retry_execution_id,
+                    "failed_targets": len(failed_agent_ids),
+                },
+                default=str,
+            ),
+            "stderr": "",
+        },
+    )
+
+    return {
+        "ok": True,
+        "status": "QUEUED",
+        "source_execution_id": execution_id,
+        "execution_id": retry_execution_id,
+        "retried_agents": failed_agent_ids,
+        "action": action_id,
+        "summary": {
+            "total": len(failed_agent_ids),
+            "completed": 0,
+            "success": 0,
+            "failed": 0,
+            "remaining": len(failed_agent_ids),
+            "percent_complete": 0,
+            "status": "QUEUED",
+        },
+    }
 
 
 @router.post("/{execution_id}/control")
@@ -741,6 +963,11 @@ def execution_detail(execution_id: int, user=Depends(current_user)):
                     status,
                     approved_by,
                     alert_id,
+                    COALESCE(target_total, 0) AS target_total,
+                    COALESCE(target_completed, 0) AS target_completed,
+                    COALESCE(target_success, 0) AS target_success,
+                    COALESCE(target_failed, 0) AS target_failed,
+                    COALESCE(batch_size, 0) AS batch_size,
                     started_at,
                     finished_at
                 FROM executions
@@ -889,6 +1116,7 @@ def execution_detail(execution_id: int, user=Depends(current_user)):
             "execution": execution,
             "steps": [_serialize_row(s) for s in steps],
             "targets": target_rows,
+            "summary": _execution_summary(execution, target_rows),
             "justification": justification,
             "action": action_meta,
             "playbook": playbook_meta,

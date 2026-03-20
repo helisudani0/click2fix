@@ -820,6 +820,37 @@ p {
   flex-wrap: wrap;
 }
 
+.topbar-health-hud {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(176, 193, 214, 0.85);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 10px 20px rgba(15, 34, 57, 0.06);
+}
+
+.health-hud-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.health-hud-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.health-hud-metric {
+  font-size: 0.78rem;
+  color: #29445f;
+  font-weight: 600;
+}
+
 .topbar-shortcut {
   padding: 6px 10px;
   border-radius: 8px;
@@ -1441,8 +1472,7 @@ table thead,
 }
 
 .execution-col-status {
-  min-width: 148px;
-  white-space: nowrap;
+  min-width: 260px;
 }
 
 .execution-col-action {
@@ -1567,7 +1597,7 @@ table tbody tr.selected,
 .status-pill {
   display: inline-flex;
   align-items: center;
-  gap: 0;
+  gap: 8px;
   padding: 4px 10px;
   border-radius: 999px;
   font-size: 0.73rem;
@@ -1577,21 +1607,21 @@ table tbody tr.selected,
 }
 
 .status-pill.success {
-  background: rgba(16, 185, 129, 0.12);
-  color: #0f7a55;
-  border-color: rgba(16, 185, 129, 0.28);
+  background: #10b981;
+  color: #ffffff;
+  border-color: #10b981;
 }
 
 .status-pill.failed {
-  background: rgba(239, 68, 68, 0.12);
-  color: #b42323;
-  border-color: rgba(239, 68, 68, 0.28);
+  background: #ef4444;
+  color: #ffffff;
+  border-color: #ef4444;
 }
 
 .status-pill.pending {
-  background: rgba(245, 158, 11, 0.16);
-  color: #9a5b0a;
-  border-color: rgba(245, 158, 11, 0.3);
+  background: #f59e0b;
+  color: #ffffff;
+  border-color: #f59e0b;
   animation: status-pulse 1.8s ease-in-out infinite;
 }
 
@@ -1604,6 +1634,16 @@ table tbody tr.selected,
 .status-pill::before {
   content: none !important;
   display: none !important;
+}
+
+.status-pill.lagging::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.42);
+  border-top-color: #ffffff;
+  animation: mission-spin 0.85s linear infinite;
 }
 
 .status-pill.success::before {
@@ -1642,6 +1682,215 @@ table tbody tr.selected,
   50% {
     box-shadow: 0 0 0 6px rgba(245, 158, 11, 0);
   }
+}
+
+@keyframes mission-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.execution-status-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.fraction-progress {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fraction-progress.large {
+  gap: 10px;
+}
+
+.fraction-progress-bar {
+  display: flex;
+  overflow: hidden;
+  min-height: 10px;
+  border-radius: 999px;
+  background: rgba(188, 203, 220, 0.45);
+}
+
+.fraction-progress.large .fraction-progress-bar {
+  min-height: 14px;
+}
+
+.fraction-progress-segment {
+  display: block;
+  min-width: 0;
+}
+
+.fraction-progress-segment.success {
+  background: #10b981;
+}
+
+.fraction-progress-segment.failed {
+  background: #ef4444;
+}
+
+.fraction-progress-segment.remaining {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+.fraction-progress-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 0.76rem;
+  color: #496078;
+  font-weight: 600;
+}
+
+.lag-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.76rem;
+  color: #935b0e;
+  font-weight: 700;
+}
+
+.lag-indicator::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid rgba(245, 158, 11, 0.25);
+  border-top-color: #f59e0b;
+  animation: mission-spin 0.85s linear infinite;
+}
+
+.execution-hud {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0 6px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(191, 208, 228, 0.9);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(240, 246, 252, 0.95));
+}
+
+.execution-hud-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.execution-hud-value {
+  font-size: 1.28rem;
+  font-weight: 800;
+  color: #18344f;
+}
+
+.execution-hud-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 0.8rem;
+  color: #486178;
+  font-weight: 600;
+}
+
+.column-guide {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: help;
+}
+
+.column-guide-popover {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 10px);
+  width: min(260px, 44vw);
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(176, 193, 214, 0.9);
+  background: rgba(15, 34, 57, 0.94);
+  color: #f5f8fb;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  box-shadow: 0 16px 30px rgba(7, 16, 30, 0.24);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  transition: opacity var(--motion-base), transform var(--motion-base);
+  z-index: 18;
+}
+
+.column-guide:hover .column-guide-popover,
+.column-guide:focus-within .column-guide-popover {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.mission-briefing-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+}
+
+.mission-briefing-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(9, 17, 27, 0.56);
+}
+
+.mission-briefing-spotlight {
+  position: fixed;
+  border-radius: 18px;
+  box-shadow: 0 0 0 9999px rgba(9, 17, 27, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  pointer-events: none;
+}
+
+.mission-briefing-card {
+  position: fixed;
+  width: min(360px, calc(100vw - 32px));
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(183, 201, 223, 0.92);
+  background: #ffffff;
+  box-shadow: 0 22px 48px rgba(9, 17, 27, 0.26);
+  z-index: 202;
+}
+
+.mission-briefing-card h3 {
+  margin: 0 0 8px;
+  font-size: 1.04rem;
+}
+
+.mission-briefing-card p {
+  margin: 0;
+  color: #4a6178;
+  line-height: 1.55;
+}
+
+.mission-briefing-step {
+  margin-bottom: 10px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #1f5db4;
+}
+
+.mission-briefing-note {
+  margin-top: 10px;
+  font-size: 0.76rem;
+  color: #5d738a;
+}
+
+.mission-briefing-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
 }
 
 .pill {

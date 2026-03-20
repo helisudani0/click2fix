@@ -5,6 +5,9 @@ import api, {
   decodeLegacyTokenPayload,
   getLegacyToken
 } from "../api/client";
+import { alertSocket } from "../api/socket";
+import { getExecutionHealth } from "../api/wazuh";
+import MissionBriefing from "./MissionBriefing";
 import { APP_TIMEZONE_LABEL } from "../utils/time";
 import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
@@ -13,6 +16,7 @@ const PRIORITY_PANEL_STORAGE_KEY = "c2f-priority-panel-collapsed-v2";
 const PRIORITY_PANEL_HEIGHT_STORAGE_KEY = "c2f-priority-panel-height-v2";
 const SIDEBAR_WIDTH_STORAGE_KEY = "c2f-sidebar-width-v2";
 const OPS_PANEL_COMPACT_STORAGE_KEY = "c2f-ops-panel-compact-v2";
+const MISSION_BRIEFING_STORAGE_KEY = "c2f-mission-briefing-v1";
 const DEFAULT_PRIORITY_PANEL_HEIGHT = 320;
 const MIN_PRIORITY_PANEL_HEIGHT = 170;
 const MAX_PRIORITY_PANEL_HEIGHT = 520;
@@ -137,6 +141,33 @@ const clampSidebarWidth = (value) => {
   return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, Math.round(numeric)));
 };
 
+const MISSION_BRIEFING_STEPS = [
+  {
+    route: null,
+    selector: '[data-tour-id="priority-queue"]',
+    title: "Priority Queue",
+    body: "This queue stays available across the console so we can filter alert noise without leaving the active workspace.",
+  },
+  {
+    route: "/actions",
+    selector: '[data-tour-id="action-catalog"]',
+    title: "Action Hover",
+    body: "Use the action catalog to lock onto the exact remediation ID, validate it, and launch response runs without leaving the table workflow.",
+  },
+  {
+    route: "/global-shell",
+    selector: '[data-tour-id="global-shell-drawer"]',
+    title: "Global Shell Drawer",
+    body: "Global Shell is the pivot point for live debugging. Failed runs can jump here with the command context already prefilled.",
+  },
+  {
+    route: "/executions",
+    selector: '[data-tour-id="execution-hud"]',
+    title: "Execution HUD",
+    body: "The HUD shows fractional fleet progress, lagging targets, and retry-delta actions so we can recover outliers without rerunning the whole fleet.",
+  },
+];
+
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -171,6 +202,13 @@ export default function AppLayout() {
     connectors: true,
     governance: true,
   }));
+  const [backendHealth, setBackendHealth] = useState({
+    activeExecutions: 0,
+    queuedExecutions: 0,
+    socketLatencyMs: null,
+    socketLive: false,
+  });
+  const [missionBriefingOpen, setMissionBriefingOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -317,6 +355,118 @@ export default function AppLayout() {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    let timerId = null;
+
+    const loadHealth = async () => {
+      try {
+        const res = await getExecutionHealth();
+        if (!active) return;
+        setBackendHealth((prev) => ({
+          ...prev,
+          activeExecutions: Number(res?.data?.active_executions || 0),
+          queuedExecutions: Number(res?.data?.queued_executions || 0),
+        }));
+      } catch {
+        if (!active) return;
+        setBackendHealth((prev) => ({
+          ...prev,
+          activeExecutions: 0,
+          queuedExecutions: 0,
+        }));
+      }
+    };
+
+    void loadHealth();
+    timerId = window.setInterval(() => {
+      void loadHealth();
+    }, 10000);
+
+    return () => {
+      active = false;
+      if (timerId) window.clearInterval(timerId);
+    };
+  }, []);
+
+  useEffect(() => {
+    let ws = null;
+    let reconnectTimer = null;
+    let pingTimer = null;
+    let closed = false;
+    let lastPingAt = 0;
+
+    const clearTimers = () => {
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (pingTimer) window.clearInterval(pingTimer);
+      reconnectTimer = null;
+      pingTimer = null;
+    };
+
+    const connectSocket = () => {
+      clearTimers();
+      ws = alertSocket();
+
+      ws.onopen = () => {
+        setBackendHealth((prev) => ({ ...prev, socketLive: true }));
+        const sendPing = () => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          lastPingAt = Date.now();
+          ws.send("ping");
+        };
+        sendPing();
+        pingTimer = window.setInterval(sendPing, 12000);
+      };
+
+      ws.onmessage = (event) => {
+        let payload = null;
+        try {
+          payload = JSON.parse(event.data);
+        } catch {
+          return;
+        }
+        if (!payload || typeof payload !== "object") return;
+        if (payload.event === "heartbeat") {
+          setBackendHealth((prev) => ({
+            ...prev,
+            socketLive: true,
+            socketLatencyMs: payload.kind === "pong" && lastPingAt ? Date.now() - lastPingAt : prev.socketLatencyMs,
+          }));
+        }
+      };
+
+      ws.onclose = () => {
+        if (closed) return;
+        setBackendHealth((prev) => ({ ...prev, socketLive: false }));
+        clearTimers();
+        reconnectTimer = window.setTimeout(connectSocket, 4000);
+      };
+
+      ws.onerror = () => {
+        setBackendHealth((prev) => ({ ...prev, socketLive: false }));
+      };
+    };
+
+    connectSocket();
+
+    return () => {
+      closed = true;
+      clearTimers();
+      if (ws && ws.readyState <= WebSocket.OPEN) {
+        ws.close(1000, "layout unmounted");
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    if (window.localStorage.getItem(MISSION_BRIEFING_STORAGE_KEY) === "1") return undefined;
+    const timer = window.setTimeout(() => {
+      setMissionBriefingOpen(true);
+    }, 900);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   const logout = async () => {
     try {
       await api.post("/auth/logout");
@@ -361,6 +511,15 @@ export default function AppLayout() {
     window.open(opsUrl, "_blank", "noopener,noreferrer");
   };
 
+  const completeMissionBriefing = () => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(MISSION_BRIEFING_STORAGE_KEY, "1");
+    }
+    setMissionBriefingOpen(false);
+  };
+
+  const healthTone = backendHealth.socketLive ? "success" : "pending";
+
   return (
     <div
       ref={layoutRef}
@@ -394,6 +553,7 @@ export default function AppLayout() {
           <div
             className={`priority-panel${priorityPanelCollapsed ? " collapsed" : " resizable"}`}
             aria-label="Priority navigation"
+            data-tour-id="priority-queue"
             style={!priorityPanelCollapsed && !sidebarCollapsed ? { "--priority-panel-height": `${priorityPanelHeight}px` } : undefined}
           >
             <div className="priority-panel-header">
@@ -581,6 +741,21 @@ export default function AppLayout() {
                 Approvals
               </NavLink>
             </div>
+            <div className="topbar-health-hud">
+              <div className="health-hud-label">Backend Health</div>
+              <div className="health-hud-metrics">
+                <span className={`status-pill ${healthTone}`}>
+                  {backendHealth.socketLive ? "Socket Live" : "Reconnecting"}
+                </span>
+                <span className="health-hud-metric">{backendHealth.activeExecutions} active executions</span>
+                <span className="health-hud-metric">
+                  {backendHealth.socketLatencyMs !== null ? `${backendHealth.socketLatencyMs} ms socket` : "Measuring latency"}
+                </span>
+                {backendHealth.queuedExecutions > 0 ? (
+                  <span className="health-hud-metric">{backendHealth.queuedExecutions} queued</span>
+                ) : null}
+              </div>
+            </div>
           </div>
           <div className="topbar-right">
             <form className="search" onSubmit={submitSearch}>
@@ -593,6 +768,9 @@ export default function AppLayout() {
               <button className="btn secondary" type="submit">Search</button>
             </form>
             <div className="topbar-actions">
+              <button type="button" className="btn secondary" onClick={() => setMissionBriefingOpen(true)} aria-label="Open mission briefing">
+                ?
+              </button>
               <button
                 type="button"
                 className="btn secondary sidebar-toggle-mobile"
@@ -611,6 +789,12 @@ export default function AppLayout() {
         </div>
       </main>
 
+      <MissionBriefing
+        open={missionBriefingOpen}
+        steps={MISSION_BRIEFING_STEPS}
+        onClose={completeMissionBriefing}
+        onComplete={completeMissionBriefing}
+      />
     </div>
   );
 }

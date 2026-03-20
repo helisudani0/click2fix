@@ -4,6 +4,7 @@ from typing import Any, Dict, Iterable, List
 
 from fastapi import HTTPException
 
+from core.active_defense import action_requires_approval_handshake, partition_adaptive_window_targets
 from core.endpoint_executor import EndpointExecutor
 from core.settings import SETTINGS
 from core.ws_bus import publish_event
@@ -85,6 +86,83 @@ def _resolve_manager_api_action(action_id: str, dispatch: Dict[str, Any]) -> str
 
 def _manager_api_supported(action_id: str, dispatch: Dict[str, Any]) -> bool:
     return bool(_resolve_manager_api_action(action_id, dispatch))
+
+
+def _execution_batch_size() -> int:
+    cfg_value = ""
+    if isinstance(SETTINGS, dict):
+        cfg_value = str((SETTINGS.get("orchestration", {}) or {}).get("batch_size", "")).strip()
+    raw = os.getenv("C2F_EXECUTION_BATCH_SIZE", cfg_value)
+    try:
+        return max(1, min(int(raw), 100))
+    except Exception:
+        return 20
+
+
+def _execution_batch_threshold() -> int:
+    cfg_value = ""
+    if isinstance(SETTINGS, dict):
+        cfg_value = str((SETTINGS.get("orchestration", {}) or {}).get("batch_threshold", "")).strip()
+    raw = os.getenv("C2F_EXECUTION_BATCH_THRESHOLD", cfg_value)
+    try:
+        return max(2, int(raw))
+    except Exception:
+        return max(21, _execution_batch_size() + 1)
+
+
+def _result_status(result: Dict[str, Any]) -> str:
+    payload = result if isinstance(result, dict) else {}
+    total = int(payload.get("total") or 0)
+    success = int(payload.get("success") or 0)
+    failed = int(payload.get("failed") or 0)
+    if total <= 0 and "ok" in payload:
+        return "SUCCESS" if bool(payload.get("ok")) else "FAILED"
+    if total > 0 and success > 0 and failed > 0:
+        return "PARTIAL"
+    if total > 0 and success > 0 and failed == 0:
+        return "SUCCESS"
+    return "FAILED"
+
+
+def _progress_state(*, total: int, success: int, failed: int, completed: int | None = None) -> Dict[str, Any]:
+    total_targets = max(0, int(total or 0))
+    done = max(0, int(completed if completed is not None else success + failed))
+    succeeded = max(0, int(success or 0))
+    failed_targets = max(0, int(failed or 0))
+    remaining = max(0, total_targets - done)
+    status = "PARTIAL" if done < total_targets else _result_status(
+        {
+            "total": total_targets,
+            "success": succeeded,
+            "failed": failed_targets,
+        }
+    )
+    percent_complete = int(round((done / total_targets) * 100)) if total_targets > 0 else 0
+    return {
+        "total": total_targets,
+        "completed": done,
+        "success": succeeded,
+        "failed": failed_targets,
+        "remaining": remaining,
+        "percent_complete": percent_complete,
+        "status": status,
+    }
+
+
+def _should_batch_endpoint_execution(
+    *,
+    action_id: str,
+    dispatch: Dict[str, Any],
+    agent_ids: Iterable[str],
+    mode: str,
+    manager_api_action: str,
+) -> bool:
+    target_count = len([str(a).strip() for a in (agent_ids or []) if str(a).strip()])
+    if target_count < _execution_batch_threshold():
+        return False
+    if manager_api_action:
+        return False
+    return mode in {"endpoint", "hybrid"} or _requires_endpoint_transport(action_id, dispatch)
 
 
 def _resolve_target_rows(executor: EndpointExecutor, agent_ids: Iterable[str]) -> List[Dict[str, Any]]:
@@ -314,6 +392,7 @@ def _run_endpoint(
     dispatch: Dict[str, Any],
     agent_ids: Iterable[str],
     execution_id: int | None = None,
+    context: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     executor = EndpointExecutor(client)
     agent_list = list(agent_ids)
@@ -321,6 +400,7 @@ def _run_endpoint(
     resolved_action = str((dispatch or {}).get("action_command") or requested_action).strip()
     if not resolved_action:
         resolved_action = requested_action
+    base_context = context if isinstance(context, dict) else {}
 
     publish_event(
         execution_id,
@@ -352,19 +432,23 @@ def _run_endpoint(
     def event_sink(message: Dict[str, Any]) -> None:
         publish_event(execution_id, message)
 
+    run_context = {
+        **base_context,
+        "execution_id": execution_id,
+        "action_id": requested_action,
+        "resolved_action_id": resolved_action,
+        "_event_sink": event_sink,
+    }
     result = executor.execute(
         action_id=resolved_action,
         action_args=dispatch.get("arguments") or [],
         agent_ids=agent_list,
-        context={
-            "execution_id": execution_id,
-            "action_id": requested_action,
-            "resolved_action_id": resolved_action,
-            "_event_sink": event_sink,
-        },
+        context=run_context,
         on_progress=on_progress,
     )
-    if not result.get("ok"):
+    overall_status = _result_status(result)
+    result["overall_status"] = overall_status
+    if overall_status == "FAILED":
         failed = [row for row in (result.get("results") or []) if not row.get("ok")]
         summary = []
         for row in failed[:3]:
@@ -392,7 +476,7 @@ def _run_endpoint(
         {
             "type": "step_done",
             "step": "endpoint",
-            "status": "SUCCESS",
+            "status": overall_status,
             "stdout": json.dumps({"success": result.get("success"), "failed": result.get("failed")}, default=str),
             "stderr": "",
         },
@@ -405,6 +489,174 @@ def _run_endpoint(
         "result": result,
     }
 
+
+def _run_endpoint_batched(
+    client,
+    action_id: str,
+    dispatch: Dict[str, Any],
+    agent_ids: Iterable[str],
+    execution_id: int | None = None,
+    context: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    agent_list = [str(agent_id or "").strip() for agent_id in (agent_ids or []) if str(agent_id or "").strip()]
+    if not agent_list:
+        raise HTTPException(status_code=400, detail="No agents provided for endpoint execution")
+
+    batch_size = _execution_batch_size()
+    if len(agent_list) <= batch_size:
+        return _run_endpoint(
+            client,
+            action_id,
+            dispatch,
+            agent_list,
+            execution_id=execution_id,
+            context=context,
+        )
+
+    requested_action = str(action_id or "").strip()
+    resolved_action = str((dispatch or {}).get("action_command") or requested_action).strip() or requested_action
+    progress_callback = None
+    if isinstance(context, dict) and callable(context.get("_batch_progress_callback")):
+        progress_callback = context.get("_batch_progress_callback")
+
+    batches = [
+        agent_list[index : index + batch_size]
+        for index in range(0, len(agent_list), batch_size)
+    ]
+    aggregate_rows: List[Dict[str, Any]] = []
+
+    publish_event(
+        execution_id,
+        {
+            "type": "batch_start",
+            "step": "fleet_batching",
+            "status": "RUNNING",
+            "stdout": json.dumps(
+                {
+                    "action": requested_action,
+                    "resolved_action": resolved_action,
+                    "batch_size": batch_size,
+                    "batch_count": len(batches),
+                    "target_total": len(agent_list),
+                },
+                default=str,
+            ),
+            "stderr": "",
+        },
+    )
+
+    for batch_index, batch_agent_ids in enumerate(batches, start=1):
+        batch_result: Dict[str, Any] = {}
+        batch_message = ""
+        try:
+            batch_execution = _run_endpoint(
+                client,
+                action_id,
+                dispatch,
+                batch_agent_ids,
+                execution_id=execution_id,
+                context=context,
+            )
+            batch_result = batch_execution.get("result") if isinstance(batch_execution.get("result"), dict) else {}
+        except HTTPException as exc:
+            detail_text = str(exc.detail)
+            if isinstance(exc.detail, dict):
+                batch_result = exc.detail.get("result") if isinstance(exc.detail.get("result"), dict) else {}
+                batch_message = str(exc.detail.get("message") or detail_text)
+            else:
+                if (
+                    "credentials are missing" in detail_text.lower()
+                    or "connector is disabled" in detail_text.lower()
+                ):
+                    raise
+                batch_result = _as_bulk_result(
+                    client,
+                    channel="endpoint",
+                    action=resolved_action,
+                    agent_ids=batch_agent_ids,
+                    ok=False,
+                    stderr=detail_text,
+                    status_code=400,
+                )
+                batch_message = detail_text
+
+        rows = [row for row in (batch_result.get("results") or []) if isinstance(row, dict)]
+        aggregate_rows.extend(rows)
+        progress = _progress_state(
+            total=len(agent_list),
+            success=sum(1 for row in aggregate_rows if row.get("ok")),
+            failed=sum(1 for row in aggregate_rows if not row.get("ok")),
+            completed=len(aggregate_rows),
+        )
+        progress.update(
+            {
+                "batch_index": batch_index,
+                "batch_count": len(batches),
+                "batch_size": batch_size,
+                "batch_agent_ids": list(batch_agent_ids),
+                "rows": rows,
+                "message": batch_message,
+            }
+        )
+        if callable(progress_callback):
+            try:
+                progress_callback(progress)
+            except Exception:
+                pass
+        publish_event(
+            execution_id,
+            {
+                "type": "execution_progress",
+                "step": "fleet_progress",
+                "status": progress.get("status") or "PARTIAL",
+                "stdout": json.dumps(progress, default=str),
+                "stderr": batch_message,
+            },
+        )
+
+    success = sum(1 for row in aggregate_rows if row.get("ok"))
+    failed = len(aggregate_rows) - success
+    result = {
+        "channel": "endpoint",
+        "mode": "direct_endpoint",
+        "action": resolved_action,
+        "total": len(agent_list),
+        "success": success,
+        "failed": failed,
+        "ok": failed == 0 and len(agent_list) > 0,
+        "results": aggregate_rows,
+        "overall_status": _result_status({"total": len(agent_list), "success": success, "failed": failed}),
+        "batch_size": batch_size,
+        "batch_count": len(batches),
+        "batched": True,
+    }
+    final_status = str(result.get("overall_status") or "FAILED")
+    publish_event(
+        execution_id,
+        {
+            "type": "step_done" if final_status != "FAILED" else "step_failed",
+            "step": "fleet_batching",
+            "status": final_status,
+            "stdout": json.dumps(
+                {
+                    "success": success,
+                    "failed": failed,
+                    "total": len(agent_list),
+                    "batch_count": len(batches),
+                },
+                default=str,
+            ),
+            "stderr": "",
+        },
+    )
+    return {
+        "channel": "endpoint",
+        "mode": "endpoint_batched",
+        "command_used": resolved_action,
+        "attempts": [resolved_action],
+        "result": result,
+    }
+    
 
 def _run_manager_api(
     client,
@@ -495,13 +747,79 @@ def _run_manager_api(
     raise HTTPException(status_code=400, detail=f"Unsupported manager API action: {action_id}")
 
 
+def _supports_adaptive_windowing(action_id: str) -> bool:
+    lowered = str(action_id or "").strip().lower()
+    return lowered in {"sca", "sca-rescan", "sca_rescan"}
+
+
+def _deferred_target_rows(client, *, agent_ids: Iterable[str], deferred_states: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    rows = _resolve_target_rows(EndpointExecutor(client), agent_ids)
+    for row in rows:
+        agent_id = str(row.get("agent_id") or "").strip()
+        state = deferred_states.get(agent_id) or {}
+        reasons = ",".join(state.get("reasons") or []) or "resource_pressure"
+        row.update(
+            {
+                "ok": False,
+                "status_code": 425,
+                "stdout": "",
+                "stderr": f"Deferred by adaptive windowing: {reasons}",
+                "deferred": True,
+                "resource_state": state,
+            }
+        )
+    return rows
+
+
+def _merge_deferred_results(payload: Dict[str, Any], deferred_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not deferred_rows:
+        return payload
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    existing_rows = [row for row in (result.get("results") or []) if isinstance(row, dict)]
+    merged_rows = existing_rows + deferred_rows
+    success = sum(1 for row in merged_rows if row.get("ok"))
+    hard_failed = sum(1 for row in merged_rows if not row.get("ok") and not row.get("deferred"))
+    deferred_count = sum(1 for row in merged_rows if row.get("deferred"))
+    status = "PARTIAL" if success > 0 or deferred_count > 0 else "FAILED"
+    result.update(
+        {
+            "results": merged_rows,
+            "total": len(merged_rows),
+            "success": success,
+            "failed": hard_failed,
+            "deferred_count": deferred_count,
+            "overall_status": status,
+            "adaptive_windowing": deferred_count > 0,
+        }
+    )
+    payload["result"] = result
+    payload["adaptive_windowing"] = {
+        "deferred": deferred_count,
+        "ready": max(0, len(merged_rows) - deferred_count),
+    }
+    return payload
+
+
 def execute_action(
     client,
     action_id: str,
     dispatch: Dict[str, Any],
     agent_ids: Iterable[str],
     execution_id: int | None = None,
+    context: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
+    context_data = context if isinstance(context, dict) else {}
+    agent_list = [str(a).strip() for a in (agent_ids or []) if str(a).strip()]
+    if action_requires_approval_handshake(
+        action_id,
+        target_count=len(agent_list),
+        context=context_data,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Approval handshake required before executing this action",
+        )
+
     requested_mode = orchestration_mode()
     mode = requested_mode
     if _requires_endpoint_transport(action_id, dispatch):
@@ -510,11 +828,51 @@ def execute_action(
     manager_error = None
     ar_fallback_enabled = _active_response_endpoint_fallback_enabled()
     manager_api_action = _resolve_manager_api_action(action_id, dispatch)
+    deferred_rows: List[Dict[str, Any]] = []
+    effective_agent_ids = list(agent_list)
+
+    if _supports_adaptive_windowing(action_id) and len(agent_list) >= _execution_batch_threshold():
+        adaptive_plan = partition_adaptive_window_targets(
+            agent_list,
+            tenant_id=context_data.get("tenant_id"),
+        )
+        ready_agent_ids = [str(a).strip() for a in (adaptive_plan.get("ready") or []) if str(a).strip()]
+        deferred_state_map = {
+            str(item.get("agent_id") or "").strip(): item
+            for item in (adaptive_plan.get("states") or [])
+            if str(item.get("agent_id") or "").strip()
+        }
+        deferred_ids = [str(a).strip() for a in (adaptive_plan.get("deferred") or []) if str(a).strip()]
+        deferred_rows = _deferred_target_rows(
+            client,
+            agent_ids=deferred_ids,
+            deferred_states=deferred_state_map,
+        )
+        if ready_agent_ids:
+            effective_agent_ids = ready_agent_ids
+        elif deferred_rows:
+            return _merge_deferred_results(
+                {
+                    "channel": "adaptive_windowing",
+                    "mode": "adaptive_windowing",
+                    "command_used": str(action_id or "").strip(),
+                    "attempts": [str(action_id or "").strip()],
+                    "result": {
+                        "ok": False,
+                        "total": 0,
+                        "success": 0,
+                        "failed": 0,
+                        "results": [],
+                    },
+                },
+                deferred_rows,
+            )
 
     if manager_api_action:
         try:
-            payload = _run_manager_api(client, action_id, dispatch, agent_ids, execution_id=execution_id)
+            payload = _run_manager_api(client, action_id, dispatch, effective_agent_ids, execution_id=execution_id)
             payload["requested_mode"] = mode
+            payload = _merge_deferred_results(payload, deferred_rows)
             return payload
         except HTTPException as exc:
             manager_error = str(exc.detail)
@@ -523,12 +881,36 @@ def execute_action(
 
     if mode in {"endpoint", "hybrid"}:
         try:
-            payload = _run_endpoint(client, action_id, dispatch, agent_ids, execution_id=execution_id)
+            if _should_batch_endpoint_execution(
+                action_id=action_id,
+                dispatch=dispatch,
+                agent_ids=agent_ids,
+                mode=mode,
+                manager_api_action=manager_api_action,
+            ):
+                payload = _run_endpoint_batched(
+                    client,
+                    action_id,
+                    dispatch,
+                    effective_agent_ids,
+                    execution_id=execution_id,
+                    context=context,
+                )
+            else:
+                payload = _run_endpoint(
+                    client,
+                    action_id,
+                    dispatch,
+                    effective_agent_ids,
+                    execution_id=execution_id,
+                    context=context,
+                )
             payload["mode"] = mode
             if mode != requested_mode:
                 payload["requested_mode"] = requested_mode
             if manager_error:
                 payload["manager_api_error"] = manager_error
+            payload = _merge_deferred_results(payload, deferred_rows)
             return payload
         except HTTPException as exc:
             if mode == "endpoint":
@@ -541,13 +923,14 @@ def execute_action(
                     )
                 ):
                     try:
-                        payload = _run_active_response(client, dispatch, agent_ids, execution_id=execution_id)
+                        payload = _run_active_response(client, dispatch, effective_agent_ids, execution_id=execution_id)
                         payload["mode"] = "endpoint_with_active_response_fallback"
                         if requested_mode != "endpoint":
                             payload["requested_mode"] = requested_mode
                         payload["endpoint_error"] = detail_text
                         if manager_error:
                             payload["manager_api_error"] = manager_error
+                        payload = _merge_deferred_results(payload, deferred_rows)
                         return payload
                     except HTTPException as ar_exc:
                         raise HTTPException(
@@ -564,7 +947,7 @@ def execute_action(
 
     if mode in {"active_response", "hybrid"}:
         try:
-            payload = _run_active_response(client, dispatch, agent_ids, execution_id=execution_id)
+            payload = _run_active_response(client, dispatch, effective_agent_ids, execution_id=execution_id)
             payload["mode"] = mode
             if mode != requested_mode:
                 payload["requested_mode"] = requested_mode
@@ -572,6 +955,7 @@ def execute_action(
                 payload["endpoint_error"] = endpoint_error
             if manager_error:
                 payload["manager_api_error"] = manager_error
+            payload = _merge_deferred_results(payload, deferred_rows)
             return payload
         except HTTPException as exc:
             if (
@@ -580,13 +964,21 @@ def execute_action(
                 and is_command_undefined(str(exc.detail))
             ):
                 try:
-                    endpoint_payload = _run_endpoint(client, action_id, dispatch, agent_ids, execution_id=execution_id)
+                    endpoint_payload = _run_endpoint(
+                        client,
+                        action_id,
+                        dispatch,
+                        effective_agent_ids,
+                        execution_id=execution_id,
+                        context=context,
+                    )
                     endpoint_payload["mode"] = "active_response_with_endpoint_fallback"
                     if requested_mode != "active_response":
                         endpoint_payload["requested_mode"] = requested_mode
                     endpoint_payload["active_response_error"] = str(exc.detail)
                     if manager_error:
                         endpoint_payload["manager_api_error"] = manager_error
+                    endpoint_payload = _merge_deferred_results(endpoint_payload, deferred_rows)
                     return endpoint_payload
                 except HTTPException as endpoint_exc:
                     raise HTTPException(

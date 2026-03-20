@@ -802,19 +802,24 @@ export default function Agents() {
 	        args: compactArgs(actionInputs),
 	        justification: justification || undefined
 	      });
-      const executionId = res?.data?.execution_id;
-      if (executionId) {
-        setActiveExecutionId(executionId);
-      }
-      setActionStatus(
-        executionId
-          ? targetMode === "multi"
-            ? `Action execution completed for ${target.length} agent(s) (run #${executionId}).`
-            : `Action execution completed for ${targetMode}:${target} (run #${executionId}).`
-          : targetMode === "multi"
-            ? `Action execution completed for ${target.length} agent(s).`
-            : `Action execution completed for ${targetMode}:${target}.`
-      );
+	      const executionId = res?.data?.execution_id;
+      const executionStatus = String(res?.data?.status || "").toUpperCase();
+	      if (executionId) {
+	        setActiveExecutionId(executionId);
+	      }
+	      setActionStatus(
+	        executionStatus === "QUEUED"
+	          ? executionId
+	            ? `Action queued for ${targetMode === "multi" ? `${target.length} agent(s)` : `${targetMode}:${target}`} (run #${executionId}).`
+	            : "Action queued."
+	          : executionId
+	            ? targetMode === "multi"
+	              ? `Action execution completed for ${target.length} agent(s) (run #${executionId}).`
+	              : `Action execution completed for ${targetMode}:${target} (run #${executionId}).`
+	            : targetMode === "multi"
+	              ? `Action execution completed for ${target.length} agent(s).`
+	              : `Action execution completed for ${targetMode}:${target}.`
+	      );
     } catch (err) {
       setActionStatus(err.response?.data?.detail || err.message);
     } finally {

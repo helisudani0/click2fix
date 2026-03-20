@@ -10,6 +10,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from api import actions as actions_api  # noqa: E402
 from api.actions import _coerce_custom_os_command_arguments  # noqa: E402
+from core import action_execution as action_execution_module  # noqa: E402
 from core.action_execution import _requires_endpoint_transport  # noqa: E402
 from core.endpoint_executor import (  # noqa: E402
     EndpointExecutor,
@@ -284,3 +285,94 @@ def test_post_action_verification_short_circuits_already_target_state_marker():
 
     assert result["ok"] is True
     assert result["strategy"] == "already_at_target_state_short_circuit"
+
+
+def test_run_endpoint_returns_partial_without_raising(monkeypatch):
+    class _FakeExecutor:
+        def __init__(self, _client):
+            return None
+
+        def execute(self, **_kwargs):
+            return {
+                "ok": False,
+                "total": 2,
+                "success": 1,
+                "failed": 1,
+                "results": [
+                    {"agent_id": "001", "ok": True, "stdout": "ok", "stderr": ""},
+                    {"agent_id": "002", "ok": False, "stdout": "", "stderr": "timed out"},
+                ],
+            }
+
+    monkeypatch.setattr(action_execution_module, "EndpointExecutor", _FakeExecutor)
+    monkeypatch.setattr(action_execution_module, "publish_event", lambda *_args, **_kwargs: None)
+
+    payload = action_execution_module._run_endpoint(  # noqa: SLF001
+        client=object(),
+        action_id="package-update",
+        dispatch={"action_command": "package-update", "arguments": []},
+        agent_ids=["001", "002"],
+        execution_id=901,
+        context={},
+    )
+
+    assert payload["result"]["overall_status"] == "PARTIAL"
+    assert payload["result"]["success"] == 1
+    assert payload["result"]["failed"] == 1
+
+
+def test_execute_action_batches_large_endpoint_runs(monkeypatch):
+    calls = []
+    progress_events = []
+
+    def _fake_run_endpoint(client, action_id, dispatch, agent_ids, execution_id=None, context=None):
+        calls.append(list(agent_ids))
+        rows = [
+            {
+                "agent_id": agent_id,
+                "agent_name": f"agent-{agent_id}",
+                "target_ip": "10.0.0.1",
+                "platform": "windows",
+                "ok": True,
+                "stdout": f"ok-{agent_id}",
+                "stderr": "",
+            }
+            for agent_id in agent_ids
+        ]
+        return {
+            "channel": "endpoint",
+            "mode": "endpoint",
+            "command_used": action_id,
+            "attempts": [action_id],
+            "result": {
+                "ok": True,
+                "total": len(rows),
+                "success": len(rows),
+                "failed": 0,
+                "results": rows,
+            },
+        }
+
+    monkeypatch.setattr(action_execution_module, "_run_endpoint", _fake_run_endpoint)
+    monkeypatch.setattr(action_execution_module, "_resolve_manager_api_action", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(action_execution_module, "orchestration_mode", lambda: "endpoint")
+    monkeypatch.setattr(action_execution_module, "_execution_batch_size", lambda: 2)
+    monkeypatch.setattr(action_execution_module, "_execution_batch_threshold", lambda: 3)
+    monkeypatch.setattr(action_execution_module, "publish_event", lambda *_args, **_kwargs: None)
+
+    payload = action_execution_module.execute_action(
+        client=object(),
+        action_id="package-update",
+        dispatch={"action_command": "package-update", "arguments": []},
+        agent_ids=["001", "002", "003", "004", "005"],
+        execution_id=777,
+        context={"_batch_progress_callback": lambda progress: progress_events.append(dict(progress))},
+    )
+
+    assert calls == [["001", "002"], ["003", "004"], ["005"]]
+    assert payload["result"]["batched"] is True
+    assert payload["result"]["total"] == 5
+    assert payload["result"]["success"] == 5
+    assert len(progress_events) == 3
+    assert progress_events[-1]["completed"] == 5
+    assert progress_events[-1]["status"] == "SUCCESS"

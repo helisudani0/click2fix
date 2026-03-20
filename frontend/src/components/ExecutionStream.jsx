@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api/client";
 import { executionSocket } from "../api/socket";
-import { getAlerts } from "../api/wazuh";
+import { getAlerts, retryFailedExecution } from "../api/wazuh";
 import RelativeTimestamp from "./RelativeTimestamp";
-import { nowUtcIso } from "../utils/time";
+import { nowUtcIso, parseWazuhTimestamp } from "../utils/time";
 import { buildHumanReadableOutput, normalizeOutputText } from "../utils/output";
 
 const UPDATE_ACTION_IDS = new Set([
@@ -656,6 +656,54 @@ const executionStatusTone = (status) => {
   return "pending";
 };
 
+const executionProgressSummary = (execution, metaSummary, targets = []) => {
+  const total = Math.max(0, Number(metaSummary?.total || execution?.target_total || 0));
+  const completed = Math.max(0, Number(metaSummary?.completed || execution?.target_completed || targets.length || 0));
+  const success = Math.max(
+    0,
+    Number(
+      metaSummary?.success
+      || execution?.target_success
+      || targets.filter((target) => Boolean(target?.ok)).length
+      || 0
+    )
+  );
+  const failed = Math.max(
+    0,
+    Number(
+      metaSummary?.failed
+      || execution?.target_failed
+      || Math.max(completed - success, 0)
+    )
+  );
+  const effectiveTotal = Math.max(total, completed);
+  const remaining = Math.max(0, effectiveTotal - completed);
+  const percentComplete = effectiveTotal > 0
+    ? Math.round((completed / effectiveTotal) * 100)
+    : Number(metaSummary?.percent_complete || 0);
+  const final = Boolean(metaSummary?.final || execution?.finished_at);
+  return {
+    total: effectiveTotal,
+    completed,
+    success,
+    failed,
+    remaining,
+    percentComplete,
+    final,
+    retryFailedAvailable: Boolean(metaSummary?.retry_failed_available || (final && failed > 0 && String(execution?.action || "").trim().toLowerCase() !== "global-shell")),
+    label: effectiveTotal > 0 ? `${success}/${effectiveTotal}` : "0/0",
+  };
+};
+
+const isLaggingExecution = (execution, summary) => {
+  if (!execution || execution.finished_at || summary?.final) return false;
+  const status = String(execution.status || "").toUpperCase();
+  if (!["QUEUED", "RUNNING", "PARTIAL", "PENDING", "PENDING_VERIFICATION", "PAUSED"].includes(status)) return false;
+  const started = parseWazuhTimestamp(execution.started_at);
+  if (!started) return false;
+  return Date.now() - started.getTime() >= 10000;
+};
+
 const parseExecutionArgs = (value) => {
   if (value === null || value === undefined) return null;
   if (typeof value !== "string") return value;
@@ -907,6 +955,7 @@ export default function ExecutionStream({ executionId }) {
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState("");
   const [controlBusy, setControlBusy] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
   const [controlError, setControlError] = useState("");
   const [controlMessage, setControlMessage] = useState("");
   const autoStreamRef = useRef(null);
@@ -1021,6 +1070,50 @@ export default function ExecutionStream({ executionId }) {
           const msg = JSON.parse(e.data);
           if (msg && typeof msg === "object" && msg.type === "heartbeat") return;
           setEvents((prev) => [...prev, normalizeStep(msg)]);
+          if (msg && typeof msg === "object" && msg.type === "execution_progress") {
+            let progress = null;
+            try {
+              progress = JSON.parse(String(msg.stdout || "{}"));
+            } catch {
+              progress = null;
+            }
+            if (progress && typeof progress === "object") {
+              setMeta((prev) => {
+                if (!prev || typeof prev !== "object") return prev;
+                const previousExecution = prev.execution && typeof prev.execution === "object" ? prev.execution : {};
+                return {
+                  ...prev,
+                  summary: {
+                    ...(prev.summary || {}),
+                    ...progress,
+                  },
+                  execution: {
+                    ...previousExecution,
+                    status: progress.status || previousExecution.status,
+                    target_total: progress.total ?? previousExecution.target_total,
+                    target_completed: progress.completed ?? previousExecution.target_completed,
+                    target_success: progress.success ?? previousExecution.target_success,
+                    target_failed: progress.failed ?? previousExecution.target_failed,
+                    batch_size: progress.batch_size ?? previousExecution.batch_size,
+                  },
+                };
+              });
+            }
+          }
+          if (msg && typeof msg === "object" && msg.type === "execution_finished") {
+            setMeta((prev) => {
+              if (!prev || typeof prev !== "object") return prev;
+              const previousExecution = prev.execution && typeof prev.execution === "object" ? prev.execution : {};
+              return {
+                ...prev,
+                execution: {
+                  ...previousExecution,
+                  status: msg.status || previousExecution.status,
+                  finished_at: previousExecution.finished_at || nowUtcIso(),
+                },
+              };
+            });
+          }
           if (
             msg
             && typeof msg === "object"
@@ -1111,10 +1204,15 @@ export default function ExecutionStream({ executionId }) {
   const selectedTarget = targets.find((t) => t.agent_id === selectedTargetId) || null;
   const execution = meta?.execution || null;
   const executionStatus = String(execution?.status || "").toUpperCase();
-  const canPauseExecution = executionStatus === "RUNNING";
+  const summary = useMemo(
+    () => executionProgressSummary(execution, meta?.summary, targets),
+    [execution, meta?.summary, targets]
+  );
+  const laggingExecution = isLaggingExecution(execution, summary);
+  const canPauseExecution = executionStatus === "RUNNING" || (executionStatus === "PARTIAL" && !execution?.finished_at);
   const canResumeExecution = executionStatus === "PAUSED";
   const canControlExecution = canPauseExecution || canResumeExecution;
-  const canKillExecution = executionStatus === "RUNNING" || executionStatus === "PAUSED";
+  const canKillExecution = canPauseExecution || canResumeExecution || (executionStatus === "QUEUED" && !execution?.finished_at);
   const actionMeta = meta?.action || null;
   const playbookMeta = meta?.playbook || null;
   const displayTitle = actionMeta?.label
@@ -1281,13 +1379,36 @@ export default function ExecutionStream({ executionId }) {
     }
   };
 
+  const handleRetryFailed = async () => {
+    if (!executionId || !summary.retryFailedAvailable) return;
+    setRetryBusy(true);
+    setControlError("");
+    setControlMessage("");
+    try {
+      const res = await retryFailedExecution(executionId, {
+        justification: `Retry failed targets from execution #${executionId}`,
+      });
+      const payload = res?.data || {};
+      const retryExecutionId = payload.execution_id || null;
+      setControlMessage(
+        retryExecutionId
+          ? `Retry queued as run #${retryExecutionId} for ${Array.isArray(payload.retried_agents) ? payload.retried_agents.length : 0} failed target(s).`
+          : "Retry queued for failed targets."
+      );
+    } catch (err) {
+      setControlError(err.response?.data?.detail || err.message || "Failed to queue retry");
+    } finally {
+      setRetryBusy(false);
+    }
+  };
+
   const openShellDebug = (prefill) => {
     if (!prefill) return;
     navigate("/global-shell", { state: { prefill } });
   };
 
   return (
-    <div className="card">
+    <div className="card" data-tour-id="execution-hud">
       <div className="card-header">
         <div>
           <h3>Live Execution</h3>
@@ -1303,9 +1424,17 @@ export default function ExecutionStream({ executionId }) {
               Copy To Shell
             </button>
           ) : null}
+          {summary.retryFailedAvailable ? (
+            <button className="btn secondary" onClick={handleRetryFailed} disabled={retryBusy}>
+              {retryBusy ? "Queueing..." : "Retry Failed Only"}
+            </button>
+          ) : null}
           <span className={`status-pill ${streamEnabled ? "success" : "neutral"}`}>
             {streamEnabled ? "Streaming On" : "Streaming Off"}
           </span>
+          {laggingExecution ? (
+            <span className="status-pill pending lagging">Lagging Target</span>
+          ) : null}
           <button
             className="btn secondary"
             onClick={() => setStreamEnabled((prev) => !prev)}
@@ -1341,6 +1470,34 @@ export default function ExecutionStream({ executionId }) {
       ) : controlMessage ? (
         <div className="meta-line ws-normal">{controlMessage}</div>
       ) : null}
+      {loading || error ? null : (
+        <div className="execution-hud">
+          <div className="execution-hud-header">
+            <div>
+              <div className="muted">Fleet Progress</div>
+              <div className="execution-hud-value">{summary.label} passed</div>
+            </div>
+            <div className="execution-hud-meta">
+              <span>{summary.percentComplete}% complete</span>
+              <span>{summary.failed} failed</span>
+              <span>{summary.remaining} remaining</span>
+              {laggingExecution ? <span className="lag-indicator">Warning spinner: command is still alive</span> : null}
+            </div>
+          </div>
+          <div className="fraction-progress large">
+            <div className="fraction-progress-bar">
+              <span className="fraction-progress-segment success" style={{ width: `${summary.total ? (summary.success / summary.total) * 100 : 0}%` }} />
+              <span className="fraction-progress-segment failed" style={{ width: `${summary.total ? (summary.failed / summary.total) * 100 : 0}%` }} />
+              <span className="fraction-progress-segment remaining" style={{ width: `${summary.total ? (summary.remaining / summary.total) * 100 : 0}%` }} />
+            </div>
+            <div className="fraction-progress-meta">
+              <span>{summary.success} succeeded</span>
+              <span>{summary.failed} failed</span>
+              <span>{summary.total} total targets</span>
+            </div>
+          </div>
+        </div>
+      )}
       {loading ? (
         <div className="empty-state">Loading execution steps...</div>
       ) : error ? (

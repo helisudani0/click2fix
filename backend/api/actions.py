@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import text
 
+from core.active_defense import action_requires_approval_handshake
 from core.actions import get_action, list_actions, normalize_args, resolve_action_dispatch
 from core.action_capability_resolver import capability_resolver
 from core.action_execution import execute_action, orchestration_mode, resolve_agent_ids
@@ -538,6 +539,32 @@ def _result_rows_ok(payload: Any) -> bool:
     return False
 
 
+def _result_rows_status(payload: Any) -> str:
+    result = payload if isinstance(payload, dict) else {}
+    total = _to_int(result.get("total"), 0)
+    success = _to_int(result.get("success"), 0)
+    failed = _to_int(result.get("failed"), 0)
+    if total > 0 and success > 0 and failed > 0:
+        return "PARTIAL"
+    if total > 0 and success > 0 and failed == 0:
+        return "SUCCESS"
+    return "FAILED"
+
+
+def _result_rows_counts(rows: Any, *, fallback_total: int = 0) -> dict[str, int]:
+    valid_rows = [row for row in (rows or []) if isinstance(row, dict)]
+    success = sum(1 for row in valid_rows if row.get("ok"))
+    failed = sum(1 for row in valid_rows if not row.get("ok"))
+    completed = len(valid_rows)
+    total = max(int(fallback_total or 0), completed)
+    return {
+        "total": total,
+        "completed": completed,
+        "success": success,
+        "failed": failed,
+    }
+
+
 def _check_vulnerability_clearance(
     *,
     vulnerability_context: dict[str, Any],
@@ -603,6 +630,8 @@ def _run_global_shell_async_job(
     last_failure = ""
     final_result_payload: dict[str, Any] = {}
     effective_context = _coerce_vulnerability_context(vulnerability_context)
+    incremental_rows_persisted = False
+    batch_size = max(1, min(len(selected_ids), 20))
     if not auto_remediate:
         attempts_budget = 1
 
@@ -617,6 +646,38 @@ def _run_global_shell_async_job(
                 current_verify_min_build = str(rec.get("verify_min_build") or "").strip()
 
     try:
+        def _batch_progress_callback(progress: dict[str, Any]) -> None:
+            nonlocal incremental_rows_persisted
+            rows = progress.get("rows") if isinstance(progress, dict) else []
+            if rows:
+                _store_execution_targets(db, int(execution_id), rows)
+                incremental_rows_persisted = True
+            db.execute(
+                text(
+                    """
+                    UPDATE executions
+                    SET
+                        status=:status,
+                        target_total=:target_total,
+                        target_completed=:target_completed,
+                        target_success=:target_success,
+                        target_failed=:target_failed,
+                        batch_size=:batch_size
+                    WHERE id=:id
+                    """
+                ),
+                {
+                    "status": "PARTIAL",
+                    "target_total": int(progress.get("total") or len(selected_ids)),
+                    "target_completed": int(progress.get("completed") or 0),
+                    "target_success": int(progress.get("success") or 0),
+                    "target_failed": int(progress.get("failed") or 0),
+                    "batch_size": batch_size,
+                    "id": execution_id,
+                },
+            )
+            db.commit()
+
         db.execute(
             text("UPDATE executions SET status=:status WHERE id=:id"),
             {"status": "RUNNING", "id": execution_id},
@@ -709,6 +770,7 @@ def _run_global_shell_async_job(
             failure_summary = ""
             vuln_check: dict[str, Any] = {"checked": False, "reason": "not_requested"}
             result_payload: dict[str, Any] = {}
+            result_status = "FAILED"
             try:
                 execution = execute_action(
                     client,
@@ -716,12 +778,14 @@ def _run_global_shell_async_job(
                     dispatch,
                     selected_ids,
                     execution_id=int(execution_id),
+                    context={"_batch_progress_callback": _batch_progress_callback},
                 )
                 step_name = execution.get("channel") or "orchestration"
                 result_payload = execution.get("result") if isinstance(execution.get("result"), dict) else {}
                 final_result_payload = result_payload
                 if isinstance(result_payload.get("results"), list):
                     target_rows = result_payload.get("results")
+                result_status = _result_rows_status(result_payload)
                 attempt_ok = _result_rows_ok(result_payload)
                 if not attempt_ok:
                     failure_summary = summarize_failure_from_result(result_payload) or "Execution returned target failures."
@@ -797,9 +861,9 @@ def _run_global_shell_async_job(
             publish_event(
                 int(execution_id),
                 {
-                    "type": "step_done" if attempt_ok else "step_failed",
+                    "type": "step_done" if attempt_ok or result_status == "PARTIAL" else "step_failed",
                     "step": f"orchestration:attempt-{attempt_no}",
-                    "status": "SUCCESS" if attempt_ok else "FAILED",
+                    "status": "SUCCESS" if attempt_ok else result_status,
                     "stdout": json.dumps(attempt_record.get("result_summary"), default=str),
                     "stderr": "" if attempt_ok else failure_summary,
                 },
@@ -810,6 +874,10 @@ def _run_global_shell_async_job(
                 step_status = "SUCCESS"
                 last_failure = ""
                 break
+
+            if result_status == "PARTIAL":
+                execution_status = "PARTIAL"
+                step_status = "PARTIAL"
 
             last_failure = failure_summary or "Execution attempt failed."
             if attempt_no >= attempts_budget:
@@ -843,7 +911,10 @@ def _run_global_shell_async_job(
             if next_verify_stdout:
                 current_verify_stdout_contains = next_verify_stdout
 
-        if execution_status != "SUCCESS":
+        if execution_status == "PARTIAL":
+            step_status = "PARTIAL"
+            step_stderr = last_failure or "Global shell remediation completed with partial target success."
+        elif execution_status != "SUCCESS":
             step_status = "FAILED"
             step_stderr = last_failure or "Global shell remediation did not complete successfully."
         detail_payload = {
@@ -877,17 +948,34 @@ def _run_global_shell_async_job(
         current_upper = str(current_status or "").strip().upper()
         if current_upper in {"KILLED", "CANCELLED"}:
             execution_status = current_upper
+        counts = _result_rows_counts(target_rows, fallback_total=len(selected_ids))
         db.execute(
             text(
                 """
                 UPDATE executions
-                SET status=:status, finished_at=COALESCE(finished_at, :finished_at)
+                SET
+                    status=:status,
+                    finished_at=COALESCE(finished_at, :finished_at),
+                    target_total=:target_total,
+                    target_completed=:target_completed,
+                    target_success=:target_success,
+                    target_failed=:target_failed,
+                    batch_size=:batch_size
                 WHERE id=:id
                 """
             ),
-            {"status": execution_status, "finished_at": utc_now_naive(), "id": execution_id},
+            {
+                "status": execution_status,
+                "finished_at": utc_now_naive(),
+                "target_total": counts["total"],
+                "target_completed": counts["completed"],
+                "target_success": counts["success"],
+                "target_failed": counts["failed"],
+                "batch_size": batch_size,
+                "id": execution_id,
+            },
         )
-        if target_rows:
+        if target_rows and not incremental_rows_persisted:
             _store_execution_targets(db, int(execution_id), target_rows)
         db.commit()
 
@@ -1203,6 +1291,25 @@ async def run_action(request: Request, user=Depends(require_role("admin"))):
     arguments = normalize_args(action, args)
     dispatch = resolve_action_dispatch(action, arguments)
     agent_ids = resolve_agent_ids(client, target=agent_id, group=group)
+    if action_requires_approval_handshake(action_id, target_count=len(agent_ids), context={"tenant_id": user.get("org_id")}):
+        from api.approvals import create_approval_request_record
+
+        approval = create_approval_request_record(
+            request=request,
+            user=user,
+            agent_ids=agent_ids,
+            action_id=action_id,
+            args=args,
+            justification=body.get("justification") or body.get("reason"),
+            incident_priority=body.get("incident_priority") or body.get("priority"),
+            incident_score=body.get("incident_score") or body.get("score"),
+        )
+        return {
+            "status": "pending_approval",
+            "approval_id": approval.get("approval_id") or approval.get("id"),
+            "approval": approval,
+            "result": None,
+        }
     execution = execute_action(client, action_id, dispatch, agent_ids)
 
     log_audit(
@@ -1502,6 +1609,44 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
     if assistant_plan_error:
         assistant_meta["error"] = assistant_plan_error
 
+    if action_requires_approval_handshake(
+        transport_action_id,
+        target_count=len(selected_ids),
+        context={"tenant_id": org_id},
+    ):
+        from api.approvals import create_approval_request_record
+
+        approval = create_approval_request_record(
+            request=request,
+            user=user,
+            agent_ids=selected_ids,
+            action_id=transport_action_id,
+            args={
+                "command": command_to_run,
+                "verify_kb": verify_kb,
+                "verify_min_build": verify_min_build,
+                "verify_stdout_contains": verify_stdout_contains,
+                "run_as_system": effective_run_as_system,
+                "session_id": session_id,
+            },
+            justification=justification or "Global shell execution requires explicit approval",
+            incident_priority=body.get("incident_priority") or body.get("priority"),
+            incident_score=body.get("incident_score") or body.get("score"),
+        )
+        return {
+            "status": "pending_approval",
+            "action_id": execution_action_id,
+            "transport_action_id": transport_action_id,
+            "command": raw_command,
+            "command_used": command_to_run,
+            "run_as_system": effective_run_as_system,
+            "session_id": session_id,
+            "agent_ids": selected_ids,
+            "approval_id": approval.get("approval_id") or approval.get("id"),
+            "approval": approval,
+            "assistant": assistant_meta,
+        }
+
     if async_mode:
         db = connect()
         try:
@@ -1511,8 +1656,10 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
                 text(
                     """
                     INSERT INTO executions
-                    (approval_id, agent, playbook, action, args, status, approved_by, started_at, alert_id, org_id)
-                    VALUES (:approval_id, :agent, :playbook, :action, :args, :status, :approved_by, :started_at, :alert_id, :org_id)
+                    (approval_id, agent, playbook, action, args, status, approved_by, started_at, alert_id, org_id,
+                     target_total, target_completed, target_success, target_failed, batch_size)
+                    VALUES (:approval_id, :agent, :playbook, :action, :args, :status, :approved_by, :started_at, :alert_id, :org_id,
+                            :target_total, :target_completed, :target_success, :target_failed, :batch_size)
                     RETURNING id
                     """
                 ),
@@ -1527,6 +1674,11 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
                     "started_at": started_at,
                     "alert_id": None,
                     "org_id": org_id,
+                    "target_total": len(selected_ids),
+                    "target_completed": 0,
+                    "target_success": 0,
+                    "target_failed": 0,
+                    "batch_size": max(1, min(len(selected_ids), 20)),
                 },
             )
             execution_id = int(inserted.scalar())

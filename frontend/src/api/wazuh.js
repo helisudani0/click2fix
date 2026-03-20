@@ -274,3 +274,9 @@ export const getExecutions = (params = {}, options = {}) => {
 };
 export const suggestGlobalShellCommand = (payload) =>
   api.post("/actions/global-shell/assist", payload);
+
+export const retryFailedExecution = (executionId, payload = {}) =>
+  api.post(`/executions/${executionId}/retry-failed`, payload);
+
+export const getExecutionHealth = () =>
+  api.get("/executions/health");

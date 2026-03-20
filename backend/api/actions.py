@@ -361,10 +361,11 @@ def _coerce_custom_os_command_arguments(
     verify_min_build: str = "",
     verify_stdout_contains: str = "",
     run_as_system: bool = False,
+    session_id: str = "",
 ) -> list[str]:
     """
     Enforce the custom-os-command positional schema:
-    [command, verify_kb, verify_min_build, verify_stdout_contains, run_as_system]
+    [command, verify_kb, verify_min_build, verify_stdout_contains, run_as_system, session_id?]
 
     This keeps Global Shell stable even if an older container loads a stale action
     schema that does not yet include optional trailing fields.
@@ -375,6 +376,9 @@ def _coerce_custom_os_command_arguments(
         existing_cmd = str(existing[0] or "").strip()
         if existing_cmd:
             command_value = existing_cmd
+    session_value = str(session_id or "").strip()
+    if not session_value and len(existing) > 5:
+        session_value = str(existing[5] or "").strip()
 
     normalized = [
         command_value,
@@ -383,6 +387,8 @@ def _coerce_custom_os_command_arguments(
         str(verify_stdout_contains or ""),
         "true" if bool(run_as_system) else "false",
     ]
+    if session_value:
+        normalized.append(session_value)
     return normalized
 
 
@@ -1065,6 +1071,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         async_mode = bool(async_raw)
 
     raw_command = str(body.get("command") or "").strip()
+    ai_session_id = str(body.get("ai_session_id") or body.get("session_id") or "").strip()
     if not raw_command:
         logger.warning("global-shell rejected: empty command")
         raise HTTPException(status_code=400, detail="command is required")
@@ -1195,6 +1202,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
                 "verify_min_build": verify_min_build,
                 "verify_stdout_contains": verify_stdout_contains,
                 "run_as_system": "true" if effective_run_as_system else "false",
+                "session_id": ai_session_id,
             },
         ),
         command=command_to_run,
@@ -1202,6 +1210,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         verify_min_build=verify_min_build,
         verify_stdout_contains=verify_stdout_contains,
         run_as_system=effective_run_as_system,
+        session_id=ai_session_id,
     )
     dispatch = resolve_action_dispatch(action, arguments)
     actor = user.get("sub") if isinstance(user, dict) else str(user)
@@ -1294,6 +1303,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
             "command": raw_command,
             "command_used": command_to_run,
             "run_as_system": effective_run_as_system,
+            "session_id": ai_session_id or None,
             "execution_id": execution_id,
             "agent_ids": selected_ids,
             "summary": summary,
@@ -1322,6 +1332,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         "command": raw_command,
         "command_used": command_to_run,
         "run_as_system": effective_run_as_system,
+        "session_id": ai_session_id or None,
         "channel": execution.get("channel"),
         "mode": execution.get("mode"),
         "attempts": execution.get("attempts"),

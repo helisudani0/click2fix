@@ -312,6 +312,12 @@ class ActionRegistry:
                     required=False,
                     description="Run under SYSTEM scheduled-task context (Windows only)",
                 ),
+                ActionInput(
+                    name="session_id",
+                    type="string",
+                    required=False,
+                    description="Optional shell session identifier for persisting variables between runs",
+                ),
             ],
             idempotency=IdempotencyRule(mode=IdempotencyMode.ALWAYS_RUN),
             triggers_sca_rescan=True,

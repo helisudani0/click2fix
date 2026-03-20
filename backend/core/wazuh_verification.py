@@ -9,15 +9,19 @@ Behavior:
 """
 
 import logging
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
+from sqlalchemy import text
+
 from core.action_schema_registry import get_action_capability
 from core.settings import SETTINGS
-from core.time_utils import utc_iso
+from core.time_utils import utc_iso, utc_now_naive
 from core.wazuh_client import WazuhClient
+from db.database import connect
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +41,14 @@ _SCAN_TIMESTAMP_KEYS = (
     "updated_at",
     "timestamp",
     "start_scan",
+)
+_ALREADY_TARGET_STATE_ACTIONS = {"package-update", "software-install-upgrade"}
+_ALREADY_TARGET_STATE_MARKERS = (
+    "reason=version_already_installed",
+    "reason=no_applicable_update",
+    "message=no_applicable_update",
+    "post_verify_fresh_install_present_no_version",
+    "post_verify_present_after_unknown_before",
 )
 
 
@@ -136,6 +148,46 @@ def _extract_last_scan_timestamp(items: List[Dict[str, Any]]) -> tuple[Optional[
                     latest = parsed
                     source_key = key
     return latest, source_key
+
+
+def _target_output_blob(row: Dict[str, Any]) -> str:
+    if not isinstance(row, dict):
+        return ""
+    stdout = str(row.get("stdout") or "")
+    stderr = str(row.get("stderr") or "")
+    return "\n".join(part for part in (stdout, stderr) if part).strip()
+
+
+def _target_already_at_target_state(action_id: str, row: Dict[str, Any]) -> bool:
+    aid = str(action_id or "").strip().lower()
+    if aid not in _ALREADY_TARGET_STATE_ACTIONS:
+        return False
+    blob = _target_output_blob(row).lower()
+    if not blob:
+        return False
+    if any(marker in blob for marker in _ALREADY_TARGET_STATE_MARKERS):
+        return True
+    if (
+        "package update complete: outcome=success" in blob
+        and "installed=0" in blob
+        and "failed=0" in blob
+        and "remaining=0" in blob
+        and "updates_skipped_no_change=" in blob
+    ):
+        return True
+    return False
+
+
+def _append_note(existing: str, note: str) -> str:
+    current = str(existing or "").strip()
+    extra = str(note or "").strip()
+    if not extra:
+        return current
+    if not current:
+        return extra
+    if extra in current:
+        return current
+    return current + "\n" + extra
 
 
 class PostActionVerificationLoop:
@@ -315,6 +367,7 @@ class PostActionVerificationLoop:
         rows = [row for row in (target_rows or []) if isinstance(row, dict)]
         successful_agents: List[str] = []
         seen = set()
+        already_satisfied_targets: List[Dict[str, Any]] = []
         for row in rows:
             if not row.get("ok"):
                 continue
@@ -322,7 +375,41 @@ class PostActionVerificationLoop:
             if not agent_id or agent_id in seen:
                 continue
             seen.add(agent_id)
+            if _target_already_at_target_state(aid, row):
+                already_satisfied_targets.append(
+                    {
+                        "agent_id": agent_id,
+                        "status": "already_satisfied",
+                        "rescan_triggered": False,
+                        "reason": "already_at_target_state",
+                        "evidence_excerpt": _target_output_blob(row)[:4000],
+                    }
+                )
+                continue
             successful_agents.append(agent_id)
+
+        if not successful_agents and already_satisfied_targets:
+            return {
+                "skipped": False,
+                "action_id": aid,
+                "execution_id": execution_id,
+                "strategy": "already_at_target_state_short_circuit",
+                "summary": {
+                    "targets": len(already_satisfied_targets),
+                    "verified": 0,
+                    "already_satisfied": len(already_satisfied_targets),
+                    "timed_out": 0,
+                    "trigger_failed": 0,
+                },
+                "targets": already_satisfied_targets,
+                "trigger": {
+                    "ok": True,
+                    "batched": False,
+                    "triggered": 0,
+                    "failed": 0,
+                },
+                "ok": True,
+            }
 
         if not successful_agents:
             return {
@@ -431,11 +518,16 @@ class PostActionVerificationLoop:
         for agent_id in pending:
             per_target_by_agent[agent_id]["status"] = "timeout"
 
-        per_target = [per_target_by_agent[agent_id] for agent_id in successful_agents]
+        per_target = list(already_satisfied_targets) + [per_target_by_agent[agent_id] for agent_id in successful_agents]
         verified_count = sum(1 for row in per_target if row.get("status") == "verified")
+        already_satisfied_count = sum(1 for row in per_target if row.get("status") == "already_satisfied")
         timeout_count = sum(1 for row in per_target if row.get("status") == "timeout")
         trigger_failed_count = sum(1 for row in per_target if row.get("status") == "trigger_failed")
-        ok = timeout_count == 0 and trigger_failed_count == 0 and verified_count == len(per_target)
+        ok = (
+            timeout_count == 0
+            and trigger_failed_count == 0
+            and (verified_count + already_satisfied_count) == len(per_target)
+        )
 
         result = {
             "skipped": False,
@@ -456,6 +548,7 @@ class PostActionVerificationLoop:
             "summary": {
                 "targets": len(per_target),
                 "verified": verified_count,
+                "already_satisfied": already_satisfied_count,
                 "timed_out": timeout_count,
                 "trigger_failed": trigger_failed_count,
             },
@@ -479,6 +572,187 @@ def run_post_action_verification(
 ) -> Dict[str, Any]:
     verifier = PostActionVerificationLoop(client=client)
     return verifier.verify_targets(action_id, execution_id, target_rows)
+
+
+def _resolve_linked_alert_triage(
+    *,
+    execution_id: int,
+    action_id: str,
+    alert_id: str,
+    org_id: int | None,
+) -> bool:
+    text_alert_id = str(alert_id or "").strip()
+    if not text_alert_id or not org_id:
+        return False
+    db = connect()
+    try:
+        row = db.execute(
+            text(
+                """
+                SELECT id, status, notes
+                FROM alert_triage
+                WHERE org_id=:org_id AND alert_id=:alert_id
+                """
+            ),
+            {"org_id": int(org_id), "alert_id": text_alert_id},
+        ).fetchone()
+        if not row:
+            return False
+        current_status = str(row[1] or "").strip().lower()
+        if current_status in {"resolved", "closed", "suppressed"}:
+            return False
+        note = (
+            f"Auto-resolved after successful post-action verification for execution {execution_id} "
+            f"({action_id})."
+        )
+        db.execute(
+            text(
+                """
+                UPDATE alert_triage
+                SET status='resolved', notes=:notes, updated_at=:updated_at
+                WHERE id=:id
+                """
+            ),
+            {
+                "id": int(row[0]),
+                "notes": _append_note(str(row[2] or ""), note),
+                "updated_at": utc_now_naive(),
+            },
+        )
+        db.commit()
+        return True
+    except Exception:
+        db.rollback()
+        return False
+    finally:
+        db.close()
+
+
+def reconcile_pending_verifications_for_agents(
+    client: WazuhClient,
+    agent_ids: Iterable[str],
+    *,
+    source_execution_id: int | str | None = None,
+    source_action_id: str = "",
+) -> Dict[str, Any]:
+    target_agents = {
+        str(agent_id or "").strip()
+        for agent_id in (agent_ids or [])
+        if str(agent_id or "").strip()
+    }
+    if not target_agents:
+        return {"checked": 0, "updated": 0, "resolved_alerts": 0}
+
+    db = connect()
+    try:
+        pending_rows = db.execute(
+            text(
+                """
+                SELECT e.id, e.action, e.alert_id, e.org_id
+                FROM executions e
+                WHERE UPPER(COALESCE(e.status, '')) = 'PENDING_VERIFICATION'
+                ORDER BY e.id ASC
+                """
+            )
+        ).fetchall()
+        checked = 0
+        updated = 0
+        resolved_alerts = 0
+        verifier = PostActionVerificationLoop(client=client)
+        skip_execution_id = str(source_execution_id or "").strip()
+
+        for row in pending_rows:
+            execution_id = int(row[0])
+            if skip_execution_id and str(execution_id) == skip_execution_id:
+                continue
+
+            target_rows = db.execute(
+                text(
+                    """
+                    SELECT agent_id, agent_name, target_ip, platform, ok, status_code, stdout, stderr
+                    FROM execution_targets
+                    WHERE execution_id=:execution_id
+                    ORDER BY id ASC
+                    """
+                ),
+                {"execution_id": execution_id},
+            ).fetchall()
+            serialized_targets = [
+                {
+                    "agent_id": str(item[0] or ""),
+                    "agent_name": str(item[1] or ""),
+                    "target_ip": str(item[2] or ""),
+                    "platform": str(item[3] or ""),
+                    "ok": bool(item[4]),
+                    "status_code": int(item[5] or 0),
+                    "stdout": str(item[6] or ""),
+                    "stderr": str(item[7] or ""),
+                }
+                for item in target_rows
+            ]
+            if not serialized_targets:
+                continue
+            if not any(str(item.get("agent_id") or "") in target_agents for item in serialized_targets):
+                continue
+
+            checked += 1
+            verification_result = verifier.verify_targets(str(row[1] or ""), execution_id, serialized_targets)
+            verification_state = derive_verification_state(verification_result)
+            if verification_state.get("pending"):
+                continue
+
+            next_status = "SUCCESS" if verification_state.get("ok") else "FAILED"
+            db.execute(
+                text(
+                    """
+                    INSERT INTO execution_steps
+                    (execution_id, step, stdout, stderr, status)
+                    VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                    """
+                ),
+                {
+                    "execution_id": execution_id,
+                    "step": "post_action_verification:reconciled",
+                    "stdout": json.dumps(
+                        {
+                            "source_execution_id": source_execution_id,
+                            "source_action_id": str(source_action_id or ""),
+                            "verification": verification_result,
+                        },
+                        default=str,
+                    ),
+                    "stderr": str(verification_state.get("step_error") or ""),
+                    "status": str(verification_state.get("step_status") or "SUCCESS"),
+                },
+            )
+            db.execute(
+                text(
+                    """
+                    UPDATE executions
+                    SET status=:status, finished_at=COALESCE(finished_at, :finished_at)
+                    WHERE id=:id
+                    """
+                ),
+                {"status": next_status, "id": execution_id, "finished_at": utc_now_naive()},
+            )
+            db.commit()
+            updated += 1
+            if verification_state.get("ok"):
+                if _resolve_linked_alert_triage(
+                    execution_id=execution_id,
+                    action_id=str(row[1] or ""),
+                    alert_id=str(row[2] or ""),
+                    org_id=row[3],
+                ):
+                    resolved_alerts += 1
+
+        return {
+            "checked": checked,
+            "updated": updated,
+            "resolved_alerts": resolved_alerts,
+        }
+    finally:
+        db.close()
 
 
 def derive_verification_state(result: Dict[str, Any] | None) -> Dict[str, Any]:

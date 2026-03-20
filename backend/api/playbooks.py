@@ -19,7 +19,11 @@ from core.settings import SETTINGS
 from core.time_utils import utc_now_naive
 from core.ws_bus import publish_event
 from core.wazuh_client import WazuhClient
-from core.wazuh_verification import derive_verification_state, run_post_action_verification
+from core.wazuh_verification import (
+    derive_verification_state,
+    reconcile_pending_verifications_for_agents,
+    run_post_action_verification,
+)
 from db.database import connect
 
 
@@ -383,6 +387,11 @@ def _run_playbook_async_job(
                     isinstance(result_payload, dict)
                     and isinstance(result_payload.get("results"), list)
                 ):
+                    successful_agent_ids = [
+                        str(row.get("agent_id") or "").strip()
+                        for row in (result_payload.get("results") or [])
+                        if isinstance(row, dict) and row.get("ok") and str(row.get("agent_id") or "").strip()
+                    ]
                     verification_result = run_post_action_verification(
                         client,
                         str(step_action),
@@ -422,6 +431,31 @@ def _run_playbook_async_job(
                                 "stderr": str(verification_state.get("step_error") or ""),
                             },
                         )
+                    if str(step_action or "").strip().lower() == "sca-rescan" and successful_agent_ids:
+                        reconcile_result = reconcile_pending_verifications_for_agents(
+                            client,
+                            successful_agent_ids,
+                            source_execution_id=execution_id,
+                            source_action_id=str(step_action),
+                        )
+                        if isinstance(reconcile_result, dict) and int(reconcile_result.get("updated") or 0) > 0:
+                            db.execute(
+                                text(
+                                    """
+                                    INSERT INTO execution_steps
+                                    (execution_id, step, stdout, stderr, status)
+                                    VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                                    """
+                                ),
+                                {
+                                    "execution_id": execution_id,
+                                    "step": f"{step_id}:pending_verification_reconcile",
+                                    "stdout": json.dumps(reconcile_result, default=str),
+                                    "stderr": "",
+                                    "status": "SUCCESS",
+                                },
+                            )
+                            db.commit()
             except HTTPException as exc:
                 overall_status = "FAILED"
                 err_text = exc.detail.get("message") if isinstance(exc.detail, dict) else exc.detail

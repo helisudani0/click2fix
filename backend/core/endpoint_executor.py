@@ -2568,18 +2568,19 @@ class EndpointExecutor:
 
         if aid == "custom-os-command":
             return r"""
-		param(
-		  [string]$ExecId = "adhoc",
-		  [string]$AgentId = "",
-		  [string]$ActionId = "custom-os-command",
-		  [string]$LogFile = "C:\Click2Fix\logs\executions.log",
-		  [string]$CommandFile = "",
-		  [string]$VerifyKb = "",
-		  [string]$VerifyMinBuild = "",
-		  [string]$VerifyStdoutContains = "",
-		  [string]$RunAsSystem = "false",
-		  [int]$MaxRuntimeSeconds = 1800
-		)
+			param(
+			  [string]$ExecId = "adhoc",
+			  [string]$AgentId = "",
+			  [string]$ActionId = "custom-os-command",
+			  [string]$LogFile = "C:\Click2Fix\logs\executions.log",
+			  [string]$CommandFile = "",
+			  [string]$VerifyKb = "",
+			  [string]$VerifyMinBuild = "",
+			  [string]$VerifyStdoutContains = "",
+			  [string]$RunAsSystem = "false",
+			  [string]$SessionId = "",
+			  [int]$MaxRuntimeSeconds = 1800
+			)
 
 		$ErrorActionPreference = "Stop"
 		$ProgressPreference = "SilentlyContinue"
@@ -2643,19 +2644,86 @@ class EndpointExecutor:
 			  return 0
 			}
 
-			function C2F-RunCommandFile {
-			  param([string]$CommandPath)
-			  $global:LASTEXITCODE = 0
-			  $rawOut = (& $CommandPath 2>&1 | Out-String)
-			  $code = 0
-			  if ($LASTEXITCODE -ne $null) {
-			    try { $code = [int]$LASTEXITCODE } catch { $code = 1 }
-			  }
-			  return @{
-			    rc = $code
-			    output = [string]$rawOut
-			  }
-			}
+				function C2F-RunCommandFile {
+				  param([string]$CommandPath, [bool]$PersistSession = $false)
+				  $global:LASTEXITCODE = 0
+				  if ($PersistSession) {
+				    $rawOut = (. $CommandPath 2>&1 | Out-String)
+				  } else {
+				    $rawOut = (& $CommandPath 2>&1 | Out-String)
+				  }
+				  $code = 0
+				  if ($LASTEXITCODE -ne $null) {
+				    try { $code = [int]$LASTEXITCODE } catch { $code = 1 }
+				  }
+				  return @{
+				    rc = $code
+				    output = [string]$rawOut
+				  }
+				}
+
+				function C2F-SessionFilePath {
+				  param([string]$Id)
+				  $clean = ([string]$Id).Trim()
+				  if (-not $clean) { return "" }
+				  $safe = -join ($clean.ToCharArray() | Where-Object { [char]::IsLetterOrDigit($_) -or $_ -in @('-','_','.') })
+				  if (-not $safe) { return "" }
+				  $root = "C:\Click2Fix\shell-sessions"
+				  return (Join-Path $root ($safe + ".clixml"))
+				}
+
+				function C2F-ImportSessionState {
+				  param([string]$Id)
+				  $path = C2F-SessionFilePath -Id $Id
+				  if (-not $path -or -not (Test-Path -LiteralPath $path)) { return }
+				  try {
+				    $state = Import-Clixml -Path $path -ErrorAction Stop
+				    $restored = 0
+				    foreach ($entry in @($state.variables)) {
+				      $name = [string]$entry.Name
+				      if (-not $name) { continue }
+				      if ($name -match '^(?i:C2F_|PSScriptRoot|PSCommandPath|MyInvocation|input|args|Error|LASTEXITCODE|Matches|PSBoundParameters|ExecutionContext|PWD|HOME|PID|PROFILE|Host|ShellId|PSVersionTable|true|false|null)$') { continue }
+				      try {
+				        Set-Variable -Name $name -Value $entry.Value -Scope Script -Force -ErrorAction Stop
+				        $restored++
+				      } catch { }
+				    }
+				    $cwd = [string]$state.cwd
+				    if ($cwd -and (Test-Path -LiteralPath $cwd)) {
+				      try { Set-Location -LiteralPath $cwd } catch { }
+				    }
+				    C2F-Evidence ("session_restore=true|session_id=" + $Id + "|variables=" + [string]$restored)
+				  } catch {
+				    C2F-Evidence ("session_restore=false|session_id=" + $Id + "|error=" + [string]$_.Exception.Message)
+				  }
+				}
+
+				function C2F-ExportSessionState {
+				  param([string]$Id)
+				  $path = C2F-SessionFilePath -Id $Id
+				  if (-not $path) { return }
+				  try {
+				    $dir = Split-Path -Parent $path
+				    if ($dir) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+				    $vars = @()
+				    foreach ($var in (Get-Variable)) {
+				      $name = [string]$var.Name
+				      if (-not $name) { continue }
+				      if ($var.Options.ToString() -match 'Constant|ReadOnly') { continue }
+				      if ($name -match '^(?i:C2F_|PSScriptRoot|PSCommandPath|MyInvocation|input|args|Error|LASTEXITCODE|Matches|PSBoundParameters|ExecutionContext|PWD|HOME|PID|PROFILE|Host|ShellId|PSVersionTable|true|false|null)$') { continue }
+				      try {
+				        $vars += [pscustomobject]@{ Name = $name; Value = $var.Value }
+				      } catch { }
+				    }
+				    [pscustomobject]@{
+				      cwd = (Get-Location).Path
+				      variables = $vars
+				    } | Export-Clixml -Path $path -Force
+				    C2F-Evidence ("session_persist=true|session_id=" + $Id + "|variables=" + [string]$vars.Count)
+				  } catch {
+				    C2F-Evidence ("session_persist=false|session_id=" + $Id + "|error=" + [string]$_.Exception.Message)
+				  }
+				}
 
 			function C2F-TestBinaryHeader {
 			  param([string]$Path)
@@ -2808,13 +2876,21 @@ class EndpointExecutor:
 			  if ($safe.Length -gt 220) { $safe = $safe.Substring(0, 220) + "..." }
 			  C2F-Evidence ("custom_command=" + $safe)
 			  C2F-Evidence ("run_as_system=" + [string]$RunAsSystem)
+			  $sessionKey = [string]$SessionId
+			  $sessionKey = $sessionKey.Trim()
+			  if ($sessionKey) {
+			    C2F-ImportSessionState -Id $sessionKey
+			  }
 
-					  $run = C2F-RunCommandFile -CommandPath $CommandFile
+					  $run = C2F-RunCommandFile -CommandPath $CommandFile -PersistSession:([bool]$sessionKey)
 				  $out = [string]$run.output
 				  # Some native tools emit UTF-16/UTF-8 mixed output with embedded nulls.
 				  # Normalize early so history/output previews remain readable.
 				  $out = ($out -replace "`0", "")
 				  $rc = [int]$run.rc
+				  if ($sessionKey) {
+				    C2F-ExportSessionState -Id $sessionKey
+				  }
 			  if ($rc -ne 0) {
 			    $errOut = [string]$out
 			    $hint = ""
@@ -5816,6 +5892,7 @@ catch {
                     task_args["VerifyMinBuild"] = action_args[2] if len(action_args) > 2 else ""
                     task_args["VerifyStdoutContains"] = action_args[3] if len(action_args) > 3 else ""
                     task_args["RunAsSystem"] = _bool(action_args[4] if len(action_args) > 4 else False, False)
+                    task_args["SessionId"] = action_args[5] if len(action_args) > 5 else ""
                     task_args["MaxRuntimeSeconds"] = max(180, int(timeout_seconds))
 
                 try:
@@ -6500,6 +6577,7 @@ catch {
                 "VerifyKb": "",
                 "VerifyMinBuild": "",
                 "VerifyStdoutContains": "",
+                "SessionId": "",
                 "MaxRuntimeSeconds": 1800,
             },
         }
@@ -7411,11 +7489,13 @@ catch {
             verify_kb = _ps_quote(args[1] if len(args) > 1 else "")
             verify_min_build = _ps_quote(args[2] if len(args) > 2 else "")
             verify_stdout_contains = _ps_quote(args[3] if len(args) > 3 else "")
+            session_id = _ps_quote(args[5] if len(args) > 5 else "")
             inner = (
                 f"$cmd={cmd};"
                 f"$verifyKbRaw={verify_kb};"
                 f"$verifyBuild={verify_min_build};"
                 f"$verifyContains={verify_stdout_contains};"
+                f"$sessionId={session_id};"
                 "if(-not $cmd){ throw 'custom-os-command requires command argument'; };"
                 "function C2F-CompareBuild { param([string]$Current,[string]$Required) "
                 "$cParts=@(); foreach($part in ($Current -split '\\.')){ if($part -match '^\\d+$'){ $cParts += [int]$part } };"

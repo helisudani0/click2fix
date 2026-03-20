@@ -8,12 +8,14 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from api.actions import _coerce_custom_os_command_arguments  # noqa: E402
 from core.action_execution import _requires_endpoint_transport  # noqa: E402
 from core.endpoint_executor import (  # noqa: E402
     EndpointExecutor,
     _ps_encoded_command,
     _ps_encoded_command_args,
 )
+from core.wazuh_verification import PostActionVerificationLoop, derive_verification_state  # noqa: E402
 
 
 def _executor() -> EndpointExecutor:
@@ -60,6 +62,9 @@ def test_custom_os_command_script_executes_uploaded_file_directly():
     assert "& $CommandFile 2>&1 | Out-String" in script
     assert "C2F-RunCommandFile -CommandPath $CommandFile" in script
     assert "ScriptBlock]::Create($CommandText)" not in script
+    assert "[string]$SessionId = \"\"" in script
+    assert "C2F-ImportSessionState" in script
+    assert "C2F-ExportSessionState" in script
 
 
 def test_windows_custom_command_normalization_unwraps_powershell_command():
@@ -108,3 +113,42 @@ def test_global_shell_requires_endpoint_transport():
     assert _requires_endpoint_transport("global-shell", {"action_command": "custom-os-command"}) is True
     assert _requires_endpoint_transport("custom-os-command", {"action_command": "custom-os-command"}) is True
     assert _requires_endpoint_transport("firewall-drop", {"action_command": "firewall-drop"}) is False
+
+
+def test_custom_os_command_arguments_keep_blank_session_optional():
+    args = _coerce_custom_os_command_arguments([], command="Write-Host hi")
+    assert args == ["Write-Host hi", "", "", "", "false"]
+
+    with_session = _coerce_custom_os_command_arguments([], command="Write-Host hi", session_id=" session-1 ")
+    assert with_session == ["Write-Host hi", "", "", "", "false", "session-1"]
+
+    preserved = _coerce_custom_os_command_arguments(
+        ["Write-Host hi", "", "", "", "false", "session-2"],
+        command="Write-Host hi",
+    )
+    assert preserved == ["Write-Host hi", "", "", "", "false", "session-2"]
+
+
+def test_post_action_verification_short_circuits_already_satisfied_package_targets():
+    verifier = PostActionVerificationLoop(client=object())
+
+    result = verifier.verify_targets(
+        "package-update",
+        225,
+        [
+            {
+                "agent_id": "003",
+                "ok": True,
+                "stdout": "package update complete: outcome=SUCCESS applicable=0 installable=0 installed=0 failed=0 remaining=0 skipped=1 unresolved=0\nreason=no_applicable_update\nupdates_skipped_no_change=1",
+                "stderr": "",
+            }
+        ],
+    )
+    state = derive_verification_state(result)
+
+    assert result["ok"] is True
+    assert result["strategy"] == "already_at_target_state_short_circuit"
+    assert result["summary"]["already_satisfied"] == 1
+    assert state["ok"] is True
+    assert state["pending"] is False
+    assert state["execution_status"] is None

@@ -15,6 +15,14 @@ const TARGET_MODE_LABELS = {
   group: "Agent group",
   fleet: "Fleet",
 };
+const GLOBAL_SHELL_SESSION_STORAGE_KEY = "c2f.globalShell.sessionId";
+
+const createGlobalShellSessionId = () => {
+  if (typeof globalThis !== "undefined" && globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `shell-${Date.now()}`;
+};
 const asFlag = (value, defaultValue) => {
   if (value === undefined || value === null || value === "") return defaultValue;
   const normalized = String(value).trim().toLowerCase();
@@ -299,6 +307,14 @@ export default function GlobalShell() {
   const [verifyKb, setVerifyKb] = useState("");
   const [verifyMinBuild, setVerifyMinBuild] = useState("");
   const [verifyStdoutContains, setVerifyStdoutContains] = useState("");
+  const [sessionId, setSessionId] = useState(() => {
+    if (typeof window === "undefined") return createGlobalShellSessionId();
+    try {
+      return window.localStorage.getItem(GLOBAL_SHELL_SESSION_STORAGE_KEY) || createGlobalShellSessionId();
+    } catch {
+      return createGlobalShellSessionId();
+    }
+  });
   const [targetMode, setTargetMode] = useState("fleet");
   const [targetValue, setTargetValue] = useState("");
   const [targetAgentIds, setTargetAgentIds] = useState([]);
@@ -371,6 +387,17 @@ export default function GlobalShell() {
     loadAgents();
     loadHistory();
   }, [loadAgents, loadHistory]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (sessionId.trim()) {
+        window.localStorage.setItem(GLOBAL_SHELL_SESSION_STORAGE_KEY, sessionId.trim());
+      }
+    } catch {
+      // Best effort only; session still works for the current tab.
+    }
+  }, [sessionId]);
 
   const connectedAgents = useMemo(
     () => agents.filter((agent) => CONNECTED_STATUSES.has(agent.status)),
@@ -716,6 +743,7 @@ export default function GlobalShell() {
         run_as_system: effectiveRunAsSystem,
         justification: effectiveJustification,
       };
+      if (sessionId.trim()) payload.session_id = sessionId.trim();
       if (raw) payload.command = raw;
       if (prompt) payload.assistant_prompt = prompt;
       if (hasVulnerabilityContext) payload.vulnerability_context = vulnerabilityContext;
@@ -931,6 +959,31 @@ export default function GlobalShell() {
                 />
                 <span className="muted">Run as SYSTEM (administrator context)</span>
               </label>
+              <div className="mt-10">
+                <div className="muted">Shell Session</div>
+                <div className="page-actions mt-8">
+                  <input
+                    className="input mono"
+                    value={sessionId}
+                    onChange={(e) => setSessionId(e.target.value)}
+                    placeholder="Session id used to persist PowerShell variables across runs"
+                  />
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={() => {
+                      const nextId = createGlobalShellSessionId();
+                      setSessionId(nextId);
+                      setStatus("Started a fresh Global Shell session.");
+                    }}
+                  >
+                    Reset Session
+                  </button>
+                </div>
+                <div className="meta-line mt-8">
+                  PowerShell variables persist across runs when you reuse the same session id.
+                </div>
+              </div>
             </div>
 
             <div className="list-item readable">

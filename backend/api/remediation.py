@@ -11,7 +11,11 @@ from core.security import require_role
 from core.time_utils import utc_now_naive
 from core.ws_bus import publish_event
 from core.wazuh_client import WazuhClient
-from core.wazuh_verification import derive_verification_state, run_post_action_verification
+from core.wazuh_verification import (
+    derive_verification_state,
+    reconcile_pending_verifications_for_agents,
+    run_post_action_verification,
+)
 from db.database import connect
 
 router = APIRouter()
@@ -118,6 +122,7 @@ async def remediate(
     step_stdout = ""
     step_stderr = ""
     verification_result = None
+    reconcile_result = None
     execution_status = "SUCCESS"
     step_status = "SUCCESS"
     raised_http_exception = None
@@ -276,6 +281,37 @@ async def remediate(
                     "status": str(verification_state.get("step_status") or "SUCCESS"),
                 },
             )
+        successful_agent_ids = [
+            str(row.get("agent_id") or "").strip()
+            for row in (target_rows or [])
+            if isinstance(row, dict) and row.get("ok") and str(row.get("agent_id") or "").strip()
+        ]
+        if str(action_id or "").strip().lower() == "sca-rescan" and successful_agent_ids:
+            reconcile_result = await run_in_threadpool(
+                lambda: reconcile_pending_verifications_for_agents(
+                    client,
+                    successful_agent_ids,
+                    source_execution_id=execution_id,
+                    source_action_id=action_id,
+                )
+            )
+            if isinstance(reconcile_result, dict) and int(reconcile_result.get("updated") or 0) > 0:
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO execution_steps
+                        (execution_id, step, stdout, stderr, status)
+                        VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                        """
+                    ),
+                    {
+                        "execution_id": execution_id,
+                        "step": "pending_verification_reconcile",
+                        "stdout": json.dumps(reconcile_result, default=str),
+                        "stderr": "",
+                        "status": "SUCCESS",
+                    },
+                )
         db.commit()
 
         if alert_id or case_id:
@@ -345,4 +381,5 @@ async def remediate(
         "attempts": execution.get("attempts") if execution else [action_id],
         "result": execution.get("result") if execution else {"ok": False},
         "post_action_verification": verification_result,
+        "pending_verification_reconcile": reconcile_result,
     }

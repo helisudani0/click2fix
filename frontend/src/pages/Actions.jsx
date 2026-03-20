@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ExecutionStream from "../components/ExecutionStream";
 import {
   getActions,
@@ -62,11 +62,22 @@ const riskClass = (risk) => {
   return "neutral";
 };
 
+const agentStatusClass = (status) => {
+  const value = String(status || "").toLowerCase();
+  if (value.includes("active") || value.includes("connected") || value.includes("online")) return "success";
+  if (value.includes("pending") || value.includes("queue")) return "pending";
+  return "failed";
+};
+
 const PACKAGE_UPDATE_ACTION_ID = "package-update";
 const SPECIFIC_SOFTWARE_ACTION_ID = "software-install-upgrade";
 const CUSTOM_OS_COMMAND_ACTION_ID = "custom-os-command";
 const MULTILINE_INPUT_FIELDS = new Set(["command", "custom_command", "script"]);
 const WINGET_BACKED_ACTION_IDS = new Set([PACKAGE_UPDATE_ACTION_ID, SPECIFIC_SOFTWARE_ACTION_ID]);
+const ACTIONS_SIDEBAR_WIDTH_STORAGE_KEY = "c2f-actions-sidebar-width";
+const DEFAULT_ACTIONS_SIDEBAR_WIDTH = 420;
+const MIN_ACTIONS_SIDEBAR_WIDTH = 320;
+const MAX_ACTIONS_SIDEBAR_WIDTH = 720;
 const PACKAGE_ID_EXAMPLES = [
   { id: "Microsoft.Edge", label: "Microsoft Edge" },
   { id: "Google.Chrome", label: "Google Chrome" },
@@ -82,7 +93,53 @@ const ACTION_SEARCH_PRIORITY = [
   CUSTOM_OS_COMMAND_ACTION_ID,
 ];
 
+const RAW_INPUT_PROPS = {
+  spellCheck: false,
+  autoCorrect: "off",
+  autoCapitalize: "off",
+  autoComplete: "off",
+};
+
+const clampActionsSidebarWidth = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return DEFAULT_ACTIONS_SIDEBAR_WIDTH;
+  return Math.min(MAX_ACTIONS_SIDEBAR_WIDTH, Math.max(MIN_ACTIONS_SIDEBAR_WIDTH, Math.round(numeric)));
+};
+
+const compactAgentId = (raw) => {
+  const id = formatAgentId(raw);
+  if (!id || id.length <= 10) return id;
+  return `${id.slice(0, 4)}...${id.slice(-4)}`;
+};
+
+const agentIdMaskParts = (raw) => {
+  const id = formatAgentId(raw);
+  if (!id) return null;
+  if (id.length <= 8) {
+    return { prefix: id, middle: "", suffix: "" };
+  }
+  return {
+    prefix: id.slice(0, 4),
+    middle: "...",
+    suffix: id.slice(-4),
+  };
+};
+
+const renderMaskedAgentId = (raw) => {
+  const parts = agentIdMaskParts(raw);
+  if (!parts) return "-";
+  return (
+    <span className="agent-id-mask" title={formatAgentId(raw)}>
+      <span>{parts.prefix}</span>
+      {parts.middle ? <span className="agent-id-mask-middle">{parts.middle}</span> : null}
+      {parts.suffix ? <span>{parts.suffix}</span> : null}
+    </span>
+  );
+};
+
 export default function Actions() {
+  const workspaceRef = useRef(null);
+  const resizeRef = useRef(null);
   const [actions, setActions] = useState([]);
   const [actionsLoading, setActionsLoading] = useState(true);
   const [actionSearch, setActionSearch] = useState("");
@@ -108,13 +165,17 @@ export default function Actions() {
   const [matrixRows, setMatrixRows] = useState([]);
   const [nativePanelExpanded, setNativePanelExpanded] = useState(true);
   const [guideExpanded, setGuideExpanded] = useState(true);
+  const [catalogWidth, setCatalogWidth] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_ACTIONS_SIDEBAR_WIDTH;
+    return clampActionsSidebarWidth(window.localStorage.getItem(ACTIONS_SIDEBAR_WIDTH_STORAGE_KEY));
+  });
 
   const selectedAction = useMemo(
     () => actions.find((a) => a.id === actionId) || null,
     [actions, actionId]
   );
   const selectedActionIdLower = String(selectedAction?.id || "").trim().toLowerCase();
-  const showNativePackagePanel = !selectedActionIdLower || WINGET_BACKED_ACTION_IDS.has(selectedActionIdLower);
+  const showNativePackagePanel = Boolean(selectedActionIdLower) && WINGET_BACKED_ACTION_IDS.has(selectedActionIdLower);
 
   useEffect(() => {
     if (showNativePackagePanel) {
@@ -127,6 +188,45 @@ export default function Actions() {
       setGuideExpanded(true);
     }
   }, [selectedAction]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(ACTIONS_SIDEBAR_WIDTH_STORAGE_KEY, String(catalogWidth));
+  }, [catalogWidth]);
+
+  const stopCatalogResize = useCallback(() => {
+    if (typeof window !== "undefined" && resizeRef.current) {
+      window.removeEventListener("mousemove", resizeRef.current.onMove);
+      window.removeEventListener("mouseup", resizeRef.current.onUp);
+      resizeRef.current = null;
+    }
+    if (typeof document !== "undefined") {
+      document.body.style.removeProperty("cursor");
+      document.body.style.removeProperty("user-select");
+    }
+  }, []);
+
+  useEffect(() => () => stopCatalogResize(), [stopCatalogResize]);
+
+  const startCatalogResize = useCallback((event) => {
+    if (typeof window === "undefined" || window.innerWidth <= 1024) return;
+    event.preventDefault();
+    stopCatalogResize();
+    const startX = event.clientX;
+    const startWidth = catalogWidth;
+    const onMove = (moveEvent) => {
+      const delta = moveEvent.clientX - startX;
+      setCatalogWidth(clampActionsSidebarWidth(startWidth + delta));
+    };
+    const onUp = () => stopCatalogResize();
+    resizeRef.current = { onMove, onUp };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    if (typeof document !== "undefined") {
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    }
+  }, [catalogWidth, stopCatalogResize]);
 
   const loadActions = useCallback(async () => {
     setActionsLoading(true);
@@ -224,6 +324,59 @@ export default function Actions() {
       .filter((a) => a.id.includes(q) || a.name.toLowerCase().includes(q) || a.group.toLowerCase().includes(q))
       .slice(0, 60);
   }, [agents, targetSearch]);
+
+  const targetSelectionSummary = useMemo(() => {
+    if (targetMode === "fleet") {
+      const excluded = excludeAgents
+        .split(",")
+        .map((id) => formatAgentId(id.trim()))
+        .filter(Boolean);
+      return excluded.length ? `Fleet minus ${excluded.length} excluded agent(s)` : "Entire managed fleet";
+    }
+    if (targetMode === "group") {
+      const excluded = excludeAgents
+        .split(",")
+        .map((id) => formatAgentId(id.trim()))
+        .filter(Boolean);
+      return `${targetValue || "No group selected"}${excluded.length ? ` | ${excluded.length} excluded` : ""}`;
+    }
+    if (targetMode === "multi") {
+      return targetAgentIds.length
+        ? `${targetAgentIds.length} selected agent(s)`
+        : "No agents selected";
+    }
+    return targetValue ? `Agent ${compactAgentId(targetValue)}` : "No agent selected";
+  }, [excludeAgents, targetAgentIds, targetMode, targetValue]);
+
+  const selectedAgentRows = useMemo(
+    () => agents.filter((agent) => targetAgentIds.includes(agent.id)),
+    [agents, targetAgentIds]
+  );
+
+  const actionDocEntries = useMemo(() => {
+    const docs = selectedAction?.docs;
+    if (!docs || typeof docs !== "object") return [];
+    return [
+      ["What it does", docs.what_it_does],
+      ["When to use", docs.when_to_use],
+      ["Impact", docs.impact],
+      ["Rollback", docs.rollback],
+      ["Requirements", docs.requirements],
+      ["Examples", docs.examples],
+    ].filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== "");
+  }, [selectedAction]);
+
+  const applyCatalogSelection = (action) => {
+    const nextId = String(action?.id || "").trim();
+    if (!nextId) return;
+    if (WINGET_BACKED_ACTION_IDS.has(nextId.toLowerCase())) {
+      selectWingetQuickAction(nextId);
+    } else {
+      setActionId(nextId);
+      setActionValidation(null);
+    }
+    setActionSearch(String(action?.label || nextId));
+  };
 
   const resolveTarget = () => {
     if (targetMode === "fleet") return { agent_id: "all" };
@@ -360,6 +513,21 @@ export default function Actions() {
     }
   };
 
+  const buildExecutionPayload = (target) => ({
+    ...target,
+    ...(((targetMode === "fleet" || targetMode === "group") && excludeAgents.trim())
+      ? {
+          exclude_agent_ids: excludeAgents
+            .split(",")
+            .map((id) => id.trim())
+            .filter(Boolean),
+        }
+      : {}),
+    action_id: actionId,
+    args: compactArgs(actionInputs),
+    justification: justification || undefined,
+  });
+
   const requestActionApproval = async () => {
     if (!actionId) {
       setActionStatus("Select an action.");
@@ -375,20 +543,7 @@ export default function Actions() {
       return;
     }
     try {
-      await requestApproval({
-        ...target,
-        ...(((targetMode === "fleet" || targetMode === "group") && excludeAgents.trim())
-          ? {
-              exclude_agent_ids: excludeAgents
-                .split(",")
-                .map((id) => id.trim())
-                .filter(Boolean),
-            }
-          : {}),
-        action_id: actionId,
-        args: compactArgs(actionInputs),
-        justification: justification || undefined,
-      });
+      await requestApproval(buildExecutionPayload(target));
       setActionStatus("Approval request submitted.");
     } catch (err) {
       setActionStatus(err.response?.data?.detail || err.message || "Approval request failed.");
@@ -434,20 +589,7 @@ export default function Actions() {
     setActionStatus("Action execution in progress...");
     setActiveExecutionId(null);
     try {
-      const res = await runAction({
-        ...target,
-        ...(((targetMode === "fleet" || targetMode === "group") && excludeAgents.trim())
-          ? {
-              exclude_agent_ids: excludeAgents
-                .split(",")
-                .map((id) => id.trim())
-                .filter(Boolean),
-            }
-          : {}),
-        action_id: actionId,
-        args: compactArgs(actionInputs),
-        justification: justification || undefined,
-      });
+      const res = await runAction(buildExecutionPayload(target));
       const executionId = res?.data?.execution_id;
       setActiveExecutionId(executionId || null);
       setActionStatus(
@@ -466,22 +608,28 @@ export default function Actions() {
     <div className="page">
       <div className="page-header">
         <div>
-          <h2>Actions</h2>
+          <h2>Actions Workspace</h2>
           <p className="muted">
-            Run and monitor response actions across single endpoints, groups, or the entire fleet.
+            High-density execution planning for endpoint actions, package remediation, and live response runs.
           </p>
         </div>
         <div className="page-actions">
-          <button className="btn secondary" onClick={() => {
-            loadActions();
-            loadConnectorStatus();
-          }}>
+          <button
+            className="btn secondary"
+            onClick={() => {
+              loadActions();
+              loadConnectorStatus();
+            }}
+          >
             Refresh Catalog
           </button>
-          <button className="btn secondary" onClick={() => {
-            loadAgents();
-            loadGroups();
-          }}>
+          <button
+            className="btn secondary"
+            onClick={() => {
+              loadAgents();
+              loadGroups();
+            }}
+          >
             Refresh Targets
           </button>
         </div>
@@ -489,38 +637,71 @@ export default function Actions() {
 
       {actionStatus ? <div className="empty-state">{actionStatus}</div> : null}
 
-      <div className="split-view">
-        <div className="card">
+      <div className="mission-grid">
+        <div className="mission-card">
+          <div className="mission-label">Selected Action</div>
+          <div className="mission-value">{selectedAction ? "1" : "0"}</div>
+          <div className="mission-meta">
+            {selectedAction ? `${toDisplay(selectedAction.label || selectedAction.id)} (${selectedAction.id})` : "Pick an action from the catalog."}
+          </div>
+        </div>
+        <div className="mission-card">
+          <div className="mission-label">Target Scope</div>
+          <div className="mission-value">
+            {targetMode === "multi" ? targetAgentIds.length : targetMode === "group" ? (targetValue || "-") : targetMode === "fleet" ? "ALL" : (compactAgentId(targetValue) || "-")}
+          </div>
+          <div className="mission-meta">{targetSelectionSummary}</div>
+        </div>
+        <div className="mission-card">
+          <div className="mission-label">Windows Connector</div>
+          <div className="mission-value">
+            {connectorStatus?.connectors?.windows?.credentials_configured ? "READY" : "CHECK"}
+          </div>
+          <div className="mission-meta">
+            Orchestration mode: {toDisplay(connectorStatus?.orchestration_mode || "n/a")}
+          </div>
+        </div>
+        <div className="mission-card">
+          <div className="mission-label">Linux Connector</div>
+          <div className="mission-value">
+            {connectorStatus?.connectors?.linux?.credentials_configured ? "READY" : "CHECK"}
+          </div>
+          <div className="mission-meta">
+            {connectorError || "Credentials and connector health are shown live from the backend."}
+          </div>
+        </div>
+      </div>
+
+      <div
+        ref={workspaceRef}
+        className="actions-workspace"
+        style={{ "--actions-sidebar-width": `${catalogWidth}px` }}
+      >
+        <aside className="actions-sidebar-pane card">
           <div className="card-header">
             <div>
               <h3>Action Catalog</h3>
-              <p className="muted">Search and select an action to execute.</p>
+              <p className="muted">Search, shortlist, and lock in the exact backend action ID.</p>
             </div>
+            <span className="chip">{filteredActions.length} visible</span>
           </div>
-          <div className="page-actions">
+          <div className="page-actions actions-command-bar">
             <input
               className="input"
               value={actionSearch}
               onChange={(e) => setActionSearch(e.target.value)}
-              placeholder="Search actions"
+              placeholder="Search actions, categories, or exact IDs"
+              {...RAW_INPUT_PROPS}
             />
           </div>
           {actionSearchSuggestions.length ? (
-            <div className="page-actions mt-8">
+            <div className="actions-suggestion-row mt-8">
               {actionSearchSuggestions.map((action) => (
                 <button
                   key={`suggest-${action.id}`}
                   type="button"
                   className="btn secondary"
-                  onClick={() => {
-                    if (WINGET_BACKED_ACTION_IDS.has(String(action.id || "").trim().toLowerCase())) {
-                      selectWingetQuickAction(action.id);
-                    } else {
-                      setActionId(action.id);
-                      setActionValidation(null);
-                    }
-                    setActionSearch(String(action.label || action.id || ""));
-                  }}
+                  onClick={() => applyCatalogSelection(action)}
                 >
                   {toDisplay(action.label || action.id)}
                 </button>
@@ -528,345 +709,335 @@ export default function Actions() {
             </div>
           ) : null}
           <div className="meta-line mt-6">
-            Search suggestions surface common response paths and exact action IDs to reduce catalog guesswork.
+            Search suggestions surface exact action IDs and common remediation paths to reduce operator guesswork.
           </div>
           {actionsLoading ? (
             <div className="empty-state">Loading actions...</div>
           ) : filteredActions.length === 0 ? (
             <div className="empty-state">No actions found.</div>
           ) : (
-            <div className="list-scroll tall">
+            <div className="list-scroll tall actions-catalog-scroll">
               <div className="list">
                 {filteredActions.map((a) => (
-		                  <button
-		                    key={a.id}
-		                    type="button"
-		                    className={`list-item clickable readable text-left ${a.id === actionId ? "selected" : ""}`}
-		                    onClick={() => setActionId(a.id)}
-	                  >
-	                    <div className="flex-between">
-	                      <strong>{toDisplay(a.label || a.id)}</strong>
-		                      <div className="page-actions gap-6">
-		                        <span className="chip">{toDisplay(a.category || "response")}</span>
-		                        {WINGET_BACKED_ACTION_IDS.has(String(a.id || "").trim().toLowerCase()) ? (
-		                          <span className="status-pill success">Recommended</span>
-		                        ) : null}
-		                      </div>
-		                    </div>
-	                    <div className="meta-line ws-normal">{a.id}</div>
-	                    {a.description ? (
-	                      <div className="meta-line ws-normal">{a.description}</div>
-	                    ) : null}
-	                  </button>
+                  <button
+                    key={a.id}
+                    type="button"
+                    className={`list-item clickable readable text-left ${a.id === actionId ? "selected" : ""}`}
+                    onClick={() => applyCatalogSelection(a)}
+                  >
+                    <div className="flex-between">
+                      <strong>{toDisplay(a.label || a.id)}</strong>
+                      <div className="page-actions gap-6">
+                        <span className="chip">{toDisplay(a.category || "response")}</span>
+                        {WINGET_BACKED_ACTION_IDS.has(String(a.id || "").trim().toLowerCase()) ? (
+                          <span className="status-pill success">Recommended</span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="meta-line ws-normal mono">{a.id}</div>
+                    {a.description ? (
+                      <div className="meta-line ws-normal">{a.description}</div>
+                    ) : null}
+                  </button>
                 ))}
               </div>
             </div>
           )}
+        </aside>
+
+        <div className="actions-workspace-divider" aria-hidden="true">
+          <button
+            type="button"
+            className="actions-workspace-divider-handle"
+            onMouseDown={startCatalogResize}
+            onDoubleClick={() => setCatalogWidth(DEFAULT_ACTIONS_SIDEBAR_WIDTH)}
+            title="Drag to resize action catalog. Double-click to reset."
+          />
         </div>
 
-		        <div className="stack-col gap-18">
-	          {showNativePackagePanel ? (
-	            <div className="card">
-	              <div className="card-header">
-	                <div>
-	                  <h3>Native Package Path</h3>
-	                  <p className="muted">Use package actions instead of manual shell scripts for installs and upgrades.</p>
-	                </div>
-                  <button
-                    className="btn secondary"
-                    type="button"
-                    onClick={() => setNativePanelExpanded((prev) => !prev)}
-                  >
-                    {nativePanelExpanded ? "Collapse" : "Expand"}
-                  </button>
-	              </div>
-                {nativePanelExpanded ? (
-	                <>
-	                  <div className="empty-state">
-	                    Windows targets map to winget-backed remediation. If winget is missing, the backend attempts App Installer / WinGet bootstrap before retrying the package action.
-	                  </div>
-	                  <div className="page-actions mt-10">
-	                    <button
-	                      className="btn secondary"
-	                      type="button"
-	                      onClick={() => selectWingetQuickAction(PACKAGE_UPDATE_ACTION_ID)}
-	                    >
-	                      Upgrade Installed Packages
-	                    </button>
-	                    <button
-	                      className="btn secondary"
-	                      type="button"
-	                      onClick={() => selectWingetQuickAction(SPECIFIC_SOFTWARE_ACTION_ID)}
-	                    >
-	                      Install / Upgrade Specific Package
-	                    </button>
-	                  </div>
-                    <div className="meta-line mt-8">
-                      Preferred syntax: use exact winget IDs such as `Publisher.Product`. Use `all` only when targeting bulk upgrade actions.
-                    </div>
-                  </>
-                ) : null}
-	            </div>
-	          ) : null}
-
-	          <div className="card">
-	            <div className="card-header">
-	              <div>
-                <h3>Execute Action</h3>
-                <p className="muted">Targets, justification, and live execution details.</p>
-              </div>
-            </div>
-
-            <div className="page-actions">
-              <span className="chip">
-                Mode: {toDisplay(connectorStatus?.orchestration_mode || "n/a")}
-              </span>
-              <span className="chip">
-                WinRM: {connectorStatus?.connectors?.windows?.credentials_configured ? "configured" : "missing"}
-              </span>
-              <span className="chip">
-                Linux: {connectorStatus?.connectors?.linux?.credentials_configured ? "configured" : "missing"}
-              </span>
-            </div>
-	            {connectorError ? (
-	              <div className="meta-line ws-normal">
-	                Connector status error: {connectorError}
-	              </div>
-	            ) : null}
-
-            <div className="list">
-              <div className="list-item readable">
-                <div className="muted">Targets</div>
-	                <div className="page-actions mt-8">
-	                  <select className="input" value={targetMode} onChange={(e) => setTargetMode(e.target.value)}>
-                    <option value="agent">Single agent</option>
-                    <option value="multi">Multiple agents</option>
-                    <option value="group">Agent group</option>
-                    <option value="fleet">Fleet (all)</option>
-                  </select>
+        <div className="actions-main-pane">
+          <div className="actions-console-grid">
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <h3>Targeting & Connectors</h3>
+                  <p className="muted">Define the blast radius, exclusions, and connector readiness without leaving the workspace.</p>
                 </div>
+                <button className="btn secondary" onClick={validateConnector}>
+                  Validate Connector
+                </button>
+              </div>
 
-                {targetMode === "multi" ? (
-	                  <div className="mt-10">
-                    <div className="page-actions">
+              <div className="list">
+                <div className="list-item readable">
+                  <div className="muted">Scope Builder</div>
+                  <div className="page-actions mt-8">
+                    <select className="input" value={targetMode} onChange={(e) => setTargetMode(e.target.value)}>
+                      <option value="agent">Single agent</option>
+                      <option value="multi">Multiple agents</option>
+                      <option value="group">Agent group</option>
+                      <option value="fleet">Fleet (all)</option>
+                    </select>
+                    <span className="chip">Current scope: {targetSelectionSummary}</span>
+                    {targetMode === "multi" ? <span className="chip">Selected: {targetAgentIds.length}</span> : null}
+                  </div>
+
+                  {targetMode === "multi" ? (
+                    <>
+                      <div className="page-actions mt-10">
+                        <input
+                          className="input"
+                          value={targetSearch}
+                          onChange={(e) => setTargetSearch(e.target.value)}
+                          placeholder="Search agents by ID, hostname, or group"
+                          {...RAW_INPUT_PROPS}
+                        />
+                        <button
+                          className="btn secondary"
+                          type="button"
+                          onClick={() => setTargetAgentIds(targetPickList.map((a) => a.id))}
+                        >
+                          Select Visible
+                        </button>
+                        <button
+                          className="btn secondary"
+                          type="button"
+                          onClick={() => setTargetAgentIds([])}
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <div className="table-scroll h-44vh">
+                        <table className="table compact readable">
+                          <thead>
+                            <tr>
+                              <th>Pick</th>
+                              <th>Agent</th>
+                              <th>Name</th>
+                              <th>Group</th>
+                              <th>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {targetPickList.length === 0 ? (
+                              <tr>
+                                <td colSpan={5}>No agents match your search.</td>
+                              </tr>
+                            ) : (
+                              targetPickList.map((agent) => {
+                                const checked = targetAgentIds.includes(agent.id);
+                                return (
+                                  <tr key={`target-${agent.id}`} data-agent-id={agent.id}>
+                                    <td>
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={(e) => {
+                                          const next = e.target.checked;
+                                          setTargetAgentIds((prev) => {
+                                            if (next) return prev.includes(agent.id) ? prev : [...prev, agent.id];
+                                            return prev.filter((id) => id !== agent.id);
+                                          });
+                                        }}
+                                      />
+                                    </td>
+                                    <td>{renderMaskedAgentId(agent.id)}</td>
+                                    <td>{agent.name || "-"}</td>
+                                    <td>{agent.group || "-"}</td>
+                                    <td>
+                                      <span className={`status-pill ${agentStatusClass(agent.status)}`}>
+                                        {agent.status || "unknown"}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  ) : null}
+
+                  {targetMode === "group" ? (
+                    <div className="actions-form-grid mt-10">
+                      <select className="input" value={targetValue} onChange={(e) => setTargetValue(e.target.value)}>
+                        <option value="">Select group</option>
+                        {groups.map((g) => (
+                          <option key={g} value={g}>{g}</option>
+                        ))}
+                      </select>
                       <input
                         className="input"
-                        value={targetSearch}
-                        onChange={(e) => setTargetSearch(e.target.value)}
-                        placeholder="Search agents to select..."
+                        value={excludeAgents}
+                        onChange={(e) => setExcludeAgents(e.target.value)}
+                        placeholder="Exclude agent IDs (comma separated)"
+                        {...RAW_INPUT_PROPS}
                       />
-                      <button
-                        className="btn secondary"
-                        type="button"
-                        onClick={() => setTargetAgentIds(targetPickList.map((a) => a.id))}
-                      >
-                        Select All
-                      </button>
-                      <button
-                        className="btn secondary"
-                        type="button"
-                        onClick={() => setTargetAgentIds([])}
-                      >
-                        Clear
-                      </button>
-                    </div>
-	                    <div className="meta-line mt-6">
-	                      Selected: {targetAgentIds.length}
-	                    </div>
-	                    <div className="list-scroll mt-10 h-240">
-                      <div className="list">
-                        {targetPickList.length === 0 ? (
-                          <div className="empty-state">No agents match your search.</div>
-                        ) : (
-                          targetPickList.map((agent) => {
-                            const checked = targetAgentIds.includes(agent.id);
-                            return (
-                              <label key={`target-${agent.id}`} className="list-item clickable readable">
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={(e) => {
-                                    const next = e.target.checked;
-                                    setTargetAgentIds((prev) => {
-                                      if (next) return prev.includes(agent.id) ? prev : [...prev, agent.id];
-                                      return prev.filter((id) => id !== agent.id);
-                                    });
-                                  }}
-	                                  className="mr-10"
-	                                />
-	                                {agent.name} ({agent.id}) - {agent.group}
-                              </label>
-                            );
-                          })
-                        )}
+                      <div className="meta-line">
+                        Group actions keep the raw exclusion list intact and only normalize IDs when building the request payload.
                       </div>
                     </div>
-                  </div>
-                ) : targetMode === "group" ? (
-	                  <div className="page-actions mt-10">
-                    <select className="input" value={targetValue} onChange={(e) => setTargetValue(e.target.value)}>
-                      <option value="">Select group</option>
-                      {groups.map((g) => (
-                        <option key={g} value={g}>{g}</option>
-                      ))}
-                    </select>
-                    <input
-                      className="input"
-                      value={excludeAgents}
-                      onChange={(e) => setExcludeAgents(e.target.value)}
-                      placeholder="Exclude agent IDs (comma separated)"
-                    />
-                  </div>
-                ) : targetMode === "fleet" ? (
-	                  <div className="page-actions mt-10">
-                    <input
-                      className="input"
-                      value={excludeAgents}
-                      onChange={(e) => setExcludeAgents(e.target.value)}
-                      placeholder="Exclude agent IDs (comma separated)"
-                    />
-                  </div>
-                ) : (
-	                  <div className="page-actions mt-10">
-                    <input
-                      className="input"
-                      value={targetValue}
-                      onChange={(e) => setTargetValue(e.target.value)}
-                      placeholder="Agent ID (example: 004)"
-                      list="agentIds"
-                    />
-                    <datalist id="agentIds">
-                      {agents.slice(0, 80).map((a) => (
-                        <option key={`agent-${a.id}`} value={a.id}>
-                          {a.name}
-                        </option>
-                      ))}
-                    </datalist>
-                  </div>
-                )}
-              </div>
+                  ) : null}
 
-              <div className="list-item readable">
-                <div className="muted">Selected Action</div>
-                {selectedAction ? (
-                  <>
-	                    <div className="mt-6">
-	                      <strong>{toDisplay(selectedAction.label || selectedAction.id)}</strong>
-	                    </div>
-	                    <div className="meta-line ws-normal">{selectedAction.id}</div>
-	                    {selectedAction.description ? (
-	                      <div className="meta-line ws-normal">{selectedAction.description}</div>
-	                    ) : null}
-		                    {WINGET_BACKED_ACTION_IDS.has(String(selectedAction.id || "").trim().toLowerCase()) ? (
-		                      <div className="empty-state mt-8">
-		                        Native package-manager path. Windows endpoints use winget-backed remediation instead of manual shell scripting.
-		                      </div>
-		                    ) : null}
-	                    {String(selectedAction.id || "").trim().toLowerCase() === CUSTOM_OS_COMMAND_ACTION_ID ? (
-	                      <div className="empty-state mt-8">
-	                        Emergency fallback. This runs exactly what you type on endpoints; validate command safety before execution.
-	                      </div>
-	                    ) : null}
-                    <div className="page-actions mt-8">
-	                      <span className="chip">{toDisplay(selectedAction.category || "response")}</span>
-                      <span className={`status-pill ${riskClass(selectedAction.risk)}`}>
-                        {toDisplay(selectedAction.risk || "n/a")}
-                      </span>
-                      <span className="chip">
-                        {selectedAction.custom ? "custom command" : "built-in command"}
-                      </span>
+                  {targetMode === "fleet" ? (
+                    <div className="actions-form-grid mt-10">
+                      <div className="empty-state">
+                        Fleet mode targets every managed endpoint unless exclusions are provided.
+                      </div>
+                      <input
+                        className="input"
+                        value={excludeAgents}
+                        onChange={(e) => setExcludeAgents(e.target.value)}
+                        placeholder="Exclude agent IDs (comma separated)"
+                        {...RAW_INPUT_PROPS}
+                      />
                     </div>
-                    {selectedAction.docs && typeof selectedAction.docs === "object" ? (
-	                      <div className="mt-10">
-	                        <div className="page-actions justify-between">
-                            <div className="muted">Action Guide</div>
-                            <button
-                              className="btn secondary"
-                              type="button"
-                              onClick={() => setGuideExpanded((prev) => !prev)}
-                            >
-                              {guideExpanded ? "Collapse" : "Expand"}
-                            </button>
-                          </div>
-                          {guideExpanded ? (
-                            <>
-	                          {selectedAction.docs.what_it_does ? (
-	                            <div className="mt-6">
-	                              <strong>What it does:</strong> {String(selectedAction.docs.what_it_does)}
-	                            </div>
-	                          ) : null}
-	                          {selectedAction.docs.when_to_use ? (
-	                            <div className="mt-6">
-	                              <strong>When to use:</strong> {String(selectedAction.docs.when_to_use)}
-	                            </div>
-	                          ) : null}
-	                          {selectedAction.docs.impact ? (
-	                            <div className="mt-6">
-	                              <strong>Impact:</strong> {String(selectedAction.docs.impact)}
-	                            </div>
-	                          ) : null}
-	                          {selectedAction.docs.rollback ? (
-	                            <div className="mt-6">
-	                              <strong>Rollback:</strong> {String(selectedAction.docs.rollback)}
-	                            </div>
-	                          ) : null}
-	                          {selectedAction.docs.requirements ? (
-	                            <div className="mt-6">
-	                              <strong>Requirements:</strong> {String(selectedAction.docs.requirements)}
-	                            </div>
-	                          ) : null}
-	                          {selectedAction.docs.examples ? (
-	                            <div className="mt-6">
-	                              <strong>Examples:</strong> {String(selectedAction.docs.examples)}
-	                            </div>
-	                          ) : null}
-                            </>
-                          ) : null}
-	                      </div>
-	                    ) : null}
-                  </>
-                ) : (
-	                  <div className="meta-line mt-6">
-	                    Pick an action from the catalog.
-	                  </div>
-                )}
+                  ) : null}
+
+                  {targetMode === "agent" ? (
+                    <div className="actions-form-grid mt-10">
+                      <input
+                        className="input"
+                        value={targetValue}
+                        onChange={(e) => setTargetValue(e.target.value)}
+                        placeholder="Agent ID (example: 004)"
+                        list="agentIds"
+                        {...RAW_INPUT_PROPS}
+                      />
+                      <datalist id="agentIds">
+                        {agents.slice(0, 120).map((a) => (
+                          <option key={`agent-${a.id}`} value={a.id}>
+                            {a.name}
+                          </option>
+                        ))}
+                      </datalist>
+                      <div className="meta-line">
+                        Agent IDs are preserved as entered and normalized only for dispatch.
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="list-item readable">
+                  <div className="muted">Connector Readiness</div>
+                  <div className="page-actions mt-8">
+                    <span className="chip">Mode: {toDisplay(connectorStatus?.orchestration_mode || "n/a")}</span>
+                    <span className={`status-pill ${connectorStatus?.connectors?.windows?.credentials_configured ? "success" : "failed"}`}>
+                      WinRM {connectorStatus?.connectors?.windows?.credentials_configured ? "Ready" : "Missing"}
+                    </span>
+                    <span className={`status-pill ${connectorStatus?.connectors?.linux?.credentials_configured ? "success" : "pending"}`}>
+                      Linux {connectorStatus?.connectors?.linux?.credentials_configured ? "Ready" : "Check"}
+                    </span>
+                  </div>
+                  {connectorError ? (
+                    <div className="meta-line ws-normal mt-6">
+                      Connector status error: {connectorError}
+                    </div>
+                  ) : (
+                    <div className="meta-line mt-6">
+                      Backend connector probes remain independent from action form state, so refreshing status will not wipe your in-progress justification or inputs.
+                    </div>
+                  )}
+                </div>
+
+                {selectedAgentRows.length ? (
+                  <div className="list-item readable">
+                    <div className="muted">Selected Agents</div>
+                    <div className="actions-selection-strip mt-8">
+                      {selectedAgentRows.slice(0, 16).map((agent) => (
+                        <div key={`selected-${agent.id}`} className="selection-chip" data-agent-id={agent.id}>
+                          {renderMaskedAgentId(agent.id)}
+                          <span>{agent.name || "-"}</span>
+                        </div>
+                      ))}
+                      {selectedAgentRows.length > 16 ? (
+                        <div className="selection-chip">+{selectedAgentRows.length - 16} more</div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <h3>Action Builder</h3>
+                  <p className="muted">Keep the payload raw, review the execution contract, and launch without leaving the console.</p>
+                </div>
+                {selectedAction ? <span className="chip mono">{selectedAction.id}</span> : null}
               </div>
 
-              {(selectedAction?.inputs || []).map((field) => (
-                <div key={field.name} className="list-item readable">
-                  <div className="muted">{toDisplay(field.label || field.name)}</div>
-                  {MULTILINE_INPUT_FIELDS.has(String(field.name || "").trim().toLowerCase()) ? (
-                    <textarea
-	                      className="input mt-8 mono"
-	                      value={actionInputs[field.name] || ""}
-                      onChange={(e) =>
-                        setActionInputs((prev) => ({
-                          ...prev,
-                          [field.name]: e.target.value,
-                        }))
-                      }
-                      placeholder={field.placeholder || ""}
-	                      rows={4}
-	                    />
-	                  ) : (
-	                    <input
-	                      className="input mt-8"
-	                      value={actionInputs[field.name] || ""}
-                      list={
-                        WINGET_BACKED_ACTION_IDS.has(selectedActionIdLower) && String(field.name || "").trim().toLowerCase() === "package"
-                          ? "wingetPackageSuggestions"
-                          : undefined
-                      }
-	                      onChange={(e) =>
-	                        setActionInputs((prev) => ({
-	                          ...prev,
-	                          [field.name]: e.target.value,
-                        }))
-                      }
-	                      placeholder={field.placeholder || ""}
-	                    />
-	                  )}
-	                  {WINGET_BACKED_ACTION_IDS.has(selectedActionIdLower) && String(field.name || "").trim().toLowerCase() === "package" ? (
+              <div className="list">
+                <div className="list-item readable">
+                  <div className="muted">Selected Action</div>
+                  {selectedAction ? (
+                    <>
+                      <div className="mt-6">
+                        <strong>{toDisplay(selectedAction.label || selectedAction.id)}</strong>
+                      </div>
+                      <div className="meta-line ws-normal mono">{selectedAction.id}</div>
+                      {selectedAction.description ? (
+                        <div className="meta-line ws-normal">{selectedAction.description}</div>
+                      ) : null}
+                      <div className="page-actions mt-8">
+                        <span className="chip">{toDisplay(selectedAction.category || "response")}</span>
+                        <span className={`status-pill ${riskClass(selectedAction.risk)}`}>
+                          {toDisplay(selectedAction.risk || "n/a")}
+                        </span>
+                        <span className="chip">
+                          {selectedAction.custom ? "custom command" : "built-in action"}
+                        </span>
+                      </div>
+                      {selectedActionIdLower === CUSTOM_OS_COMMAND_ACTION_ID ? (
+                        <div className="empty-state mt-8">
+                          Raw command text is preserved exactly as typed. Backticks, dollar signs, colons, and slashes are not reformatted before backend Base64 encoding.
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div className="meta-line mt-6">Pick an action from the catalog to start building the request.</div>
+                  )}
+                </div>
+
+                {(selectedAction?.inputs || []).map((field) => (
+                  <div key={field.name} className="list-item readable">
+                    <div className="muted">{toDisplay(field.label || field.name)}</div>
+                    {MULTILINE_INPUT_FIELDS.has(String(field.name || "").trim().toLowerCase()) ? (
+                      <textarea
+                        className="input mt-8 mono"
+                        value={actionInputs[field.name] || ""}
+                        onChange={(e) =>
+                          setActionInputs((prev) => ({
+                            ...prev,
+                            [field.name]: e.target.value,
+                          }))
+                        }
+                        placeholder={field.placeholder || ""}
+                        rows={4}
+                        {...RAW_INPUT_PROPS}
+                      />
+                    ) : (
+                      <input
+                        className="input mt-8"
+                        value={actionInputs[field.name] || ""}
+                        list={
+                          WINGET_BACKED_ACTION_IDS.has(selectedActionIdLower) && String(field.name || "").trim().toLowerCase() === "package"
+                            ? "wingetPackageSuggestions"
+                            : undefined
+                        }
+                        onChange={(e) =>
+                          setActionInputs((prev) => ({
+                            ...prev,
+                            [field.name]: e.target.value,
+                          }))
+                        }
+                        placeholder={field.placeholder || ""}
+                        {...RAW_INPUT_PROPS}
+                      />
+                    )}
+                    {WINGET_BACKED_ACTION_IDS.has(selectedActionIdLower) && String(field.name || "").trim().toLowerCase() === "package" ? (
                       <>
                         <datalist id="wingetPackageSuggestions">
                           {PACKAGE_ID_EXAMPLES.map((item) => (
@@ -875,14 +1046,11 @@ export default function Actions() {
                             </option>
                           ))}
                         </datalist>
-	                    <div className="meta-line ws-normal mt-6">
-	                      Prefer the exact winget ID on Windows, for example `Notepad++.Notepad++`. Friendly names may work, but IDs are more reliable.
-	                    </div>
                         <div className="meta-line ws-normal mt-6">
-                          Syntax hints: `Publisher.Product` for exact package IDs, or `all` for the bulk package-update action.
+                          Package syntax hint: use the exact winget ID such as `Notepad++.Notepad++`. Use `all` only with the bulk package-update action.
                         </div>
                         {packageSuggestions.length ? (
-                          <div className="page-actions mt-8">
+                          <div className="actions-suggestion-row mt-8">
                             {packageSuggestions.map((item) => (
                               <button
                                 key={`pkg-${item.id}`}
@@ -901,43 +1069,43 @@ export default function Actions() {
                           </div>
                         ) : null}
                       </>
-	                  ) : null}
-	                </div>
-	              ))}
+                    ) : null}
+                  </div>
+                ))}
 
-              <div className="list-item readable">
-                <div className="muted">Justification (if required)</div>
-                <input
-	                  className="input mt-8"
-	                  value={justification}
-	                  onChange={(e) => setJustification(e.target.value)}
-	                  placeholder="Why is this response needed?"
-	                />
+                <div className="list-item readable">
+                  <div className="muted">Justification</div>
+                  <textarea
+                    className="input mt-8"
+                    value={justification}
+                    onChange={(e) => setJustification(e.target.value)}
+                    placeholder="Why is this response needed?"
+                    rows={3}
+                    {...RAW_INPUT_PROPS}
+                  />
+                </div>
+
+                {actionValidation ? (
+                  <div className="list-item readable">
+                    <div className="muted">Validation Results</div>
+                    <div className="page-actions mt-8">
+                      <span className={`status-pill ${actionValidation.is_valid ? "success" : "failed"}`}>
+                        {actionValidation.is_valid ? "Valid" : "Invalid"}
+                      </span>
+                      <span className="chip">OS: {actionValidation.agent_os}</span>
+                      <span className="chip">Channel: {actionValidation.preferred_channel}</span>
+                      <span className="chip">Timeout: {actionValidation.timeout_seconds}s</span>
+                    </div>
+                    {!actionValidation.is_valid ? (
+                      <div className="meta-line ws-normal mt-6">
+                        Errors: {(actionValidation.errors || []).join(", ")}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
 
-              {actionValidation ? (
-                <div className="list-item readable">
-                  <div className="muted">Validation Results</div>
-	                  <div className="page-actions mt-8">
-	                    <span className={`status-pill ${actionValidation.is_valid ? "success" : "failed"}`}>
-                      {actionValidation.is_valid ? "Valid" : "Invalid"}
-                    </span>
-                    <span className="chip">OS: {actionValidation.agent_os}</span>
-                    <span className="chip">Channel: {actionValidation.preferred_channel}</span>
-                    <span className="chip">Timeout: {actionValidation.timeout_seconds}s</span>
-                  </div>
-                  {!actionValidation.is_valid ? (
-	                    <div className="meta-line ws-normal mt-6">
-	                      Errors: {(actionValidation.errors || []).join(", ")}
-	                    </div>
-	                  ) : null}
-                </div>
-              ) : null}
-
-              <div className="page-actions">
-                <button className="btn secondary" onClick={validateConnector}>
-                  Validate Connector
-                </button>
+              <div className="actions-command-bar">
                 <button className="btn secondary" onClick={validateAllActionsForTarget} disabled={matrixLoading}>
                   {matrixLoading ? "Validating..." : "Validate All"}
                 </button>
@@ -954,6 +1122,82 @@ export default function Actions() {
             </div>
           </div>
 
+          {(showNativePackagePanel || actionDocEntries.length) ? (
+            <div className="actions-docs-grid">
+              {showNativePackagePanel ? (
+                <div className="card">
+                  <div className="card-header">
+                    <div>
+                      <h3>Native Package Path</h3>
+                      <p className="muted">Winget-backed software install and upgrade flows tuned for Windows endpoints.</p>
+                    </div>
+                    <button
+                      className="btn secondary"
+                      type="button"
+                      onClick={() => setNativePanelExpanded((prev) => !prev)}
+                    >
+                      {nativePanelExpanded ? "Collapse" : "Expand"}
+                    </button>
+                  </div>
+                  {nativePanelExpanded ? (
+                    <>
+                      <div className="empty-state">
+                        Windows package actions stay on the native remediation path. If winget is missing, the backend attempts bootstrap and then retries the install or upgrade automatically.
+                      </div>
+                      <div className="actions-suggestion-row mt-10">
+                        <button
+                          className="btn secondary"
+                          type="button"
+                          onClick={() => selectWingetQuickAction(PACKAGE_UPDATE_ACTION_ID)}
+                        >
+                          Upgrade Installed Packages
+                        </button>
+                        <button
+                          className="btn secondary"
+                          type="button"
+                          onClick={() => selectWingetQuickAction(SPECIFIC_SOFTWARE_ACTION_ID)}
+                        >
+                          Install / Upgrade Specific Package
+                        </button>
+                      </div>
+                      <div className="meta-line mt-8">
+                        Preferred syntax: use exact package IDs such as `Publisher.Product`. Existing installs that are already at target state now resolve to success instead of hanging as unresolved work.
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {actionDocEntries.length ? (
+                <div className="card">
+                  <div className="card-header">
+                    <div>
+                      <h3>Action Guide</h3>
+                      <p className="muted">Operator-facing notes and guardrails for the currently selected action.</p>
+                    </div>
+                    <button
+                      className="btn secondary"
+                      type="button"
+                      onClick={() => setGuideExpanded((prev) => !prev)}
+                    >
+                      {guideExpanded ? "Collapse" : "Expand"}
+                    </button>
+                  </div>
+                  {guideExpanded ? (
+                    <div className="list">
+                      {actionDocEntries.map(([label, value]) => (
+                        <div key={label} className="list-item readable">
+                          <div className="muted">{label}</div>
+                          <div className="mt-6 ws-pre-wrap">{String(value)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           {activeExecutionId ? <ExecutionStream executionId={activeExecutionId} /> : null}
 
           {matrixRows.length ? (
@@ -961,10 +1205,10 @@ export default function Actions() {
               <div className="card-header">
                 <div>
                   <h3>Action Matrix</h3>
-                  <p className="muted">Validation results for the selected target.</p>
+                  <p className="muted">Targeted validation results for the current scope.</p>
                 </div>
               </div>
-	              <div className="table-scroll h-56vh">
+              <div className="table-scroll h-56vh">
                 <table className="table compact readable">
                   <thead>
                     <tr>
@@ -978,10 +1222,15 @@ export default function Actions() {
                   <tbody>
                     {matrixRows.map((row) => (
                       <tr key={`matrix-${row.id}`}>
-                        <td>{row.label} ({row.id})</td>
+                        <td>
+                          <div className="execution-cell-text">
+                            <strong>{row.label}</strong>
+                            <div className="meta-line mono">{row.id}</div>
+                          </div>
+                        </td>
                         <td>
                           <span className={`status-pill ${row.ok ? "success" : "failed"}`}>
-                            {row.ok ? "VALID" : "INVALID"}
+                            {row.ok ? "Valid" : "Invalid"}
                           </span>
                         </td>
                         <td>{row.os}</td>

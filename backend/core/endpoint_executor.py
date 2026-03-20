@@ -2077,8 +2077,9 @@ class EndpointExecutor:
 				    C2F-Evidence ("updates_skipped=" + $skipped)
 				    C2F-Evidence ("updates_unresolved=" + $unresolved)
 				    C2F-Evidence ("updates_no_change=" + $noChangeHits)
+				    $zeroSkippedProblem = [Math]::Max(0, ($skipped - $skippedNotInstalled - $skippedNoChange))
 				    $zeroOutcome = "SUCCESS"
-				    if ((-not $allMode) -and ($unresolved -gt 0 -or $skipped -gt 0)) {
+				    if ((-not $allMode) -and ($unresolved -gt 0 -or $zeroSkippedProblem -gt 0)) {
 				      $zeroOutcome = "FAILED"
 				    }
 				    C2F-Evidence ("outcome=" + $zeroOutcome)

@@ -11,9 +11,14 @@ import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 const SIDEBAR_STORAGE_KEY = "c2f-sidebar-collapsed";
 const PRIORITY_PANEL_STORAGE_KEY = "c2f-priority-panel-collapsed";
 const PRIORITY_PANEL_HEIGHT_STORAGE_KEY = "c2f-priority-panel-height";
+const SIDEBAR_WIDTH_STORAGE_KEY = "c2f-sidebar-width";
+const OPS_PANEL_COMPACT_STORAGE_KEY = "c2f-ops-panel-compact";
 const DEFAULT_PRIORITY_PANEL_HEIGHT = 320;
 const MIN_PRIORITY_PANEL_HEIGHT = 170;
 const MAX_PRIORITY_PANEL_HEIGHT = 520;
+const DEFAULT_SIDEBAR_WIDTH = 352;
+const MIN_SIDEBAR_WIDTH = 248;
+const MAX_SIDEBAR_WIDTH = 640;
 
 const ROUTE_LABELS = {
   "/": "Dashboard",
@@ -81,6 +86,36 @@ const NAV_SECTIONS = [
   },
 ];
 
+const OPS_MODULES = [
+  {
+    id: "organizations",
+    label: "Organizations",
+    links: [
+      { to: "/orgs", label: "Org Admin" },
+      { to: "/cases", label: "Case Desk" },
+    ],
+  },
+  {
+    id: "connectors",
+    label: "Connectors",
+    links: [
+      { to: "/actions", label: "Action Connectors" },
+      { to: "/agents", label: "Agent Inventory" },
+      { to: "/scheduler", label: "Scheduler" },
+    ],
+  },
+  {
+    id: "governance",
+    label: "Governance",
+    links: [
+      { to: "/governance", label: "Automation Context" },
+      { to: "/approvals", label: "Approvals" },
+      { to: "/changes", label: "Changes" },
+      { to: "/audit", label: "Audit Log" },
+    ],
+  },
+];
+
 const shortLabel = (value) =>
   String(value || "")
     .split(/\s+/)
@@ -96,10 +131,18 @@ const clampPriorityPanelHeight = (value) => {
   return Math.min(MAX_PRIORITY_PANEL_HEIGHT, Math.max(MIN_PRIORITY_PANEL_HEIGHT, Math.round(numeric)));
 };
 
+const clampSidebarWidth = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return DEFAULT_SIDEBAR_WIDTH;
+  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, Math.round(numeric)));
+};
+
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const layoutRef = useRef(null);
   const priorityResizeRef = useRef(null);
+  const sidebarResizeRef = useRef(null);
   const [user, setUser] = useState(null);
   const [search, setSearch] = useState("");
   const [appVersion, setAppVersion] = useState(UI_APP_VERSION);
@@ -115,6 +158,19 @@ export default function AppLayout() {
     if (typeof window === "undefined") return DEFAULT_PRIORITY_PANEL_HEIGHT;
     return clampPriorityPanelHeight(window.localStorage.getItem(PRIORITY_PANEL_HEIGHT_STORAGE_KEY));
   });
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_SIDEBAR_WIDTH;
+    return clampSidebarWidth(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
+  });
+  const [opsCompact, setOpsCompact] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(OPS_PANEL_COMPACT_STORAGE_KEY) === "1";
+  });
+  const [openOpsSections, setOpenOpsSections] = useState(() => ({
+    organizations: true,
+    connectors: true,
+    governance: true,
+  }));
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -131,6 +187,16 @@ export default function AppLayout() {
     window.localStorage.setItem(PRIORITY_PANEL_HEIGHT_STORAGE_KEY, String(priorityPanelHeight));
   }, [priorityPanelHeight]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(OPS_PANEL_COMPACT_STORAGE_KEY, opsCompact ? "1" : "0");
+  }, [opsCompact]);
+
   const stopPriorityResize = useCallback(() => {
     if (typeof window !== "undefined" && priorityResizeRef.current) {
       window.removeEventListener("mousemove", priorityResizeRef.current.onMove);
@@ -144,6 +210,20 @@ export default function AppLayout() {
   }, []);
 
   useEffect(() => () => stopPriorityResize(), [stopPriorityResize]);
+
+  const stopSidebarResize = useCallback(() => {
+    if (typeof window !== "undefined" && sidebarResizeRef.current) {
+      window.removeEventListener("mousemove", sidebarResizeRef.current.onMove);
+      window.removeEventListener("mouseup", sidebarResizeRef.current.onUp);
+      sidebarResizeRef.current = null;
+    }
+    if (typeof document !== "undefined") {
+      document.body.style.removeProperty("cursor");
+      document.body.style.removeProperty("user-select");
+    }
+  }, []);
+
+  useEffect(() => () => stopSidebarResize(), [stopSidebarResize]);
 
   const startPriorityResize = useCallback((event) => {
     if (sidebarCollapsed || priorityPanelCollapsed || typeof window === "undefined" || window.innerWidth <= 1024) {
@@ -166,6 +246,28 @@ export default function AppLayout() {
       document.body.style.userSelect = "none";
     }
   }, [priorityPanelCollapsed, priorityPanelHeight, sidebarCollapsed, stopPriorityResize]);
+
+  const startSidebarResize = useCallback((event) => {
+    if (sidebarCollapsed || typeof window === "undefined" || window.innerWidth <= 1024) {
+      return;
+    }
+    event.preventDefault();
+    stopSidebarResize();
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+    const onMove = (moveEvent) => {
+      const delta = moveEvent.clientX - startX;
+      setSidebarWidth(clampSidebarWidth(startWidth + delta));
+    };
+    const onUp = () => stopSidebarResize();
+    sidebarResizeRef.current = { onMove, onUp };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    if (typeof document !== "undefined") {
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    }
+  }, [sidebarCollapsed, sidebarWidth, stopSidebarResize]);
 
   useEffect(() => {
     let active = true;
@@ -260,7 +362,11 @@ export default function AppLayout() {
   };
 
   return (
-    <div className={`app-layout${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
+    <div
+      ref={layoutRef}
+      className={`app-layout${sidebarCollapsed ? " sidebar-collapsed" : ""}`}
+      style={!sidebarCollapsed ? { "--sidebar-width": `${sidebarWidth}px` } : undefined}
+    >
 
       <aside className="sidebar">
         <div className="sidebar-top">
@@ -284,80 +390,147 @@ export default function AppLayout() {
           </button>
         </div>
 
-        <div
-          className={`priority-panel${priorityPanelCollapsed ? " collapsed" : " resizable"}`}
-          aria-label="Priority navigation"
-          style={!priorityPanelCollapsed && !sidebarCollapsed ? { "--priority-panel-height": `${priorityPanelHeight}px` } : undefined}
-        >
-          <div className="priority-panel-header">
-            <div className="priority-title">Priority Queue</div>
-            <button
-              type="button"
-              className="panel-collapse-btn"
-              onClick={() => setPriorityPanelCollapsed((prev) => !prev)}
-              aria-expanded={!priorityPanelCollapsed}
-              aria-label={priorityPanelCollapsed ? "Expand priority queue" : "Collapse priority queue"}
-              title={priorityPanelCollapsed ? "Expand priority queue" : "Collapse priority queue"}
-            >
-              {priorityPanelCollapsed ? "+" : "-"}
-            </button>
-          </div>
-          {!priorityPanelCollapsed ? (
-            <div className="priority-panel-body">
-              <div className="priority-links">
-                {PRIORITY_LINKS.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    title={item.label}
-                    className={({ isActive }) => `priority-link${isActive ? " active" : ""}`}
-                  >
-                    <span className="nav-link-badge">{shortLabel(item.label)}</span>
-                    <span className="nav-link-label">{item.label}</span>
-                  </NavLink>
-                ))}
+        <div className="sidebar-workspace">
+          <div
+            className={`priority-panel${priorityPanelCollapsed ? " collapsed" : " resizable"}`}
+            aria-label="Priority navigation"
+            style={!priorityPanelCollapsed && !sidebarCollapsed ? { "--priority-panel-height": `${priorityPanelHeight}px` } : undefined}
+          >
+            <div className="priority-panel-header">
+              <div className="priority-title">Priority Queue</div>
+              <button
+                type="button"
+                className="panel-collapse-btn"
+                onClick={() => setPriorityPanelCollapsed((prev) => !prev)}
+                aria-expanded={!priorityPanelCollapsed}
+                aria-label={priorityPanelCollapsed ? "Expand priority queue" : "Collapse priority queue"}
+                title={priorityPanelCollapsed ? "Expand priority queue" : "Collapse priority queue"}
+              >
+                {priorityPanelCollapsed ? "+" : "-"}
+              </button>
+            </div>
+            {!priorityPanelCollapsed ? (
+              <div className="priority-panel-body">
+                <div className="priority-links">
+                  {PRIORITY_LINKS.map((item) => (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      title={item.label}
+                      className={({ isActive }) => `priority-link${isActive ? " active" : ""}`}
+                    >
+                      <span className="nav-link-badge">{shortLabel(item.label)}</span>
+                      <span className="nav-link-label">{item.label}</span>
+                    </NavLink>
+                  ))}
+                </div>
               </div>
+            ) : null}
+          </div>
+
+          {!sidebarCollapsed ? (
+            <div className={`sidebar-divider${priorityPanelCollapsed ? " disabled" : ""}`} aria-hidden="true">
+              <button
+                type="button"
+                className="sidebar-divider-handle"
+                onMouseDown={startPriorityResize}
+                onDoubleClick={() => setPriorityPanelHeight(DEFAULT_PRIORITY_PANEL_HEIGHT)}
+                disabled={priorityPanelCollapsed}
+                title="Drag to resize priority queue. Double-click to reset."
+              />
             </div>
           ) : null}
-        </div>
-        {!sidebarCollapsed ? (
-          <div className={`sidebar-divider${priorityPanelCollapsed ? " disabled" : ""}`} aria-hidden="true">
-            <button
-              type="button"
-              className="sidebar-divider-handle"
-              onMouseDown={startPriorityResize}
-              onDoubleClick={() => setPriorityPanelHeight(DEFAULT_PRIORITY_PANEL_HEIGHT)}
-              disabled={priorityPanelCollapsed}
-              title="Drag to resize priority queue. Double-click to reset."
-            />
-          </div>
-        ) : null}
 
-        <nav className="nav-groups" aria-label="Primary navigation">
-          {NAV_SECTIONS.map((section) => (
-            <div className="nav-group" key={section.title}>
-              <div className="nav-group-title">{section.title}</div>
-              <div className="nav-group-links">
-                {section.links.map((link) => (
-                  <NavLink
-                    key={link.to}
-                    to={link.to}
-                    end={Boolean(link.end)}
-                    title={link.label}
-                    className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
-                  >
-                    <span className="nav-link-badge">{shortLabel(link.label)}</span>
-                    <span className="nav-link-label">{link.label}</span>
-                  </NavLink>
-                ))}
+          <div className="sidebar-module-shell">
+            <nav className="nav-groups" aria-label="Primary navigation">
+              {NAV_SECTIONS.map((section) => (
+                <div className="nav-group" key={section.title}>
+                  <div className="nav-group-title">{section.title}</div>
+                  <div className="nav-group-links">
+                    {section.links.map((link) => (
+                      <NavLink
+                        key={link.to}
+                        to={link.to}
+                        end={Boolean(link.end)}
+                        title={link.label}
+                        className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
+                      >
+                        <span className="nav-link-badge">{shortLabel(link.label)}</span>
+                        <span className="nav-link-label">{link.label}</span>
+                      </NavLink>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </nav>
+          </div>
+
+          <div className={`ops-panel${opsCompact ? " compact" : ""}`}>
+            <div className="ops-panel-header">
+              <div className="priority-title">Backend Ops</div>
+              <div className="page-actions gap-6">
+                <button
+                  type="button"
+                  className="panel-collapse-btn"
+                  onClick={() => setOpsCompact((prev) => !prev)}
+                  aria-pressed={opsCompact}
+                  title={opsCompact ? "Expand ops modules" : "Collapse ops modules to icon mode"}
+                >
+                  {opsCompact ? "+" : "[]"}
+                </button>
+                <button type="button" className="panel-collapse-btn" onClick={openOpsConsole} title="Open backend ops console">
+                  {"->"}
+                </button>
               </div>
             </div>
-          ))}
-        </nav>
-        <button type="button" className="nav-link ops-link-btn" onClick={openOpsConsole} title="Backend Ops">
-          <span className="nav-link-badge">OPS</span>
-          <span className="nav-link-label">Backend Ops</span>
-        </button>
+            <div className="ops-panel-body">
+              <div className="ops-accordion-list">
+                {OPS_MODULES.map((section) => {
+                  const isOpen = !opsCompact && Boolean(openOpsSections[section.id]);
+                  return (
+                    <div key={section.id} className={`ops-accordion${isOpen ? " open" : ""}`}>
+                      <button
+                        type="button"
+                        className="ops-accordion-toggle"
+                        onClick={() => {
+                          if (opsCompact) {
+                            setOpsCompact(false);
+                            return;
+                          }
+                          setOpenOpsSections((prev) => ({
+                            ...prev,
+                            [section.id]: !prev[section.id],
+                          }));
+                        }}
+                        aria-expanded={isOpen}
+                        title={section.label}
+                      >
+                        <span className="nav-link-badge">{shortLabel(section.label)}</span>
+                        {!opsCompact ? <span className="ops-accordion-label">{section.label}</span> : null}
+                        {!opsCompact ? <span className="ops-accordion-state">{isOpen ? "-" : "+"}</span> : null}
+                      </button>
+                      {isOpen ? (
+                        <div className="ops-accordion-links">
+                          {section.links.map((link) => (
+                            <NavLink
+                              key={link.to}
+                              to={link.to}
+                              title={link.label}
+                              className={({ isActive }) => `ops-link${isActive ? " active" : ""}`}
+                            >
+                              <span className="nav-link-badge">{shortLabel(link.label)}</span>
+                              <span className="nav-link-label">{link.label}</span>
+                            </NavLink>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div className="sidebar-footer">
           <div className="footer-status">
@@ -369,6 +542,17 @@ export default function AppLayout() {
           </div>
         </div>
       </aside>
+      {!sidebarCollapsed ? (
+        <div className="app-layout-divider" aria-hidden="true">
+          <button
+            type="button"
+            className="app-layout-divider-handle"
+            onMouseDown={startSidebarResize}
+            onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
+            title="Drag to resize sidebar. Double-click to reset."
+          />
+        </div>
+      ) : null}
 
       <main className="main-content">
         <div className="topbar">

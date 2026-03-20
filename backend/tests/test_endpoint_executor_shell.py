@@ -110,6 +110,7 @@ def test_package_update_script_contains_winget_bootstrap_path():
     assert "afterInstalledDetected = (($afterRows -and $afterRows.Count -gt 0) -or $afterArpPresent)" in script
     assert "if (Test-C2FNoiseLine $lineNorm) { continue }" in script
     assert "$skippedNoChange++" in script
+    assert "$zeroSkippedProblem = [Math]::Max(0, ($skipped - $skippedNotInstalled - $skippedNoChange))" in script
 
 
 def test_global_shell_requires_endpoint_transport():

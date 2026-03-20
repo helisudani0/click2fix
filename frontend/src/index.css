@@ -1115,11 +1115,154 @@ p {
   overflow-x: visible;
 }
 
+.app-layout.route-global-shell .main-content {
+  --input-bg: rgba(12, 20, 31, 0.94);
+  --input-border: rgba(112, 145, 176, 0.28);
+  --input-text: #edf4ff;
+  --input-placeholder: rgba(183, 200, 219, 0.62);
+  --input-focus-border: rgba(105, 168, 255, 0.72);
+  --input-focus-ring: rgba(105, 168, 255, 0.16);
+  --shell-surface: rgba(14, 22, 34, 0.96);
+  --shell-surface-soft: rgba(17, 28, 42, 0.9);
+  --shell-surface-alt: rgba(23, 36, 53, 0.92);
+  --shell-border: rgba(112, 145, 176, 0.22);
+  --shell-border-strong: rgba(122, 186, 222, 0.32);
+  --shell-text: #eef4ff;
+  --shell-muted: rgba(190, 205, 222, 0.78);
+  background:
+    radial-gradient(circle at top left, rgba(59, 130, 246, 0.12), transparent 26%),
+    linear-gradient(180deg, #08111b 0%, #0b1521 32%, #0e1825 100%);
+  color: var(--shell-text);
+}
+
+.app-layout.route-global-shell .topbar {
+  border-bottom: 1px solid var(--shell-border);
+  background: linear-gradient(180deg, rgba(9, 16, 26, 0.96), rgba(11, 20, 31, 0.94));
+  box-shadow: 0 14px 28px rgba(1, 6, 14, 0.24);
+}
+
+.app-layout.route-global-shell .topbar-title,
+.app-layout.route-global-shell .topbar-subtitle {
+  color: var(--shell-text);
+}
+
+.app-layout.route-global-shell .topbar-breadcrumbs,
+.app-layout.route-global-shell .health-hud-label,
+.app-layout.route-global-shell .health-hud-metric {
+  color: var(--shell-muted);
+}
+
+.app-layout.route-global-shell .topbar-health-hud {
+  border: 1px solid var(--shell-border);
+  background: rgba(18, 29, 43, 0.88);
+  box-shadow: 0 14px 28px rgba(1, 6, 14, 0.22);
+}
+
+.app-layout.route-global-shell .topbar-shortcut,
+.app-layout.route-global-shell .btn.secondary {
+  border: 1px solid var(--shell-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--shell-text);
+}
+
+.app-layout.route-global-shell .topbar-shortcut:hover,
+.app-layout.route-global-shell .btn.secondary:hover {
+  border-color: var(--shell-border-strong);
+  background: rgba(105, 168, 255, 0.12);
+  color: #ffffff;
+}
+
+.app-layout.route-global-shell .topbar-shortcut.active {
+  border-color: rgba(105, 168, 255, 0.44);
+  background: rgba(105, 168, 255, 0.18);
+  color: #ffffff;
+}
+
 .page {
   display: flex;
   flex-direction: column;
   gap: 18px;
   min-width: 0;
+}
+
+.global-shell-page {
+  color: var(--shell-text);
+}
+
+.global-shell-page h2,
+.global-shell-page h3 {
+  color: #f8fbff;
+}
+
+.global-shell-page .muted,
+.global-shell-page .mission-meta,
+.global-shell-page .mission-label,
+.global-shell-page .meta-line,
+.global-shell-page .kv-key,
+.global-shell-page .list-item .muted,
+.global-shell-page .text-center {
+  color: var(--shell-muted);
+}
+
+.global-shell-page .card,
+.global-shell-page .mission-card,
+.global-shell-page .list-item,
+.global-shell-page .table-scroll,
+.global-shell-page .empty-state {
+  border-color: var(--shell-border);
+  background: var(--shell-surface);
+  box-shadow: 0 18px 34px rgba(1, 6, 14, 0.22);
+}
+
+.global-shell-page .card-header {
+  border-bottom-color: var(--shell-border);
+}
+
+.global-shell-page .mission-card,
+.global-shell-page .list-item {
+  background: var(--shell-surface-soft);
+}
+
+.global-shell-page .mission-card:hover,
+.global-shell-page button.list-item:hover {
+  background: rgba(105, 168, 255, 0.12);
+}
+
+.global-shell-page .list-item.selected {
+  border-color: rgba(105, 168, 255, 0.52);
+  background: rgba(105, 168, 255, 0.16);
+}
+
+.global-shell-page table,
+.global-shell-page .table,
+.global-shell-page .table-scroll {
+  background: var(--shell-surface);
+}
+
+.global-shell-page table thead,
+.global-shell-page .table thead {
+  background: linear-gradient(180deg, rgba(28, 42, 61, 0.96), rgba(20, 31, 46, 0.96));
+  color: rgba(213, 226, 241, 0.9);
+}
+
+.global-shell-page .table th,
+.global-shell-page .table td,
+.global-shell-page table th,
+.global-shell-page table td {
+  border-bottom: 1px solid rgba(112, 145, 176, 0.12);
+  color: var(--shell-text);
+}
+
+.global-shell-page .table tbody tr:hover {
+  background: rgba(105, 168, 255, 0.1);
+}
+
+.global-shell-page .table tbody tr.selected {
+  background: rgba(105, 168, 255, 0.16);
+}
+
+.global-shell-page .status-pill {
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .page-header {

@@ -209,6 +209,7 @@ export default function AppLayout() {
     socketLive: false,
   });
   const [missionBriefingOpen, setMissionBriefingOpen] = useState(false);
+  const isGlobalShellRoute = location.pathname.startsWith("/global-shell");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -530,7 +531,7 @@ export default function AppLayout() {
   return (
     <div
       ref={layoutRef}
-      className={`app-layout${sidebarCollapsed ? " sidebar-collapsed" : ""}`}
+      className={`app-layout${sidebarCollapsed ? " sidebar-collapsed" : ""}${isGlobalShellRoute ? " route-global-shell" : ""}`}
       style={!sidebarCollapsed ? { "--sidebar-width": `${sidebarWidth}px` } : undefined}
     >
 

@@ -74,10 +74,10 @@ const SPECIFIC_SOFTWARE_ACTION_ID = "software-install-upgrade";
 const CUSTOM_OS_COMMAND_ACTION_ID = "custom-os-command";
 const MULTILINE_INPUT_FIELDS = new Set(["command", "custom_command", "script"]);
 const WINGET_BACKED_ACTION_IDS = new Set([PACKAGE_UPDATE_ACTION_ID, SPECIFIC_SOFTWARE_ACTION_ID]);
-const ACTIONS_SIDEBAR_WIDTH_STORAGE_KEY = "c2f-actions-sidebar-width";
-const DEFAULT_ACTIONS_SIDEBAR_WIDTH = 420;
-const MIN_ACTIONS_SIDEBAR_WIDTH = 320;
-const MAX_ACTIONS_SIDEBAR_WIDTH = 720;
+const ACTIONS_SIDEBAR_WIDTH_STORAGE_KEY = "c2f-actions-sidebar-width-v2";
+const DEFAULT_ACTIONS_SIDEBAR_WIDTH = 380;
+const MIN_ACTIONS_SIDEBAR_WIDTH = 300;
+const MAX_ACTIONS_SIDEBAR_WIDTH = 620;
 const PACKAGE_ID_EXAMPLES = [
   { id: "Microsoft.Edge", label: "Microsoft Edge" },
   { id: "Google.Chrome", label: "Google Chrome" },

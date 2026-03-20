@@ -8,11 +8,11 @@ import api, {
 import { APP_TIMEZONE_LABEL } from "../utils/time";
 import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
-const SIDEBAR_STORAGE_KEY = "c2f-sidebar-collapsed";
-const PRIORITY_PANEL_STORAGE_KEY = "c2f-priority-panel-collapsed";
-const PRIORITY_PANEL_HEIGHT_STORAGE_KEY = "c2f-priority-panel-height";
-const SIDEBAR_WIDTH_STORAGE_KEY = "c2f-sidebar-width";
-const OPS_PANEL_COMPACT_STORAGE_KEY = "c2f-ops-panel-compact";
+const SIDEBAR_STORAGE_KEY = "c2f-sidebar-collapsed-v2";
+const PRIORITY_PANEL_STORAGE_KEY = "c2f-priority-panel-collapsed-v2";
+const PRIORITY_PANEL_HEIGHT_STORAGE_KEY = "c2f-priority-panel-height-v2";
+const SIDEBAR_WIDTH_STORAGE_KEY = "c2f-sidebar-width-v2";
+const OPS_PANEL_COMPACT_STORAGE_KEY = "c2f-ops-panel-compact-v2";
 const DEFAULT_PRIORITY_PANEL_HEIGHT = 320;
 const MIN_PRIORITY_PANEL_HEIGHT = 170;
 const MAX_PRIORITY_PANEL_HEIGHT = 520;
@@ -557,9 +557,11 @@ export default function AppLayout() {
       <main className="main-content">
         <div className="topbar">
           <div className="topbar-left">
-            <div className="topbar-title">{currentPageLabel}</div>
-            <div className="topbar-subtitle">
-              Security Operations Console |
+            <div className="topbar-title-row">
+              <div className="topbar-title">{currentPageLabel}</div>
+            </div>
+            <div className="topbar-subtitle">Security Operations Console</div>
+            <div className="topbar-breadcrumbs">
               {breadcrumbs.map((item, index) => (
                 <span key={`${item.href}-${item.label}`}>
                   {index > 0 ? " / " : ""}
@@ -567,19 +569,6 @@ export default function AppLayout() {
                 </span>
               ))}{" "}
               | Timezone: {APP_TIMEZONE_LABEL}
-            </div>
-          </div>
-          <div className="topbar-right">
-            <button
-              type="button"
-              className="btn secondary sidebar-toggle-mobile"
-              onClick={() => setSidebarCollapsed((prev) => !prev)}
-              aria-pressed={sidebarCollapsed}
-            >
-              {sidebarCollapsed ? "Expand Nav" : "Collapse Nav"}
-            </button>
-            <div className="topbar-version" title="Current frontend version">
-              {appVersion}
             </div>
             <div className="topbar-shortcuts" aria-label="Quick navigation">
               <NavLink to="/alerts" className={({ isActive }) => `topbar-shortcut${isActive ? " active" : ""}`}>
@@ -592,6 +581,8 @@ export default function AppLayout() {
                 Approvals
               </NavLink>
             </div>
+          </div>
+          <div className="topbar-right">
             <form className="search" onSubmit={submitSearch}>
               <input
                 aria-label="Search alerts, agents, actions"
@@ -601,7 +592,17 @@ export default function AppLayout() {
               />
               <button className="btn secondary" type="submit">Search</button>
             </form>
-            <button className="btn secondary" onClick={logout}>Logout</button>
+            <div className="topbar-actions">
+              <button
+                type="button"
+                className="btn secondary sidebar-toggle-mobile"
+                onClick={() => setSidebarCollapsed((prev) => !prev)}
+                aria-pressed={sidebarCollapsed}
+              >
+                {sidebarCollapsed ? "Expand Nav" : "Collapse Nav"}
+              </button>
+              <button className="btn secondary" onClick={logout}>Logout</button>
+            </div>
           </div>
         </div>
 

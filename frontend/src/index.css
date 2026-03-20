@@ -46,6 +46,12 @@
   --compat-focus-ring: #0a7c95;
   --compat-inset-border: #d6e2ee;
   --compat-inset-bg: #f7fbff;
+  --input-bg: #ffffff;
+  --input-border: #bfd0e4;
+  --input-text: #0f2239;
+  --input-placeholder: #667a92;
+  --input-focus-border: rgba(10, 124, 149, 0.6);
+  --input-focus-ring: rgba(10, 124, 149, 0.15);
 }
 
 /* ===== DARK THEME: OBSIDIAN SOC COMMAND CENTER ===== */
@@ -76,10 +82,16 @@
   /* Dark Theme - Elevation & Depth */
   --elevation-1: 0 10px 20px rgba(0, 0, 0, 0.3);
   --elevation-2: 0 25px 50px rgba(0, 0, 0, 0.5);
+  --input-bg: rgba(18, 25, 38, 0.96);
+  --input-border: rgba(122, 186, 222, 0.24);
+  --input-text: #f5f7fb;
+  --input-placeholder: rgba(190, 206, 222, 0.58);
+  --input-focus-border: rgba(59, 130, 246, 0.66);
+  --input-focus-ring: rgba(59, 130, 246, 0.18);
 }
 
-/* Apply dark theme to body by default for SOC workspace */
-body {
+/* Optional body-level dark theme fallback */
+body.theme-obsidian {
   --bg-0: #09090b;
   --bg-1: #12121a;
   --panel: #0f0f15;
@@ -108,6 +120,12 @@ body {
   --compat-focus-ring: #2f74e4;
   --compat-inset-border: rgba(255, 255, 255, 0.12);
   --compat-inset-bg: rgba(255, 255, 255, 0.04);
+  --input-bg: rgba(18, 25, 38, 0.96);
+  --input-border: rgba(122, 186, 222, 0.24);
+  --input-text: #f5f7fb;
+  --input-placeholder: rgba(190, 206, 222, 0.58);
+  --input-focus-border: rgba(59, 130, 246, 0.66);
+  --input-focus-ring: rgba(59, 130, 246, 0.18);
 }
 
 /* ===== UTILITY CLASSES ===== */
@@ -1063,14 +1081,20 @@ p {
   max-width: 100%;
   padding: 10px 12px;
   border-radius: 10px;
-  border: 1px solid var(--border);
-  background: #ffffff;
-  color: var(--text);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-text);
+  caret-color: var(--accent);
   outline: none;
 }
 
 .search input::placeholder {
-  color: var(--muted);
+  color: var(--input-placeholder);
+}
+
+.search input:focus {
+  border-color: var(--input-focus-border);
+  box-shadow: 0 0 0 2px var(--input-focus-ring);
 }
 
 .topbar-actions {
@@ -2182,15 +2206,20 @@ button.list-item:hover {
   width: 100%;
   padding: 10px 12px;
   border-radius: 8px;
-  border: 1px solid var(--border);
-  background: #ffffff;
-  color: var(--text);
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-text);
+  caret-color: var(--accent);
   outline: none;
 }
 
+.input::placeholder {
+  color: var(--input-placeholder);
+}
+
 .input:focus {
-  border-color: rgba(0, 167, 181, 0.6);
-  box-shadow: 0 0 0 2px rgba(0, 167, 181, 0.15);
+  border-color: var(--input-focus-border);
+  box-shadow: 0 0 0 2px var(--input-focus-ring);
 }
 
 textarea.input {
@@ -2577,23 +2606,40 @@ svg {
   display: grid;
   place-items: center;
   padding: 32px;
+  background:
+    radial-gradient(circle at top, rgba(59, 130, 246, 0.18), transparent 34%),
+    linear-gradient(180deg, #05070c 0%, #0a111c 48%, #0f1724 100%);
 }
 
 .login-card {
   width: min(440px, 100%);
-  background: #ffffff;
-  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(11, 16, 24, 0.96), rgba(15, 23, 36, 0.96));
+  border: 1px solid rgba(122, 186, 222, 0.22);
   border-radius: 18px;
   padding: 28px;
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 24px 54px rgba(4, 8, 16, 0.44);
   display: grid;
   gap: 14px;
+  color: #f5f7fb;
 }
 
 .login-brand {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.login-card h2,
+.login-card .brand-title {
+  color: #f8fbff;
+}
+
+.login-card .brand-subtitle,
+.login-card .brand-version,
+.login-card .muted,
+.login-form label,
+.login-hint {
+  color: rgba(221, 231, 241, 0.78);
 }
 
 .login-form {
@@ -2605,12 +2651,43 @@ svg {
   display: grid;
   gap: 6px;
   font-size: 0.85rem;
-  color: var(--muted);
+}
+
+.login-card .brand-badge {
+  border-color: rgba(122, 186, 222, 0.3);
+  background: rgba(59, 130, 246, 0.16);
+  color: #e8f4ff;
+}
+
+.login-card .input {
+  background: rgba(5, 10, 18, 0.88);
+  border-color: rgba(122, 186, 222, 0.22);
+  color: #f7fbff;
+}
+
+.login-card .input::placeholder {
+  color: rgba(190, 206, 222, 0.58);
+}
+
+.login-card .input:focus {
+  border-color: rgba(59, 130, 246, 0.66);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+}
+
+.login-card .btn.secondary {
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8f1fb;
+  border: 1px solid rgba(122, 186, 222, 0.22);
+}
+
+.login-card .empty-state {
+  background: rgba(214, 69, 69, 0.14);
+  border: 1px solid rgba(214, 69, 69, 0.32);
+  color: #ffd9d9;
 }
 
 .login-hint {
   font-size: 0.85rem;
-  color: var(--muted);
 }
 
 @media (max-width: 1024px) {

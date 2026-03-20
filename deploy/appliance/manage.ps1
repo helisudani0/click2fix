@@ -115,23 +115,30 @@ function Get-CurrentAdvertiseHost {
   param([string]$FallbackHost = "localhost")
 
   try {
-    $route = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction Stop |
-      Sort-Object -Property RouteMetric, InterfaceMetric |
-      Select-Object -First 1
-    if ($route) {
-      $ip = Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $route.InterfaceIndex -ErrorAction SilentlyContinue |
-        Where-Object { $_.IPAddress -and $_.IPAddress -notmatch '^(127\.|169\.254\.)' } |
-        Select-Object -First 1 -ExpandProperty IPAddress
-      if (-not [string]::IsNullOrWhiteSpace($ip)) {
+    $socket = [System.Net.Sockets.Socket]::new(
+      [System.Net.Sockets.AddressFamily]::InterNetwork,
+      [System.Net.Sockets.SocketType]::Dgram,
+      [System.Net.Sockets.ProtocolType]::Udp
+    )
+    try {
+      $socket.Connect("1.1.1.1", 53)
+      $endpoint = [System.Net.IPEndPoint]$socket.LocalEndPoint
+      $ip = $endpoint.Address.IPAddressToString
+      if (-not [string]::IsNullOrWhiteSpace($ip) -and $ip -notmatch '^(0\.|127\.|169\.254\.)') {
         return $ip
       }
+    } finally {
+      $socket.Dispose()
     }
   } catch {}
 
   try {
-    $ip = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
-      Where-Object { $_.IPAddress -and $_.IPAddress -notmatch '^(127\.|169\.254\.)' } |
-      Select-Object -First 1 -ExpandProperty IPAddress
+    $ip = [System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) |
+      Where-Object {
+        $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork -and
+        $_.IPAddressToString -notmatch '^(0\.|127\.|169\.254\.)'
+      } |
+      Select-Object -First 1 -ExpandProperty IPAddressToString
     if (-not [string]::IsNullOrWhiteSpace($ip)) {
       return $ip
     }

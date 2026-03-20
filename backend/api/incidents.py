@@ -6,12 +6,17 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy import bindparam, text
 
+from core.active_defense import build_forensic_snapshot_plan, build_incident_score
+from core.action_execution import execute_action
+from core.actions import get_action, normalize_args, resolve_action_dispatch
 from core.audit import log_audit
 from core.security import current_user
 from core.time_utils import parse_utc_datetime, utc_iso, utc_now_naive
+from core.wazuh_client import WazuhClient
 from db.database import connect
 
 router = APIRouter(prefix="/incidents")
+client = WazuhClient()
 
 _ALLOWED_STATUSES = {"open", "investigate", "contain", "verified", "closed"}
 _ALLOWED_PRIORITIES = {"critical", "high", "medium", "low"}
@@ -428,6 +433,254 @@ def _serialize_incident_row(row) -> Dict[str, Any]:
     }
 
 
+def _matched_signals_list(value: Any) -> List[str]:
+    try:
+        parsed = json.loads(str(value or "[]"))
+    except Exception:
+        parsed = []
+    if not isinstance(parsed, list):
+        return []
+    return [_as_text(item) for item in parsed if _as_text(item)]
+
+
+def _load_incident_alert_rows(conn, incident_ids: List[int]) -> Dict[int, List[Dict[str, Any]]]:
+    if not incident_ids:
+        return {}
+    rows = conn.execute(
+        text(
+            """
+            SELECT incident_id, alert_id, agent_id, tactic, identity, matched_signals, created_at
+            FROM incident_alerts
+            WHERE incident_id IN :incident_ids
+            ORDER BY created_at DESC NULLS LAST, id DESC
+            """
+        ).bindparams(bindparam("incident_ids", expanding=True)),
+        {"incident_ids": incident_ids},
+    ).fetchall()
+    by_incident: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        by_incident[_safe_int(row[0], 0)].append(
+            {
+                "alert_id": row[1],
+                "agent_id": row[2],
+                "tactic": row[3],
+                "identity": row[4],
+                "matched_signals": _matched_signals_list(row[5]),
+                "attached_at": utc_iso(row[6]),
+            }
+        )
+    return by_incident
+
+
+def _apply_incident_intelligence(
+    conn,
+    incident: Dict[str, Any],
+    *,
+    alerts: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    payload = dict(incident or {})
+    incident_id = _safe_int(payload.get("id"), 0)
+    incident_alerts = list(alerts or [])
+    if not incident_alerts and incident_id > 0:
+        incident_alerts = _load_incident_alert_rows(conn, [incident_id]).get(incident_id, [])
+
+    scorecard = build_incident_score(
+        agents=[row.get("agent_id") for row in incident_alerts],
+        tactics=[row.get("tactic") for row in incident_alerts],
+        alert_count=max(_safe_int(payload.get("alert_count"), 0), len(incident_alerts)),
+        identities=[row.get("identity") for row in incident_alerts],
+        tamper_suspected=any(
+            "tamper" in str(signal or "").strip().lower()
+            or "edr" in str(signal or "").strip().lower()
+            for row in incident_alerts
+            for signal in (row.get("matched_signals") or [])
+        ),
+    )
+    payload["score"] = scorecard.get("score")
+    payload["score_breakdown"] = scorecard.get("breakdown") or {}
+    payload["attack_narrative"] = scorecard.get("attack_narrative")
+    payload["recommended_priority"] = scorecard.get("priority")
+    payload["requires_dual_authorization"] = (
+        str(payload.get("priority") or "").strip().lower() == "critical"
+        or bool(scorecard.get("requires_dual_authorization"))
+    )
+    return payload
+
+
+def _trigger_forensic_snapshot_capture(
+    conn,
+    *,
+    incident_id: int,
+    plans: List[Dict[str, Any]],
+    actor: str,
+    org_id: Any,
+) -> List[Dict[str, Any]]:
+    snapshot_runs: List[Dict[str, Any]] = []
+    if not plans:
+        return snapshot_runs
+
+    action = get_action("collect-memory")
+    dispatch = resolve_action_dispatch(action, normalize_args(action, []))
+    now = utc_now_naive()
+    for plan in plans:
+        agent_id = _as_text(plan.get("agent_id"))
+        if not agent_id:
+            continue
+        execution_id = conn.execute(
+            text(
+                """
+                INSERT INTO executions
+                (approval_id, agent, playbook, action, args, status, approved_by, started_at, alert_id, org_id)
+                VALUES (:approval_id, :agent, :playbook, :action, :args, :status, :approved_by, :started_at, :alert_id, :org_id)
+                RETURNING id
+                """
+            ),
+            {
+                "approval_id": None,
+                "agent": agent_id,
+                "playbook": "collect-memory",
+                "action": "collect-memory",
+                "args": json.dumps({"incident_id": incident_id, "hint": plan.get("hint")}, default=str),
+                "status": "RUNNING",
+                "approved_by": actor,
+                "started_at": now,
+                "alert_id": None,
+                "org_id": org_id,
+            },
+        ).scalar()
+        try:
+            execution = execute_action(
+                client,
+                "collect-memory",
+                dispatch,
+                [agent_id],
+                execution_id=int(execution_id),
+                context={"system_forensics_capture": True, "tenant_id": org_id},
+            )
+            result_payload = execution.get("result") if isinstance(execution, dict) else {}
+            overall_status = str((result_payload or {}).get("overall_status") or "SUCCESS").upper()
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO execution_steps
+                    (execution_id, step, stdout, stderr, status)
+                    VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                    """
+                ),
+                {
+                    "execution_id": execution_id,
+                    "step": "forensic_snapshot",
+                    "stdout": json.dumps({"plan": plan, "execution": execution}, default=str),
+                    "stderr": "",
+                    "status": overall_status,
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    UPDATE executions
+                    SET status=:status, finished_at=:finished_at
+                    WHERE id=:id
+                    """
+                ),
+                {
+                    "id": execution_id,
+                    "status": overall_status,
+                    "finished_at": utc_now_naive(),
+                },
+            )
+            snapshot_runs.append(
+                {
+                    "agent_id": agent_id,
+                    "execution_id": int(execution_id),
+                    "status": overall_status.lower(),
+                    "channel": execution.get("channel") if isinstance(execution, dict) else None,
+                    "mode": execution.get("mode") if isinstance(execution, dict) else None,
+                    "hint": plan.get("hint"),
+                }
+            )
+        except HTTPException as exc:
+            detail = exc.detail.get("message") if isinstance(exc.detail, dict) else exc.detail
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO execution_steps
+                    (execution_id, step, stdout, stderr, status)
+                    VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                    """
+                ),
+                {
+                    "execution_id": execution_id,
+                    "step": "forensic_snapshot",
+                    "stdout": json.dumps({"plan": plan}, default=str),
+                    "stderr": _as_text(detail, "forensic_snapshot_failed"),
+                    "status": "FAILED",
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    UPDATE executions
+                    SET status='FAILED', finished_at=:finished_at
+                    WHERE id=:id
+                    """
+                ),
+                {
+                    "id": execution_id,
+                    "finished_at": utc_now_naive(),
+                },
+            )
+            snapshot_runs.append(
+                {
+                    "agent_id": agent_id,
+                    "execution_id": int(execution_id),
+                    "status": "failed",
+                    "error": _as_text(detail, "forensic_snapshot_failed"),
+                    "hint": plan.get("hint"),
+                }
+            )
+        except Exception as exc:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO execution_steps
+                    (execution_id, step, stdout, stderr, status)
+                    VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                    """
+                ),
+                {
+                    "execution_id": execution_id,
+                    "step": "forensic_snapshot",
+                    "stdout": json.dumps({"plan": plan}, default=str),
+                    "stderr": _as_text(exc, "forensic_snapshot_failed"),
+                    "status": "FAILED",
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    UPDATE executions
+                    SET status='FAILED', finished_at=:finished_at
+                    WHERE id=:id
+                    """
+                ),
+                {
+                    "id": execution_id,
+                    "finished_at": utc_now_naive(),
+                },
+            )
+            snapshot_runs.append(
+                {
+                    "agent_id": agent_id,
+                    "execution_id": int(execution_id),
+                    "status": "failed",
+                    "error": _as_text(exc, "forensic_snapshot_failed"),
+                    "hint": plan.get("hint"),
+                }
+            )
+    return snapshot_runs
+
+
 def _insert_sla_event(conn, incident_id: int, event_type: str, detail: str, actor: str) -> None:
     conn.execute(
         text(
@@ -551,7 +804,15 @@ def correlate_incidents(
             iocs = sorted({ioc for item in member_contexts for ioc in item.get("iocs", set())})
             signals = sorted({signal for idx in members for signal in signal_map.get(idx, set())})
             max_rule_level = max([_safe_int(item.get("rule_level"), 0) for item in member_contexts] or [0])
-            priority = _priority_from_level(max_rule_level)
+            scorecard = build_incident_score(
+                agents=agents,
+                tactics=tactics,
+                alert_count=len(alert_ids_group),
+                identities=identities,
+                iocs=iocs,
+                tamper_suspected=any("tamper" in str(signal or "").strip().lower() for signal in signals),
+            )
+            priority = _prefer_priority(scorecard.get("priority"), _priority_from_level(max_rule_level))
             first_event = member_contexts[0]["event_time"]
             last_event = member_contexts[-1]["event_time"]
             lead_agent = agents[0] if agents else "multiple-agents"
@@ -572,6 +833,15 @@ def correlate_incidents(
                     "title": title,
                     "summary": summary,
                     "priority": priority,
+                    "score": scorecard.get("score"),
+                    "score_breakdown": scorecard.get("breakdown") or {},
+                    "attack_narrative": scorecard.get("attack_narrative"),
+                    "recommended_priority": scorecard.get("priority"),
+                    "requires_dual_authorization": bool(
+                        priority == "critical" or scorecard.get("requires_dual_authorization")
+                    ),
+                    "forensic_snapshot_plan": build_forensic_snapshot_plan(alerts=member_contexts, incident_id=0),
+                    "forensic_snapshots": [],
                     "first_event_time": first_event,
                     "last_event_time": last_event,
                     "max_rule_level": max_rule_level,
@@ -603,6 +873,7 @@ def correlate_incidents(
                     ).fetchall()
                     existing_alerts = {str(row[0] or "").strip() for row in existing_alert_rows}
                     added = 0
+                    added_members: List[Dict[str, Any]] = []
                     for alert_id in group["alert_ids"]:
                         if alert_id in existing_alerts:
                             continue
@@ -625,6 +896,8 @@ def correlate_incidents(
                             },
                         )
                         added += 1
+                        if member:
+                            added_members.append(member)
 
                     if added:
                         existing_row = db.execute(
@@ -680,6 +953,27 @@ def correlate_incidents(
                             f"Added {added} correlated alerts via correlation run",
                             actor,
                         )
+                        forensic_plan = build_forensic_snapshot_plan(
+                            alerts=added_members,
+                            incident_id=existing_incident_id,
+                        )
+                        forensic_runs = _trigger_forensic_snapshot_capture(
+                            db,
+                            incident_id=existing_incident_id,
+                            plans=forensic_plan,
+                            actor=actor,
+                            org_id=org_id,
+                        )
+                        group["forensic_snapshot_plan"] = forensic_plan
+                        group["forensic_snapshots"] = forensic_runs
+                        if forensic_plan:
+                            _insert_sla_event(
+                                db,
+                                existing_incident_id,
+                                "forensic_snapshot_requested",
+                                f"Auto-triggered {len(forensic_plan)} forensic snapshot capture(s)",
+                                actor,
+                            )
                         persisted_count += 1
                     group["incident_id"] = existing_incident_id
                     group["created"] = False
@@ -752,6 +1046,27 @@ def correlate_incidents(
                     f"Due time set to {utc_iso(due_at)}",
                     actor,
                 )
+                forensic_plan = build_forensic_snapshot_plan(
+                    alerts=member_contexts,
+                    incident_id=incident_id,
+                )
+                forensic_runs = _trigger_forensic_snapshot_capture(
+                    db,
+                    incident_id=incident_id,
+                    plans=forensic_plan,
+                    actor=actor,
+                    org_id=org_id,
+                )
+                group["forensic_snapshot_plan"] = forensic_plan
+                group["forensic_snapshots"] = forensic_runs
+                if forensic_plan:
+                    _insert_sla_event(
+                        db,
+                        incident_id,
+                        "forensic_snapshot_requested",
+                        f"Auto-triggered {len(forensic_plan)} forensic snapshot capture(s)",
+                        actor,
+                    )
                 group["incident_id"] = incident_id
                 group["created"] = True
                 persisted_count += 1
@@ -784,8 +1099,15 @@ def correlate_incidents(
                     "identities": group["identities"][:10],
                     "signals": group["signals"],
                     "priority": group["priority"],
+                    "score": group.get("score"),
+                    "score_breakdown": group.get("score_breakdown") or {},
+                    "attack_narrative": group.get("attack_narrative"),
+                    "recommended_priority": group.get("recommended_priority"),
+                    "requires_dual_authorization": bool(group.get("requires_dual_authorization")),
                     "title": group["title"],
                     "summary": group["summary"],
+                    "forensic_snapshot_plan": group.get("forensic_snapshot_plan") or [],
+                    "forensic_snapshots": group.get("forensic_snapshots") or [],
                     "first_event_time": utc_iso(group["first_event_time"]),
                     "last_event_time": utc_iso(group["last_event_time"]),
                     "incident_id": group.get("incident_id"),
@@ -919,35 +1241,7 @@ def list_incidents(
         items = [_serialize_incident_row(row) for row in rows]
         incident_ids = [item["id"] for item in items if item.get("id")]
 
-        alerts_by_incident: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
-        if include_alerts and incident_ids:
-            alert_rows = db.execute(
-                text(
-                    """
-                    SELECT incident_id, alert_id, agent_id, tactic, identity, matched_signals, created_at
-                    FROM incident_alerts
-                    WHERE incident_id IN :incident_ids
-                    ORDER BY created_at DESC NULLS LAST, id DESC
-                    """
-                ).bindparams(bindparam("incident_ids", expanding=True)),
-                {"incident_ids": incident_ids},
-            ).fetchall()
-            for row in alert_rows:
-                matched_signals = []
-                try:
-                    matched_signals = json.loads(str(row[5] or "[]"))
-                except Exception:
-                    matched_signals = []
-                alerts_by_incident[_safe_int(row[0], 0)].append(
-                    {
-                        "alert_id": row[1],
-                        "agent_id": row[2],
-                        "tactic": row[3],
-                        "identity": row[4],
-                        "matched_signals": matched_signals if isinstance(matched_signals, list) else [],
-                        "attached_at": utc_iso(row[6]),
-                    }
-                )
+        alerts_by_incident = _load_incident_alert_rows(db, incident_ids) if incident_ids else {}
 
         assignments_by_incident: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
         sla_by_incident: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
@@ -1001,13 +1295,19 @@ def list_incidents(
                     }
                 )
 
-        for item in items:
+        for index, item in enumerate(items):
             incident_id = item["id"]
+            enriched = _apply_incident_intelligence(
+                db,
+                item,
+                alerts=alerts_by_incident.get(incident_id, []),
+            )
             if include_alerts:
-                item["alerts"] = alerts_by_incident.get(incident_id, [])
+                enriched["alerts"] = alerts_by_incident.get(incident_id, [])
             if include_history:
-                item["assignment_history"] = assignments_by_incident.get(incident_id, [])
-                item["sla_events"] = sla_by_incident.get(incident_id, [])
+                enriched["assignment_history"] = assignments_by_incident.get(incident_id, [])
+                enriched["sla_events"] = sla_by_incident.get(incident_id, [])
+            items[index] = enriched
 
         return {
             "total": int(count_row),

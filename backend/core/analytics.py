@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import text
 
+from core.active_defense import summarize_baseline_ghosting
 from core.actions import list_actions
 from core.indexer_client import IndexerClient
 from core.mitre_mapper import MitreMapper
@@ -210,6 +211,12 @@ def overview() -> Dict:
         top_rules = _rows_to_lists(top_rules_rows)
         top_agents = _rows_to_lists(top_agents_rows)
         severity = _rows_to_lists(severity_rows)
+        ghosting = summarize_baseline_ghosting(
+            [
+                {"rule": row[0], "count": row[1]}
+                for row in top_rules_rows or []
+            ]
+        )
 
         return {
             "total": total,
@@ -219,6 +226,7 @@ def overview() -> Dict:
             "top_agents": top_agents,
             "severity": severity,
             "anomaly": anomaly.__dict__,
+            "baseline_ghosting": ghosting,
         }
     finally:
         db.close()

@@ -3,7 +3,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from core.active_defense import (
+    build_virtual_patch_suggestions,
+    compute_sca_drift,
+    compute_sca_group_baselines,
+    load_group_baseline,
+    persist_group_baseline,
+)
 from core.wazuh_client import WazuhClient
 from core.indexer_client import IndexerClient
 from core.security import current_user
@@ -76,6 +83,15 @@ def _agent_platform_value(agent: dict) -> str:
     if any(token in lowered for token in ("linux", "ubuntu", "debian", "centos", "rhel", "fedora", "suse", "alpine")):
         return "linux"
     return "unknown"
+
+
+def _restoration_action_for_platform(platform: str) -> str:
+    normalized = str(platform or "").strip().lower()
+    if normalized == "windows":
+        return "patch-windows"
+    if normalized == "linux":
+        return "patch-linux"
+    return "package-update"
 
 
 def _compact_agent_payload(agent: dict) -> dict:
@@ -812,13 +828,14 @@ def _build_agent_sca_payload(
 def list_agents(
     group: str | None = None,
     compact: bool = Query(default=True),
+    force: bool = Query(default=False, description="Bypass agent cache"),
     status: str | None = Query(default=None, description="Comma-separated status filter"),
     platform: str | None = Query(default=None, description="windows|linux"),
     limit: int = Query(default=2000, ge=1, le=100000),
     user=Depends(current_user),
 ):
     try:
-        data = client.get_agents(group=group)
+        data = client.get_agents(group=group, use_cache=not force)
     except HTTPException:
         return []
     items = _extract_items(data)
@@ -870,6 +887,7 @@ def list_groups(user=Depends(current_user)):
 
 @router.get("/sca/fleet")
 def get_fleet_sca_hardening(
+    request: Request,
     group: str | None = Query(default=None),
     agent_ids: str | None = Query(default=None, description="Comma-separated agent IDs."),
     status: str | None = Query(default="active", description="Comma-separated status filter."),
@@ -880,6 +898,9 @@ def get_fleet_sca_hardening(
     recommendation_limit: int = Query(default=25, ge=1, le=250),
     fleet_recommendation_limit: int = Query(default=500, ge=1, le=5000),
     include_checks: bool = Query(default=False, description="Include full policy/check documents per agent."),
+    persist_baseline: bool = Query(default=False, description="Persist computed group baselines as the golden image."),
+    queue_restoration_approvals: bool = Query(default=False, description="Queue restoration approvals for drifted agents."),
+    baseline_consensus: float = Query(default=0.8, ge=0.5, le=1.0),
     parallelism: int = Query(default=6, ge=1, le=32),
     user=Depends(current_user),
 ):
@@ -887,6 +908,9 @@ def get_fleet_sca_hardening(
     requested_agent_set = set(requested_agent_ids)
     allowed_status = set(_parse_csv_tokens(status, lowercase=True))
     allowed_platform = set(_parse_csv_tokens(platform, lowercase=True))
+    user_role = str((user or {}).get("role") or "").strip().lower() if isinstance(user, dict) else ""
+    if (persist_baseline or queue_restoration_approvals) and user_role not in {"admin", "superadmin"}:
+        raise HTTPException(status_code=403, detail="Admin role required for baseline persistence or restoration approval queueing")
 
     try:
         data = client.get_agents(group=group)
@@ -987,6 +1011,7 @@ def get_fleet_sca_hardening(
 
     fleet_rows: list[dict] = []
     fleet_recommendations: list[dict] = []
+    fleet_virtual_patch_suggestions: list[dict] = []
     for aid in selected_ids:
         meta = agent_meta.get(aid) or {"id": aid, "agent_id": aid, "name": aid, "status": "", "platform": "", "group": "", "groups": []}
         payload = results_by_id.get(aid) or {
@@ -1001,6 +1026,11 @@ def get_fleet_sca_hardening(
 
         checks_summary = payload.get("checks_summary") if isinstance(payload.get("checks_summary"), dict) else {}
         recs = payload.get("recommendations") if isinstance(payload.get("recommendations"), list) else []
+        policies = payload.get("policies") if isinstance(payload.get("policies"), list) else []
+        virtual_patch_suggestions = build_virtual_patch_suggestions(
+            telemetry_context=payload.get("telemetry_context") if isinstance(payload.get("telemetry_context"), dict) else {},
+            recommendations=recs,
+        )
         row = {
             "agent_id": aid,
             "agent_name": meta.get("name") or meta.get("hostname") or aid,
@@ -1020,9 +1050,11 @@ def get_fleet_sca_hardening(
             },
             "telemetry_context": payload.get("telemetry_context") if isinstance(payload.get("telemetry_context"), dict) else {},
             "recommendations": recs,
+            "virtual_patch_suggestions": virtual_patch_suggestions,
+            "_policies": policies,
         }
         if include_checks:
-            row["policies"] = payload.get("policies") if isinstance(payload.get("policies"), list) else []
+            row["policies"] = policies
         fleet_rows.append(row)
 
         for rec in recs:
@@ -1035,6 +1067,18 @@ def get_fleet_sca_hardening(
             merged["platform"] = row["platform"]
             merged["group"] = row["group"]
             fleet_recommendations.append(merged)
+        for suggestion in virtual_patch_suggestions:
+            if not isinstance(suggestion, dict):
+                continue
+            fleet_virtual_patch_suggestions.append(
+                {
+                    **suggestion,
+                    "agent_id": aid,
+                    "agent_name": row["agent_name"],
+                    "platform": row["platform"],
+                    "group": row["group"],
+                }
+            )
 
     fleet_recommendations.sort(
         key=lambda item: (
@@ -1047,6 +1091,99 @@ def get_fleet_sca_hardening(
     fleet_recommendations = fleet_recommendations[:fleet_recommendation_limit]
     for idx, row in enumerate(fleet_recommendations, start=1):
         row["fleet_rank"] = idx
+    fleet_virtual_patch_suggestions.sort(
+        key=lambda item: (
+            -float(item.get("confidence") or 0.0),
+            str(item.get("agent_id") or ""),
+            str(item.get("action_id") or ""),
+        )
+    )
+
+    org_id = user.get("org_id") if isinstance(user, dict) else None
+    actor = user.get("sub") if isinstance(user, dict) else None
+    computed_baselines = compute_sca_group_baselines(
+        [
+            {
+                **row,
+                "policies": row.get("_policies") if isinstance(row.get("_policies"), list) else [],
+            }
+            for row in fleet_rows
+        ],
+        consensus_ratio=baseline_consensus,
+    )
+    group_baselines: dict[str, dict] = {}
+    for group_name, computed in computed_baselines.items():
+        effective = load_group_baseline(group_name=group_name, tenant_id=org_id) or computed
+        source = "stored" if effective is not computed else "computed"
+        if persist_baseline:
+            effective = persist_group_baseline(
+                group_name=group_name,
+                tenant_id=org_id,
+                baseline=computed,
+                actor=actor,
+            )
+            source = "persisted"
+        group_baselines[group_name] = {
+            **effective,
+            "source": source,
+            "required_checks_count": len((effective or {}).get("required_checks") or []),
+        }
+
+    restoration_approvals: list[dict] = []
+    for row in fleet_rows:
+        policies = row.pop("_policies", []) if isinstance(row.get("_policies"), list) else []
+        primary_group = (
+            (row.get("groups") or [None])[0]
+            or row.get("group")
+            or "ungrouped"
+        )
+        baseline = group_baselines.get(str(primary_group or "ungrouped")) or group_baselines.get("ungrouped")
+        drift = compute_sca_drift({**row, "policies": policies}, baseline)
+        row["golden_image_group"] = str(primary_group or "ungrouped")
+        row["golden_image_baseline"] = (
+            {
+                "group": baseline.get("group"),
+                "source": baseline.get("source"),
+                "consensus_ratio": baseline.get("consensus_ratio"),
+                "required_checks_count": baseline.get("required_checks_count"),
+                "agents_observed": baseline.get("agents_observed"),
+                "captured_at_utc": baseline.get("captured_at_utc"),
+            }
+            if isinstance(baseline, dict)
+            else None
+        )
+        row["drift"] = drift
+        if not queue_restoration_approvals or not drift.get("drifted"):
+            continue
+        from api.approvals import create_approval_request_record
+
+        restoration_action = _restoration_action_for_platform(str(row.get("platform") or ""))
+        try:
+            approval = create_approval_request_record(
+                request=request,
+                user=user,
+                agent_id=row["agent_id"],
+                action_id=restoration_action,
+                args={
+                    "mode": "baseline_restore",
+                    "baseline_group": row["golden_image_group"],
+                    "violations": drift.get("violations") or [],
+                },
+                justification="Automatic restoration approval generated from SCA drift against the golden image baseline.",
+                resolved_target_ids=[row["agent_id"]],
+            )
+            row["restoration_approval_id"] = approval.get("approval_id") or approval.get("id")
+            row["restoration_approval"] = approval
+            restoration_approvals.append(
+                {
+                    "agent_id": row["agent_id"],
+                    "group": row["golden_image_group"],
+                    "action_id": restoration_action,
+                    "approval_id": row["restoration_approval_id"],
+                }
+            )
+        except HTTPException as exc:
+            row["restoration_approval_error"] = str(exc.detail)
 
     return {
         "summary": {
@@ -1054,9 +1191,13 @@ def get_fleet_sca_hardening(
             "agents_evaluated": len(fleet_rows),
             "agents_with_errors": sum(1 for row in fleet_rows if str(row.get("error") or "").strip()),
             "agents_with_recommendations": sum(1 for row in fleet_rows if row.get("recommendations")),
+            "agents_with_drift": sum(1 for row in fleet_rows if _as_dict(row.get("drift")).get("drifted")),
             "total_policies": sum(_to_int(row.get("policy_count"), 0) for row in fleet_rows),
             "total_failed_checks": sum(_to_int(_as_dict(row.get("checks_summary")).get("failed"), 0) for row in fleet_rows),
             "fleet_recommendations": len(fleet_recommendations),
+            "fleet_virtual_patch_suggestions": len(fleet_virtual_patch_suggestions),
+            "group_baselines": len(group_baselines),
+            "restoration_approvals": len(restoration_approvals),
             "truncated_agents": max(total_candidates - len(fleet_rows), 0),
         },
         "filters": {
@@ -1069,9 +1210,15 @@ def get_fleet_sca_hardening(
             "checks_limit": checks_limit,
             "recommendation_limit": recommendation_limit,
             "fleet_recommendation_limit": fleet_recommendation_limit,
+            "persist_baseline": bool(persist_baseline),
+            "queue_restoration_approvals": bool(queue_restoration_approvals),
+            "baseline_consensus": baseline_consensus,
         },
         "agents": fleet_rows,
+        "group_baselines": sorted(group_baselines.values(), key=lambda item: str(item.get("group") or "")),
         "fleet_recommendations": fleet_recommendations,
+        "fleet_virtual_patch_suggestions": fleet_virtual_patch_suggestions[:fleet_recommendation_limit],
+        "restoration_approvals": restoration_approvals,
     }
 
 

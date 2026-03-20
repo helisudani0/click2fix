@@ -1,7 +1,9 @@
 import json
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from core.active_defense import build_contextual_approval_policy
 from core.actions import get_action, normalize_args, resolve_action_dispatch
 from core.action_execution import execute_action, resolve_agent_ids
 from core.approval_policy import get_policy
@@ -60,54 +62,64 @@ def _store_execution_targets(conn, execution_id: int, rows) -> None:
         )
 
 
-@router.post("/request")
-async def request_approval(
+def _normalize_target(
+    *,
+    agent_id: str | None,
+    agent_ids,
+    group: str | None,
+) -> tuple[str | None, list[str], str | None]:
+    normalized_agent_id = agent_id
+    normalized_agent_ids: list[str] = []
+    normalized_group = group
+    if agent_ids:
+        normalized_agent_ids = [str(a).strip() for a in agent_ids if str(a).strip()]
+        if not normalized_agent_ids:
+            raise HTTPException(status_code=400, detail="agent_ids must not be empty")
+        normalized_agent_id = "multi:" + ",".join(normalized_agent_ids)
+    if not normalized_agent_id and normalized_group:
+        normalized_agent_id = f"group:{normalized_group}"
+    return normalized_agent_id, normalized_agent_ids, normalized_group
+
+
+def create_approval_request_record(
+    *,
     request: Request,
+    user,
     agent_id: str | None = None,
+    agent_ids=None,
     action_id: str | None = None,
-    args: str | None = None,
+    args: Any = None,
     alert_id: str | None = None,
     case_id: int | None = None,
     group: str | None = None,
     justification: str | None = None,
-    user=Depends(require_role("analyst")),
+    alert_json: Any = None,
+    incident_priority: str | None = None,
+    incident_score: int | None = None,
+    resolved_target_ids: list[str] | None = None,
 ):
-    body = {}
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-
-    agent_id = body.get("agent_id") or agent_id
-    agent_ids = body.get("agent_ids") or body.get("agents")
-    action_id = (
-        body.get("action_id")
-        or body.get("action")
-        or body.get("playbook")
-        or action_id
+    normalized_agent_id, normalized_agent_ids, normalized_group = _normalize_target(
+        agent_id=agent_id,
+        agent_ids=agent_ids,
+        group=group,
     )
-    args = body.get("args") if "args" in body else args
-    alert_id = body.get("alert_id") or alert_id
-    case_id = body.get("case_id") or case_id
-    group = body.get("group") or group
-    alert_json = body.get("alert") or body.get("alert_json")
-    justification = body.get("justification") or justification
-
-    if not action_id or (not agent_id and not group and not agent_ids):
+    if not action_id or (not normalized_agent_id and not normalized_group and not normalized_agent_ids):
         raise HTTPException(status_code=400, detail="action_id and agent_id or group are required")
-
-    if agent_ids:
-        norm_ids = [str(a).strip() for a in agent_ids if str(a).strip()]
-        if not norm_ids:
-            raise HTTPException(status_code=400, detail="agent_ids must not be empty")
-        agent_id = "multi:" + ",".join(norm_ids)
-
-    if not agent_id and group:
-        agent_id = f"group:{group}"
 
     action = get_action(action_id)
     arguments = normalize_args(action, args)
-    policy = get_policy(action_id)
+    resolved_agent_ids = [str(item).strip() for item in (resolved_target_ids or []) if str(item).strip()]
+    if not resolved_agent_ids:
+        resolved_agent_ids = resolve_agent_ids(client, target=normalized_agent_id, group=normalized_group)
+    policy = build_contextual_approval_policy(
+        action_id,
+        target_count=len(resolved_agent_ids),
+        incident_priority=incident_priority,
+        incident_score=incident_score,
+        context={
+            "fleet_wide": bool(normalized_group) or len(resolved_agent_ids) >= 25,
+        },
+    )
     if policy.get("justification_required") and not justification:
         raise HTTPException(status_code=400, detail="justification is required for this action")
 
@@ -125,7 +137,7 @@ async def request_approval(
                 """
             ),
             {
-                "agent": agent_id,
+                "agent": normalized_agent_id,
                 "playbook": action_id,
                 "action": action_id,
                 "args": json.dumps(arguments),
@@ -163,18 +175,18 @@ async def request_approval(
                     "required_count": req.get("count", 1),
                 },
             )
+        from core.case_timeline import case_ids_for_alert, log_case_event
+
         target_cases = []
         if case_id:
             target_cases = [case_id]
         elif alert_id:
-            from core.case_timeline import case_ids_for_alert, log_case_event
-
             target_cases = case_ids_for_alert(alert_id, conn=db)
 
         for cid in target_cases:
             msg = f"Approval requested for action {action_id}"
-            if group:
-                msg += f" on group {group}"
+            if normalized_group:
+                msg += f" on group {normalized_group}"
             log_case_event(
                 cid,
                 "approval_requested",
@@ -192,13 +204,76 @@ async def request_approval(
             actor=requested_by,
             entity_type="approval",
             entity_id=str(approval_id),
-            detail=f"action={action_id}",
+            detail=(
+                f"action={action_id}; target_count={len(resolved_agent_ids)}; "
+                f"dual_auth={'yes' if policy.get('dual_authorization_required') else 'no'}"
+            ),
             org_id=org_id,
             ip_address=request.client.host if request.client else None,
         )
-        return {"status": "submitted", "id": approval_id}
+        return {
+            "status": "submitted",
+            "id": approval_id,
+            "approval_id": approval_id,
+            "target_count": len(resolved_agent_ids),
+            "requirements": policy.get("requirements") or [],
+            "dual_authorization_required": bool(policy.get("dual_authorization_required")),
+            "handshake_required": bool(policy.get("handshake_required")),
+        }
     finally:
         db.close()
+
+
+@router.post("/request")
+async def request_approval(
+    request: Request,
+    agent_id: str | None = None,
+    action_id: str | None = None,
+    args: str | None = None,
+    alert_id: str | None = None,
+    case_id: int | None = None,
+    group: str | None = None,
+    justification: str | None = None,
+    user=Depends(require_role("analyst")),
+):
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    agent_id = body.get("agent_id") or agent_id
+    agent_ids = body.get("agent_ids") or body.get("agents")
+    action_id = (
+        body.get("action_id")
+        or body.get("action")
+        or body.get("playbook")
+        or action_id
+    )
+    args = body.get("args") if "args" in body else args
+    alert_id = body.get("alert_id") or alert_id
+    case_id = body.get("case_id") or case_id
+    group = body.get("group") or group
+    alert_json = body.get("alert") or body.get("alert_json")
+    justification = body.get("justification") or justification
+    incident_priority = body.get("incident_priority") or body.get("priority")
+    incident_score = body.get("incident_score") or body.get("score")
+
+    return create_approval_request_record(
+        request=request,
+        user=user,
+        agent_id=agent_id,
+        agent_ids=agent_ids,
+        action_id=action_id,
+        args=args,
+        alert_id=alert_id,
+        case_id=case_id,
+        group=group,
+        justification=justification,
+        alert_json=alert_json,
+        incident_priority=incident_priority,
+        incident_score=incident_score,
+    )
 
 
 @router.get("/pending")
@@ -241,7 +316,7 @@ def approve(id: int, request: Request, user=Depends(require_role("analyst"))):
         row = db.execute(
             text(
                 """
-                SELECT status, agent, COALESCE(action, playbook) AS action, args, alert_id
+                SELECT status, agent, COALESCE(action, playbook) AS action, args, alert_id, requested_by
                 FROM approvals
                 WHERE id=:id
                 """
@@ -252,20 +327,26 @@ def approve(id: int, request: Request, user=Depends(require_role("analyst"))):
         if not row:
             raise HTTPException(status_code=404, detail="Approval not found")
 
-        status, agent_id, action_id, args, alert_id = row
+        status, agent_id, action_id, args, alert_id, requested_by = row
         if status == "REJECTED":
             return {"status": "rejected"}
         if status == "APPROVED":
             return {"status": "already_approved"}
 
-        action = get_action(action_id)
-        arguments = normalize_args(action, args)
-        dispatch = resolve_action_dispatch(action, arguments)
-
         approved_by = user.get("sub") if isinstance(user, dict) else str(user)
         org_id = user.get("org_id") if isinstance(user, dict) else None
         user_role = user.get("role") if isinstance(user, dict) else None
         user_level = ROLE_LEVELS.get(user_role, 0)
+        policy = get_policy(action_id)
+        if (
+            policy.get("prevent_self_approval", True)
+            and str(requested_by or "").strip()
+            and str(requested_by).strip() == str(approved_by or "").strip()
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Requester cannot approve their own approval request",
+            )
 
         existing = db.execute(
             text(
@@ -389,6 +470,9 @@ def approve(id: int, request: Request, user=Depends(require_role("analyst"))):
         if isinstance(agent_id, str) and agent_id.startswith("group:"):
             group = agent_id.split(":", 1)[1]
         agent_ids = resolve_agent_ids(client, target=agent_id, group=group)
+        action = get_action(action_id)
+        arguments = normalize_args(action, args)
+        dispatch = resolve_action_dispatch(action, arguments)
 
         start = utc_now_naive()
 
@@ -471,7 +555,18 @@ def approve(id: int, request: Request, user=Depends(require_role("analyst"))):
         target_rows = None
 
         try:
-            execution = execute_action(client, action_id, dispatch, agent_ids, execution_id=int(execution_id))
+            execution = execute_action(
+                client,
+                action_id,
+                dispatch,
+                agent_ids,
+                execution_id=int(execution_id),
+                context={
+                    "approval_id": id,
+                    "approval_status": "APPROVED",
+                    "tenant_id": org_id,
+                },
+            )
             stdout = json.dumps(execution.get("result"))
             step_name = execution.get("channel") or "orchestration"
             step_detail = f"channel={execution.get('channel')}; command={execution.get('command_used')}"
@@ -612,11 +707,36 @@ def approve(id: int, request: Request, user=Depends(require_role("analyst"))):
 def reject(id: int, request: Request, user=Depends(require_role("admin"))):
     db = connect()
     try:
+        row = db.execute(
+            text(
+                """
+                SELECT COALESCE(action, playbook) AS action, requested_by, alert_id
+                FROM approvals
+                WHERE id=:id
+                """
+            ),
+            {"id": id},
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Approval not found")
+
+        action_id, requested_by, alert_id = row
+        actor = user.get("sub") if isinstance(user, dict) else str(user)
+        policy = get_policy(action_id)
+        if (
+            policy.get("prevent_self_approval", True)
+            and str(requested_by or "").strip()
+            and str(requested_by).strip() == str(actor or "").strip()
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Requester cannot reject their own approval request",
+            )
+
         db.execute(
             text("UPDATE approvals SET status='REJECTED', decided_at=:decided_at WHERE id=:id"),
             {"decided_at": utc_now_naive(), "id": id},
         )
-        actor = user.get("sub") if isinstance(user, dict) else str(user)
         role = user.get("role") if isinstance(user, dict) else None
         db.execute(
             text(
@@ -629,12 +749,6 @@ def reject(id: int, request: Request, user=Depends(require_role("admin"))):
             {"approval_id": id, "decided_by": actor, "role": role},
         )
         from core.case_timeline import case_ids_for_alert, log_case_event
-        row = db.execute(
-            text("SELECT alert_id, COALESCE(action, playbook) AS action FROM approvals WHERE id=:id"),
-            {"id": id},
-        ).fetchone()
-        alert_id = row[0] if row else None
-        action_id = row[1] if row else None
         agent_row = db.execute(
             text("SELECT agent FROM approvals WHERE id=:id"),
             {"id": id},

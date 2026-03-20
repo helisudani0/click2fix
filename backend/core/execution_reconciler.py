@@ -5,6 +5,7 @@ Implements orphan execution detection and recovery.
 
 from datetime import timedelta
 from sqlalchemy import text
+from core.active_defense import evaluate_agent_silence_tamper
 from db.database import connect
 from core.ws_bus import publish_event
 from core.time_utils import utc_iso_now, utc_now_naive
@@ -77,6 +78,11 @@ def reconcile_orphan_executions(
             
             # If there are no completed steps, this is a true orphan
             if not recent_step:
+                tamper_assessment = evaluate_agent_silence_tamper(agent_id)
+                recovery_stderr = "Execution was in RUNNING state without activity"
+                if tamper_assessment.get("suspected"):
+                    recovery_stderr = str(tamper_assessment.get("reason") or recovery_stderr)
+
                 # Mark execution as FAILED due to timeout
                 db.execute(
                     text(
@@ -103,7 +109,7 @@ def reconcile_orphan_executions(
                         "exec_id": exec_id,
                         "step": "orphan_recovery",
                         "stdout": f"Execution recovered from orphan state (no heartbeat for {timeout_seconds}s)",
-                        "stderr": "Execution was in RUNNING state without activity",
+                        "stderr": recovery_stderr,
                         "status": "FAILED",
                     },
                 )
@@ -119,7 +125,8 @@ def reconcile_orphan_executions(
                         "step": "orphan_recovery",
                         "status": "FAILED",
                         "stdout": f"Execution recovered from orphan state",
-                        "stderr": "Execution was in RUNNING state without activity",
+                        "stderr": recovery_stderr,
+                        "tamper_assessment": tamper_assessment,
                     },
                 )
             else:

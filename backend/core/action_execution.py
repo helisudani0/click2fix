@@ -4,7 +4,27 @@ from typing import Any, Dict, Iterable, List
 
 from fastapi import HTTPException
 
-from core.active_defense import action_requires_approval_handshake, partition_adaptive_window_targets
+try:
+    from core.active_defense import action_requires_approval_handshake, partition_adaptive_window_targets
+except ImportError:  # Backward-compatible fallback for v1.1.x deployments.
+    def action_requires_approval_handshake(*_args, **_kwargs):
+        return False
+
+    def partition_adaptive_window_targets(agent_ids, tenant_id=None):
+        ready = [str(agent_id).strip() for agent_id in (agent_ids or []) if str(agent_id).strip()]
+        return {
+            "ready": ready,
+            "deferred": [],
+            "states": [
+                {
+                    "agent_id": agent_id,
+                    "status": "ready",
+                    "reason": "active_defense_unavailable",
+                    "tenant_id": tenant_id,
+                }
+                for agent_id in ready
+            ],
+        }
 from core.endpoint_executor import EndpointExecutor
 from core.settings import SETTINGS
 from core.ws_bus import publish_event

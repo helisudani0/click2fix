@@ -7,7 +7,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import text
 
-from core.active_defense import action_requires_approval_handshake
+try:
+    from core.active_defense import action_requires_approval_handshake
+except ImportError:  # Backward-compatible fallback for v1.1.x deployments.
+    def action_requires_approval_handshake(*_args, **_kwargs):
+        return False
 from core.actions import get_action, list_actions, normalize_args, resolve_action_dispatch
 from core.action_capability_resolver import capability_resolver
 from core.action_execution import execute_action, orchestration_mode, resolve_agent_ids

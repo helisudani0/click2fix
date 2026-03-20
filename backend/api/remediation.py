@@ -6,7 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy import text
 
-from core.active_defense import action_requires_approval_handshake
+try:
+    from core.active_defense import action_requires_approval_handshake
+except ImportError:  # Backward-compatible fallback for v1.1.x deployments.
+    def action_requires_approval_handshake(*_args, **_kwargs):
+        return False
 from core.actions import get_action, normalize_args, resolve_action_dispatch
 from core.action_execution import execute_action, resolve_agent_ids
 from core.audit import log_audit

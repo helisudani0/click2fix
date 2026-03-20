@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 
+from core.active_defense import predict_alert_storm
 from core.analytics import overview, kill_chain, alert_summary, hourly_volume
 from core.security import current_user
 
@@ -25,4 +26,9 @@ def analytics_alert_summary(alert_id: str, user=Depends(current_user)):
 @router.get("/hourly")
 def analytics_hourly(hours: int = 72, user=Depends(current_user)):
     hours = max(1, min(hours, 720))
-    return {"hours": hours, "series": hourly_volume(hours)}
+    series = hourly_volume(hours)
+    return {
+        "hours": hours,
+        "series": series,
+        "storm_prediction": predict_alert_storm(series),
+    }

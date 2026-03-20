@@ -366,7 +366,11 @@ def test_execute_action_batches_large_endpoint_runs(monkeypatch):
         dispatch={"action_command": "package-update", "arguments": []},
         agent_ids=["001", "002", "003", "004", "005"],
         execution_id=777,
-        context={"_batch_progress_callback": lambda progress: progress_events.append(dict(progress))},
+        context={
+            "approval_id": 777,
+            "approval_status": "APPROVED",
+            "_batch_progress_callback": lambda progress: progress_events.append(dict(progress)),
+        },
     )
 
     assert calls == [["001", "002"], ["003", "004"], ["005"]]

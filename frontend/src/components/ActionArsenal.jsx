@@ -63,6 +63,22 @@ const styles = `
   font-size: 12px;
 }
 
+.category-code {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  padding: 2px 6px;
+  margin-right: var(--space-2);
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
 .category-items {
   display: flex;
   flex-direction: column;
@@ -139,9 +155,9 @@ const styles = `
 `;
 
 const categoryIcon = {
-  Containment: "[C]",
-  Investigation: "[I]",
-  Remediation: "[R]",
+  Containment: "CT",
+  Investigation: "IN",
+  Remediation: "RM",
 };
 
 const actionLabel = (action) => String(action?.label || action?.name || action?.id || "").trim();
@@ -205,7 +221,7 @@ export default function ActionArsenal({
             return (
               <div key={category} className="action-category">
                 <div className="category-header" onClick={() => toggleCategory(category)}>
-                  <span>{categoryIcon[category] || "[> ]"} {category}</span>
+                  <span><span className="category-code">{categoryIcon[category] || "--"}</span>{category}</span>
                   <span className="category-toggle">
                     {expandedCategories[category] ? "-" : "+"}
                   </span>
@@ -221,7 +237,7 @@ export default function ActionArsenal({
                         }`}
                         onClick={() => onActionSelect(action)}
                       >
-                        <div className="action-icon">{categoryIcon[category] || ">"}</div>
+                        <div className="action-icon">{categoryIcon[category] || "--"}</div>
                         <div className="action-name">{actionLabel(action)}</div>
                         {action.description ? (
                           <div className="action-tooltip">{action.description}</div>

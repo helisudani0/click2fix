@@ -131,12 +131,12 @@ const styles = `
   transition: all 150ms cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   overflow: hidden;
-  box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+  box-shadow: 0 12px 24px rgba(79, 150, 255, 0.18);
 }
 
 .run-button:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 4px 30px rgba(59, 130, 246, 0.6);
+  box-shadow: 0 16px 30px rgba(79, 150, 255, 0.24);
 }
 
 .run-button:active:not(:disabled) {
@@ -165,8 +165,15 @@ const styles = `
 }
 
 .empty-chamber-icon {
-  font-size: 32px;
-  opacity: 0.5;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  opacity: 0.8;
 }
 
 .empty-chamber-text {
@@ -219,7 +226,7 @@ export default function ExecutionChamber({
             <h3 className="chamber-title">Execution Chamber</h3>
           </div>
           <div className="empty-chamber">
-            <div className="empty-chamber-icon">{">>"}</div>
+            <div className="empty-chamber-icon">Ready</div>
             <div className="empty-chamber-text">Select an action to begin</div>
           </div>
         </div>

@@ -155,8 +155,15 @@ const styles = `
 }
 
 .empty-state-icon {
-  font-size: 48px;
-  opacity: 0.5;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  opacity: 0.82;
 }
 
 .empty-state-text {
@@ -221,7 +228,7 @@ export default function TacticalMap({
         <div className="agents-table-container">
           {agents.length === 0 ? (
             <div className="empty-state">
-              <div className="empty-state-icon">[ ]</div>
+              <div className="empty-state-icon">Grid</div>
               <div className="empty-state-text">
                 No agents available
                 <br />

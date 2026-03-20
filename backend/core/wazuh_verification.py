@@ -44,6 +44,7 @@ _SCAN_TIMESTAMP_KEYS = (
 )
 _ALREADY_TARGET_STATE_ACTIONS = {"package-update", "software-install-upgrade"}
 _ALREADY_TARGET_STATE_MARKERS = (
+    "reason=already_target_state",
     "reason=version_already_installed",
     "reason=no_applicable_update",
     "message=no_applicable_update",
@@ -172,7 +173,14 @@ def _target_already_at_target_state(action_id: str, row: Dict[str, Any]) -> bool
         and "installed=0" in blob
         and "failed=0" in blob
         and "remaining=0" in blob
-        and "updates_skipped_no_change=" in blob
+    ):
+        return True
+    if (
+        "package update complete: outcome=success" in blob
+        and "failed=0" in blob
+        and "remaining=0" in blob
+        and "unresolved=0" in blob
+        and "skipped=" in blob
     ):
         return True
     return False

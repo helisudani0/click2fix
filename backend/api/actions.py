@@ -70,11 +70,10 @@ def _coerce_custom_os_command_arguments(
     verify_min_build: str = "",
     verify_stdout_contains: str = "",
     run_as_system: bool = False,
-    session_id: str = "",
 ) -> list[str]:
     """
     Enforce the custom-os-command positional schema:
-    [command, verify_kb, verify_min_build, verify_stdout_contains, run_as_system, session_id?]
+    [command, verify_kb, verify_min_build, verify_stdout_contains, run_as_system]
 
     This keeps Global Shell stable even if an older container loads a stale action
     schema that does not yet include optional trailing fields.
@@ -85,9 +84,6 @@ def _coerce_custom_os_command_arguments(
         existing_cmd = str(existing[0] or "").strip()
         if existing_cmd:
             command_value = existing_cmd
-    session_value = str(session_id or "").strip()
-    if not session_value and len(existing) > 5:
-        session_value = str(existing[5] or "").strip()
 
     normalized = [
         command_value,
@@ -96,8 +92,6 @@ def _coerce_custom_os_command_arguments(
         str(verify_stdout_contains or ""),
         "true" if bool(run_as_system) else "false",
     ]
-    if session_value:
-        normalized.append(session_value)
     return normalized
 
 
@@ -487,7 +481,6 @@ def _build_global_shell_dispatch(
     verify_kb: str,
     verify_min_build: str,
     verify_stdout_contains: str,
-    session_id: str = "",
 ) -> tuple[dict[str, Any], list[str]]:
     transport_action_id = "custom-os-command"
     action = get_action(transport_action_id)
@@ -500,7 +493,6 @@ def _build_global_shell_dispatch(
                 "verify_min_build": verify_min_build,
                 "verify_stdout_contains": verify_stdout_contains,
                 "run_as_system": "true" if bool(run_as_system) else "false",
-                "session_id": session_id,
             },
         ),
         command=command_to_run,
@@ -508,7 +500,6 @@ def _build_global_shell_dispatch(
         verify_min_build=verify_min_build,
         verify_stdout_contains=verify_stdout_contains,
         run_as_system=bool(run_as_system),
-        session_id=session_id,
     )
     dispatch = resolve_action_dispatch(action, arguments)
     return dispatch, arguments
@@ -569,7 +560,6 @@ def _run_global_shell_async_job(
     auto_remediate: bool = False,
     max_attempts: int = 1,
     vulnerability_context: dict[str, Any] | None = None,
-    ai_session_id: str = "",
     ai_config: dict[str, Any] | None = None,
     allow_destructive: bool = False,
 ) -> None:
@@ -680,7 +670,6 @@ def _run_global_shell_async_job(
                 verify_kb=current_verify_kb,
                 verify_min_build=current_verify_min_build,
                 verify_stdout_contains=current_verify_stdout_contains,
-                session_id=ai_session_id,
             )
 
             publish_event(
@@ -811,7 +800,6 @@ def _run_global_shell_async_job(
                 shell=shell,
                 execution_result=result_payload,
                 allow_destructive=allow_destructive,
-                session_id=ai_session_id,
                 ai_config=ai_config,
             )
             if not next_attempt:
@@ -1231,7 +1219,6 @@ async def global_shell_assist(request: Request, user=Depends(require_role("admin
     if single_agent:
         scoped_agent_ids = _normalize_agent_id_list([*scoped_agent_ids, single_agent])
     allow_destructive = _to_bool(body.get("allow_destructive"), False)
-    ai_session_id = str(body.get("ai_session_id") or body.get("session_id") or "").strip()
     vulnerability_context = _coerce_vulnerability_context(
         body.get("vulnerability_context") or body.get("vulnerability")
     )
@@ -1247,10 +1234,12 @@ async def global_shell_assist(request: Request, user=Depends(require_role("admin
         shell=shell,
         vulnerability_context=vulnerability_context,
         scoped_agent_ids=scoped_agent_ids,
-        session_id=ai_session_id or None,
         allow_destructive=allow_destructive,
         ai_config=ai_config,
     )
+    if isinstance(plan, dict):
+        plan = dict(plan)
+        plan.pop("session_id", None)
     recommended = plan.get("recommended")
     if not isinstance(recommended, dict) or not str(recommended.get("command") or "").strip():
         raise HTTPException(
@@ -1293,7 +1282,6 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         3 if auto_remediate else 1,
     )
     raw_command = str(body.get("command") or "").strip()
-    ai_session_id = str(body.get("ai_session_id") or body.get("session_id") or "").strip()
     ai_config = _resolve_ai_provider_config(body=body if isinstance(body, dict) else {}, user=user)
 
     run_as_system_explicit = body.get("run_as_system")
@@ -1407,17 +1395,15 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
                 shell=shell,
                 vulnerability_context=effective_context,
                 scoped_agent_ids=selected_ids,
-                session_id=ai_session_id or None,
                 allow_destructive=allow_destructive,
                 ai_config=ai_config,
             )
             if isinstance(planned, dict):
-                assistant_plan = planned
+                assistant_plan = dict(planned)
+                assistant_plan.pop("session_id", None)
                 recommended = planned.get("recommended")
                 if isinstance(recommended, dict):
                     assistant_recommended = recommended
-                if not ai_session_id:
-                    ai_session_id = str(planned.get("session_id") or "").strip()
         except HTTPException as exc:
             if not raw_command:
                 raise
@@ -1472,14 +1458,12 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         verify_kb=verify_kb,
         verify_min_build=verify_min_build,
         verify_stdout_contains=verify_stdout_contains,
-        session_id=ai_session_id,
     )
     actor = user.get("sub") if isinstance(user, dict) else str(user)
     org_id = user.get("org_id") if isinstance(user, dict) else None
 
     assistant_meta = {
         "used": bool(assistant_plan),
-        "session_id": ai_session_id or None,
         "prompt": assistant_prompt,
         "generated_command": bool(assistant_generated_command),
         "auto_remediate": bool(auto_remediate),
@@ -1551,7 +1535,6 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
                 bool(auto_remediate),
                 int(max_attempts),
                 effective_context,
-                ai_session_id,
                 ai_config if isinstance(ai_config, dict) else None,
                 bool(allow_destructive),
             ),
@@ -1598,7 +1581,6 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
             "command": raw_command,
             "command_used": command_to_run,
             "run_as_system": effective_run_as_system,
-            "session_id": ai_session_id or None,
             "execution_id": execution_id,
             "agent_ids": selected_ids,
             "summary": summary,
@@ -1681,7 +1663,6 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
             verify_kb=current_verify_kb,
             verify_min_build=current_verify_min_build,
             verify_stdout_contains=current_verify_stdout_contains,
-            session_id=ai_session_id,
         )
         attempt_ok = False
         failure = ""
@@ -1750,7 +1731,6 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
             shell=shell,
             execution_result=last_result,
             allow_destructive=allow_destructive,
-            session_id=ai_session_id or None,
             ai_config=ai_config,
         )
         if not next_attempt:
@@ -1790,7 +1770,6 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         "command": raw_command,
         "command_used": attempt_records[-1].get("command_used") if attempt_records else command_to_run,
         "run_as_system": effective_run_as_system,
-        "session_id": ai_session_id or None,
         "channel": last_execution.get("channel") if isinstance(last_execution, dict) else "endpoint",
         "mode": last_execution.get("mode") if isinstance(last_execution, dict) else "endpoint",
         "attempts": [row.get("command") for row in attempt_records if row.get("command")],

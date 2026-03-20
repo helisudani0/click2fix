@@ -54,18 +54,19 @@ def test_effective_timeout_extends_long_running_global_shell_commands():
     )
 
 
-def test_custom_os_command_script_executes_uploaded_file_directly():
+def test_custom_os_command_script_executes_encoded_powershell_payload():
     executor = _executor()
 
     script = executor._windows_action_script_content("custom-os-command")
 
-    assert "function C2F-RunCommandFile" in script
-    assert "& $CommandFile 2>&1 | Out-String" in script
-    assert "C2F-RunCommandFile -CommandPath $CommandFile" in script
+    assert "function C2F-LoadCommandPayload" in script
+    assert "function C2F-RunEncodedCommand" in script
+    assert '-EncodedCommand", $EncodedCommand' in script
+    assert "C2F-RunEncodedCommand -EncodedCommand $encodedCommand" in script
     assert "ScriptBlock]::Create($CommandText)" not in script
-    assert "[string]$SessionId = \"\"" in script
-    assert "C2F-ImportSessionState" in script
-    assert "C2F-ExportSessionState" in script
+    assert "[string]$SessionId" not in script
+    assert "C2F-ImportSessionState" not in script
+    assert "C2F-ExportSessionState" not in script
 
 
 def test_windows_custom_command_normalization_unwraps_powershell_command():
@@ -105,6 +106,7 @@ def test_package_update_script_contains_winget_bootstrap_path():
     assert "Automatic App Installer/Repair-WinGetPackageManager bootstrap was attempted" in script
     assert "post_verify_fresh_install_present_no_version" in script
     assert "post_verify_present_after_unknown_before" in script
+    assert "reason=already_target_state" in script
     assert "afterInstalledDetected = (($afterRows -and $afterRows.Count -gt 0) -or $afterArpPresent)" in script
     assert "if (Test-C2FNoiseLine $lineNorm) { continue }" in script
     assert "$skippedNoChange++" in script
@@ -116,18 +118,15 @@ def test_global_shell_requires_endpoint_transport():
     assert _requires_endpoint_transport("firewall-drop", {"action_command": "firewall-drop"}) is False
 
 
-def test_custom_os_command_arguments_keep_blank_session_optional():
+def test_custom_os_command_arguments_drop_legacy_session_values():
     args = _coerce_custom_os_command_arguments([], command="Write-Host hi")
     assert args == ["Write-Host hi", "", "", "", "false"]
-
-    with_session = _coerce_custom_os_command_arguments([], command="Write-Host hi", session_id=" session-1 ")
-    assert with_session == ["Write-Host hi", "", "", "", "false", "session-1"]
 
     preserved = _coerce_custom_os_command_arguments(
         ["Write-Host hi", "", "", "", "false", "session-2"],
         command="Write-Host hi",
     )
-    assert preserved == ["Write-Host hi", "", "", "", "false", "session-2"]
+    assert preserved == ["Write-Host hi", "", "", "", "false"]
 
 
 def test_async_global_shell_builds_dispatch_for_powershell(monkeypatch):
@@ -186,13 +185,55 @@ def test_async_global_shell_builds_dispatch_for_powershell(monkeypatch):
         selected_ids=["001"],
         raw_command="Write-Host hi",
         run_as_system=False,
-        ai_session_id="session-1",
         ai_config={"provider": "openai", "model": "test-model"},
     )
 
     assert dispatch_calls
     assert dispatch_calls[0]["command_to_run"] == "Write-Host hi"
-    assert dispatch_calls[0]["session_id"] == "session-1"
+    assert "session_id" not in dispatch_calls[0]
+
+
+def test_execute_serializes_custom_os_command_targets():
+    executor = EndpointExecutor.__new__(EndpointExecutor)
+    executor.max_workers = 8
+    executor.stop_on_error = False
+    executor.windows_patch_stagger_seconds = 0
+    executor.windows_patch_stagger_min_targets = 5
+
+    target_rows = {
+        "001": {"agent_id": "001", "agent_name": "alpha", "ip": "10.0.0.1", "platform": "windows"},
+        "002": {"agent_id": "002", "agent_name": "beta", "ip": "10.0.0.2", "platform": "windows"},
+        "003": {"agent_id": "003", "agent_name": "gamma", "ip": "10.0.0.3", "platform": "windows"},
+    }
+    order = []
+
+    executor._build_agent_lookup = lambda agent_ids: {agent_id: {} for agent_id in agent_ids}
+    executor._resolve_agent_target = lambda agent_id, agent_lookup=None: target_rows[agent_id]
+    executor._guard_task_ingestion_for_memory = lambda *_args, **_kwargs: None
+
+    def _fake_execute_target(action_id, action_args, target, context):
+        order.append(target["agent_id"])
+        return {
+            "agent_id": target["agent_id"],
+            "agent_name": target["agent_name"],
+            "target_ip": target["ip"],
+            "platform": target["platform"],
+            "ok": True,
+            "stdout": f"ok-{target['agent_id']}",
+            "stderr": "",
+        }
+
+    executor._execute_target = _fake_execute_target
+
+    result = executor.execute(
+        action_id="custom-os-command",
+        action_args=["Write-Host hi"],
+        agent_ids=["001", "002", "003"],
+        context={},
+    )
+
+    assert order == ["001", "002", "003"]
+    assert [row["agent_id"] for row in result["results"]] == ["001", "002", "003"]
 
 
 def test_post_action_verification_short_circuits_already_satisfied_package_targets():
@@ -218,3 +259,23 @@ def test_post_action_verification_short_circuits_already_satisfied_package_targe
     assert state["ok"] is True
     assert state["pending"] is False
     assert state["execution_status"] is None
+
+
+def test_post_action_verification_short_circuits_already_target_state_marker():
+    verifier = PostActionVerificationLoop(client=object())
+
+    result = verifier.verify_targets(
+        "software-install-upgrade",
+        278,
+        [
+            {
+                "agent_id": "002",
+                "ok": True,
+                "stdout": "skipped_update_0=Notepad++.Notepad++|Notepad++|reason=already_target_state|installed_before=8.7.2",
+                "stderr": "",
+            }
+        ],
+    )
+
+    assert result["ok"] is True
+    assert result["strategy"] == "already_at_target_state_short_circuit"

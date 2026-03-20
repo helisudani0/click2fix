@@ -388,9 +388,6 @@ active_response:
         - name: "run_as_system"
           label: "Run As SYSTEM (Windows, optional)"
           placeholder: "true | false"
-        - name: "session_id"
-          label: "Session ID (optional)"
-          placeholder: "Persist shell variables across runs"
       docs:
         what_it_does: "Executes the exact command payload on selected endpoints."
         when_to_use: "Internal path for Global Shell and generated fallback command execution."
@@ -432,12 +429,6 @@ active_response:
             type: "boolean"
             required: false
             description: "Run in SYSTEM scheduled-task context (Windows only)"
-          - field: "session_id"
-            type: "string"
-            required: false
-            min_length: 3
-            max_length: 128
-            description: "Optional session id used to persist PowerShell variables between runs"
     - id: "collect-forensics"
       label: "Collect Forensics"
       description: "Investigation: collect triage package from endpoint."

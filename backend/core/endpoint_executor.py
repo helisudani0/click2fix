@@ -2147,6 +2147,18 @@ class EndpointExecutor:
 				      $idx++
 				      continue
 				    }
+				    if ($allowInstall -and (-not $Version) -and $installedDetected) {
+				      $pendingBefore = $true
+				      try { $pendingBefore = Test-C2FWingetPendingUpgrade -PackageId $lookupId } catch { $pendingBefore = $true }
+				      if ($pendingBefore -eq $false) {
+				        $skipped++
+				        $noChangeHits++
+				        $skippedNoChange++
+				        C2F-Evidence ("skipped_update_" + $idx + "=" + $lookupId + "|" + $disp + "|reason=already_target_state|installed_before=" + $installedBefore)
+				        $idx++
+				        continue
+				      }
+				    }
 				    if ($Version -and $Version -ne "" -and $installedDetected) {
 				      $desiredNorm = Normalize-C2FToken $Version
 				      if ($desiredNorm) {
@@ -2578,7 +2590,6 @@ class EndpointExecutor:
 			  [string]$VerifyMinBuild = "",
 			  [string]$VerifyStdoutContains = "",
 			  [string]$RunAsSystem = "false",
-			  [string]$SessionId = "",
 			  [int]$MaxRuntimeSeconds = 1800
 			)
 
@@ -2644,84 +2655,64 @@ class EndpointExecutor:
 			  return 0
 			}
 
-				function C2F-RunCommandFile {
-				  param([string]$CommandPath, [bool]$PersistSession = $false)
-				  $global:LASTEXITCODE = 0
-				  if ($PersistSession) {
-				    $rawOut = (. $CommandPath 2>&1 | Out-String)
-				  } else {
-				    $rawOut = (& $CommandPath 2>&1 | Out-String)
+				function C2F-LoadCommandPayload {
+				  param([string]$CommandPath)
+				  $payloadRaw = [string](Get-Content -Path $CommandPath -Raw -ErrorAction Stop)
+				  $payloadTrimmed = $payloadRaw.Trim()
+				  if (-not $payloadTrimmed) {
+				    throw "custom-os-command requires command argument"
 				  }
-				  $code = 0
-				  if ($LASTEXITCODE -ne $null) {
-				    try { $code = [int]$LASTEXITCODE } catch { $code = 1 }
+				  $commandText = ""
+				  $encodedPayload = ""
+				  if ($payloadTrimmed.StartsWith("C2FENC:", [System.StringComparison]::OrdinalIgnoreCase)) {
+				    $encodedPayload = $payloadTrimmed.Substring(7).Trim()
+				    if (-not $encodedPayload) {
+				      throw "custom-os-command requires command argument"
+				    }
+				    try {
+				      $commandText = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encodedPayload))
+				    } catch {
+				      throw "custom-os-command encoded payload is invalid"
+				    }
+				  }
+				  if (-not $commandText) {
+				    $commandText = [string]$payloadRaw
+				    $encodedPayload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
 				  }
 				  return @{
-				    rc = $code
-				    output = [string]$rawOut
+				    command = [string]$commandText
+				    encoded = [string]$encodedPayload
 				  }
 				}
 
-				function C2F-SessionFilePath {
-				  param([string]$Id)
-				  $clean = ([string]$Id).Trim()
-				  if (-not $clean) { return "" }
-				  $safe = -join ($clean.ToCharArray() | Where-Object { [char]::IsLetterOrDigit($_) -or $_ -in @('-','_','.') })
-				  if (-not $safe) { return "" }
-				  $root = "C:\Click2Fix\shell-sessions"
-				  return (Join-Path $root ($safe + ".clixml"))
-				}
-
-				function C2F-ImportSessionState {
-				  param([string]$Id)
-				  $path = C2F-SessionFilePath -Id $Id
-				  if (-not $path -or -not (Test-Path -LiteralPath $path)) { return }
+				function C2F-RunEncodedCommand {
+				  param(
+				    [string]$EncodedCommand,
+				    [int]$TimeoutSeconds = 1800
+				  )
+				  $stdoutPath = Join-Path $env:TEMP ("c2f-shell-" + [guid]::NewGuid().ToString("N") + ".stdout.txt")
+				  $stderrPath = Join-Path $env:TEMP ("c2f-shell-" + [guid]::NewGuid().ToString("N") + ".stderr.txt")
 				  try {
-				    $state = Import-Clixml -Path $path -ErrorAction Stop
-				    $restored = 0
-				    foreach ($entry in @($state.variables)) {
-				      $name = [string]$entry.Name
-				      if (-not $name) { continue }
-				      if ($name -match '^(?i:C2F_|PSScriptRoot|PSCommandPath|MyInvocation|input|args|Error|LASTEXITCODE|Matches|PSBoundParameters|ExecutionContext|PWD|HOME|PID|PROFILE|Host|ShellId|PSVersionTable|true|false|null)$') { continue }
-				      try {
-				        Set-Variable -Name $name -Value $entry.Value -Scope Script -Force -ErrorAction Stop
-				        $restored++
-				      } catch { }
+				    $proc = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $EncodedCommand) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+				    $deadline = (Get-Date).AddSeconds([Math]::Max(30, [int]$TimeoutSeconds))
+				    while ($proc -and (-not $proc.HasExited)) {
+				      $proc.WaitForExit(2000) | Out-Null
+				      if ((Get-Date) -ge $deadline) {
+				        try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch { }
+				        throw ("custom-os-command timed out after " + [string]$TimeoutSeconds + "s")
+				      }
 				    }
-				    $cwd = [string]$state.cwd
-				    if ($cwd -and (Test-Path -LiteralPath $cwd)) {
-				      try { Set-Location -LiteralPath $cwd } catch { }
+				    $stdoutText = ""
+				    $stderrText = ""
+				    try { if (Test-Path -LiteralPath $stdoutPath) { $stdoutText = [string](Get-Content -Path $stdoutPath -Raw -ErrorAction SilentlyContinue) } } catch { }
+				    try { if (Test-Path -LiteralPath $stderrPath) { $stderrText = [string](Get-Content -Path $stderrPath -Raw -ErrorAction SilentlyContinue) } } catch { }
+				    $combined = @($stdoutText, $stderrText) | Where-Object { $_ -and $_.Trim() }
+				    return @{
+				      rc = [int]($proc.ExitCode)
+				      output = [string]([string]::Join([Environment]::NewLine, $combined))
 				    }
-				    C2F-Evidence ("session_restore=true|session_id=" + $Id + "|variables=" + [string]$restored)
-				  } catch {
-				    C2F-Evidence ("session_restore=false|session_id=" + $Id + "|error=" + [string]$_.Exception.Message)
-				  }
-				}
-
-				function C2F-ExportSessionState {
-				  param([string]$Id)
-				  $path = C2F-SessionFilePath -Id $Id
-				  if (-not $path) { return }
-				  try {
-				    $dir = Split-Path -Parent $path
-				    if ($dir) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-				    $vars = @()
-				    foreach ($var in (Get-Variable)) {
-				      $name = [string]$var.Name
-				      if (-not $name) { continue }
-				      if ($var.Options.ToString() -match 'Constant|ReadOnly') { continue }
-				      if ($name -match '^(?i:C2F_|PSScriptRoot|PSCommandPath|MyInvocation|input|args|Error|LASTEXITCODE|Matches|PSBoundParameters|ExecutionContext|PWD|HOME|PID|PROFILE|Host|ShellId|PSVersionTable|true|false|null)$') { continue }
-				      try {
-				        $vars += [pscustomobject]@{ Name = $name; Value = $var.Value }
-				      } catch { }
-				    }
-				    [pscustomobject]@{
-				      cwd = (Get-Location).Path
-				      variables = $vars
-				    } | Export-Clixml -Path $path -Force
-				    C2F-Evidence ("session_persist=true|session_id=" + $Id + "|variables=" + [string]$vars.Count)
-				  } catch {
-				    C2F-Evidence ("session_persist=false|session_id=" + $Id + "|error=" + [string]$_.Exception.Message)
+				  } finally {
+				    try { Remove-Item -Path $stdoutPath,$stderrPath -Force -ErrorAction SilentlyContinue } catch { }
 				  }
 				}
 
@@ -2867,31 +2858,24 @@ class EndpointExecutor:
 		    throw ("custom-os-command command file missing: " + $CommandFile)
 		  }
 
-		  $cmd = [string](Get-Content -Path $CommandFile -Raw -ErrorAction Stop)
-		  if (-not $cmd -or -not $cmd.Trim()) {
-		    throw "custom-os-command requires command argument"
-		  }
-
-			  $safe = $cmd.Replace("|", "/").Replace("`r", " ").Replace("`n", " ")
-			  if ($safe.Length -gt 220) { $safe = $safe.Substring(0, 220) + "..." }
-			  C2F-Evidence ("custom_command=" + $safe)
-			  C2F-Evidence ("run_as_system=" + [string]$RunAsSystem)
-			  $sessionKey = [string]$SessionId
-			  $sessionKey = $sessionKey.Trim()
-			  if ($sessionKey) {
-			    C2F-ImportSessionState -Id $sessionKey
+			  $payload = C2F-LoadCommandPayload -CommandPath $CommandFile
+			  $cmd = [string]$payload.command
+			  $encodedCommand = [string]$payload.encoded
+			  if (-not $cmd -or -not $cmd.Trim()) {
+			    throw "custom-os-command requires command argument"
 			  }
 
-					  $run = C2F-RunCommandFile -CommandPath $CommandFile -PersistSession:([bool]$sessionKey)
-				  $out = [string]$run.output
-				  # Some native tools emit UTF-16/UTF-8 mixed output with embedded nulls.
-				  # Normalize early so history/output previews remain readable.
-				  $out = ($out -replace "`0", "")
-				  $rc = [int]$run.rc
-				  if ($sessionKey) {
-				    C2F-ExportSessionState -Id $sessionKey
-				  }
-			  if ($rc -ne 0) {
+				  $safe = $cmd.Replace("|", "/").Replace("`r", " ").Replace("`n", " ")
+				  if ($safe.Length -gt 220) { $safe = $safe.Substring(0, 220) + "..." }
+				  C2F-Evidence ("custom_command=" + $safe)
+				  C2F-Evidence ("run_as_system=" + [string]$RunAsSystem)
+				  $run = C2F-RunEncodedCommand -EncodedCommand $encodedCommand -TimeoutSeconds $MaxRuntimeSeconds
+					  $out = [string]$run.output
+					  # Some native tools emit UTF-16/UTF-8 mixed output with embedded nulls.
+					  # Normalize early so history/output previews remain readable.
+					  $out = ($out -replace "`0", "")
+					  $rc = [int]$run.rc
+				  if ($rc -ne 0) {
 			    $errOut = [string]$out
 			    $hint = ""
 			    $cmdLower = ([string]$cmd).ToLowerInvariant()
@@ -5518,26 +5502,20 @@ catch {
         ctx = context or {}
         event_sink = ctx.get("_event_sink") if isinstance(ctx, dict) and callable(ctx.get("_event_sink")) else None
         aid = str(action_id or "").strip().lower()
+        force_serial = aid in {"custom-os-command"}
         stagger_actions = {"patch-windows", "windows-os-update", "fleet-software-update", "package-update"}
         use_stagger = (
             aid in stagger_actions
             and self.windows_patch_stagger_seconds > 0
             and len(targets) >= self.windows_patch_stagger_min_targets
         )
-
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {}
+        if force_serial:
             for idx, target in enumerate(targets):
                 self._guard_task_ingestion_for_memory(aid, event_sink=event_sink)
                 if use_stagger and idx > 0:
                     time.sleep(self.windows_patch_stagger_seconds)
-                fut = pool.submit(self._execute_target, action_id, action_args, target, ctx)
-                futures[fut] = target
-
-            for fut in as_completed(futures):
-                target = futures[fut]
                 try:
-                    result = fut.result()
+                    result = self._execute_target(action_id, action_args, target, ctx)
                 except Exception as exc:
                     result = {
                         "agent_id": target["agent_id"],
@@ -5553,10 +5531,42 @@ catch {
                     try:
                         on_progress(result)
                     except Exception:
-                        # Streaming/progress hooks must never break execution.
                         pass
                 if self.stop_on_error and not result["ok"]:
                     break
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {}
+                for idx, target in enumerate(targets):
+                    self._guard_task_ingestion_for_memory(aid, event_sink=event_sink)
+                    if use_stagger and idx > 0:
+                        time.sleep(self.windows_patch_stagger_seconds)
+                    fut = pool.submit(self._execute_target, action_id, action_args, target, ctx)
+                    futures[fut] = target
+
+                for fut in as_completed(futures):
+                    target = futures[fut]
+                    try:
+                        result = fut.result()
+                    except Exception as exc:
+                        result = {
+                            "agent_id": target["agent_id"],
+                            "agent_name": target["agent_name"],
+                            "target_ip": target["ip"],
+                            "platform": target["platform"],
+                            "ok": False,
+                            "stdout": "",
+                            "stderr": str(exc),
+                        }
+                    results.append(result)
+                    if on_progress:
+                        try:
+                            on_progress(result)
+                        except Exception:
+                            # Streaming/progress hooks must never break execution.
+                            pass
+                    if self.stop_on_error and not result["ok"]:
+                        break
 
         success = sum(1 for r in results if r["ok"])
         failed = len(results) - success
@@ -5875,7 +5885,7 @@ catch {
                         + ".ps1"
                     )
                     try:
-                        self._upload_windows_script(target, command_file, normalized_command)
+                        self._upload_windows_script(target, command_file, "C2FENC:" + _ps_encoded_command(normalized_command))
                     except Exception as exc:
                         return {
                             "agent_id": target["agent_id"],
@@ -5892,7 +5902,6 @@ catch {
                     task_args["VerifyMinBuild"] = action_args[2] if len(action_args) > 2 else ""
                     task_args["VerifyStdoutContains"] = action_args[3] if len(action_args) > 3 else ""
                     task_args["RunAsSystem"] = _bool(action_args[4] if len(action_args) > 4 else False, False)
-                    task_args["SessionId"] = action_args[5] if len(action_args) > 5 else ""
                     task_args["MaxRuntimeSeconds"] = max(180, int(timeout_seconds))
 
                 try:
@@ -6158,7 +6167,7 @@ catch {
         )
         try:
             self._ensure_windows_action_script(target, "custom-os-command")
-            self._upload_windows_script(target, command_file, command)
+            self._upload_windows_script(target, command_file, "C2FENC:" + _ps_encoded_command(command))
             task_args: Dict[str, Any] = {
                 "CommandFile": command_file,
                 "VerifyKb": kb,
@@ -6577,7 +6586,6 @@ catch {
                 "VerifyKb": "",
                 "VerifyMinBuild": "",
                 "VerifyStdoutContains": "",
-                "SessionId": "",
                 "MaxRuntimeSeconds": 1800,
             },
         }
@@ -7485,17 +7493,18 @@ catch {
         if aid == "custom-os-command":
             if not args or not str(args[0]).strip():
                 raise HTTPException(status_code=400, detail="custom-os-command requires command argument")
-            cmd = _ps_quote(self._normalize_windows_custom_command(args[0]))
+            normalized_cmd = self._normalize_windows_custom_command(args[0])
+            cmd = _ps_quote(normalized_cmd)
+            encoded_cmd = _ps_quote(_ps_encoded_command(normalized_cmd))
             verify_kb = _ps_quote(args[1] if len(args) > 1 else "")
             verify_min_build = _ps_quote(args[2] if len(args) > 2 else "")
             verify_stdout_contains = _ps_quote(args[3] if len(args) > 3 else "")
-            session_id = _ps_quote(args[5] if len(args) > 5 else "")
             inner = (
                 f"$cmd={cmd};"
+                f"$encoded={encoded_cmd};"
                 f"$verifyKbRaw={verify_kb};"
                 f"$verifyBuild={verify_min_build};"
                 f"$verifyContains={verify_stdout_contains};"
-                f"$sessionId={session_id};"
                 "if(-not $cmd){ throw 'custom-os-command requires command argument'; };"
                 "function C2F-CompareBuild { param([string]$Current,[string]$Required) "
                 "$cParts=@(); foreach($part in ($Current -split '\\.')){ if($part -match '^\\d+$'){ $cParts += [int]$part } };"
@@ -7513,18 +7522,18 @@ catch {
                 "$safe=$cmd.Replace('|','/');"
                 "if($safe.Length -gt 220){ $safe=$safe.Substring(0,220)+'...' };"
                 "C2F-Evidence ('custom_command='+$safe);"
-                "$cmdDir='C:\\\\Click2Fix\\\\scripts\\\\inputs';"
-                "New-Item -ItemType Directory -Path $cmdDir -Force | Out-Null;"
-                "$cmdFile=Join-Path $cmdDir ('inline-custom-'+$c2fExec+'-'+[guid]::NewGuid().ToString('N')+'.ps1');"
-                "Set-Content -Path $cmdFile -Value $cmd -Encoding UTF8;"
-                "$global:LASTEXITCODE=0;"
+                "$stdoutPath=Join-Path $env:TEMP ('c2f-inline-'+[guid]::NewGuid().ToString('N')+'.stdout.txt');"
+                "$stderrPath=Join-Path $env:TEMP ('c2f-inline-'+[guid]::NewGuid().ToString('N')+'.stderr.txt');"
                 "try {"
-                "$out=(& $cmdFile 2>&1 | Out-String);"
-                "$rc=0;"
-                "if($LASTEXITCODE -ne $null){ try{ $rc=[int]$LASTEXITCODE } catch { $rc=1 } };"
+                "$proc=Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand',$encoded) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath;"
+                "$proc.WaitForExit();"
+                "$out=''; if(Test-Path $stdoutPath){ $out=[string](Get-Content -Path $stdoutPath -Raw -ErrorAction SilentlyContinue) };"
+                "$errOut=''; if(Test-Path $stderrPath){ $errOut=[string](Get-Content -Path $stderrPath -Raw -ErrorAction SilentlyContinue) };"
+                "if($errOut){ if($out){ $out=$out+[Environment]::NewLine+$errOut } else { $out=$errOut } };"
+                "$rc=[int]$proc.ExitCode;"
                 "if($rc -ne 0){ throw ('custom-os-command failed rc='+$rc+' output='+$out) };"
                 "} finally {"
-                "try { Remove-Item -Path $cmdFile -Force -ErrorAction SilentlyContinue } catch { }"
+                "try { Remove-Item -Path $stdoutPath,$stderrPath -Force -ErrorAction SilentlyContinue } catch { }"
                 "};"
                 "$verifyKbRaw=($verifyKbRaw -replace '(?i)^\\s*kb','KB').Trim();"
                 "if($verifyKbRaw){"

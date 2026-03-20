@@ -8,6 +8,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from api import actions as actions_api  # noqa: E402
 from api.actions import _coerce_custom_os_command_arguments  # noqa: E402
 from core.action_execution import _requires_endpoint_transport  # noqa: E402
 from core.endpoint_executor import (  # noqa: E402
@@ -127,6 +128,71 @@ def test_custom_os_command_arguments_keep_blank_session_optional():
         command="Write-Host hi",
     )
     assert preserved == ["Write-Host hi", "", "", "", "false", "session-2"]
+
+
+def test_async_global_shell_builds_dispatch_for_powershell(monkeypatch):
+    class _DummyResult:
+        def __init__(self, scalar_value=None):
+            self._scalar_value = scalar_value
+
+        def scalar(self):
+            return self._scalar_value
+
+    class _DummyDB:
+        def execute(self, *_args, **_kwargs):
+            return _DummyResult(None)
+
+        def commit(self):
+            return None
+
+        def close(self):
+            return None
+
+    dispatch_calls = []
+
+    monkeypatch.setattr(actions_api, "connect", lambda: _DummyDB())
+    monkeypatch.setattr(actions_api, "publish_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(actions_api, "_store_execution_targets", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        actions_api,
+        "enforce_command_safety",
+        lambda *_args, **_kwargs: {"risk_score": 0, "reasons": []},
+    )
+
+    def _fake_build_dispatch(**kwargs):
+        dispatch_calls.append(kwargs)
+        return {"transport": "custom-os-command"}, ["Write-Host hi", "", "", "", "false"]
+
+    monkeypatch.setattr(actions_api, "_build_global_shell_dispatch", _fake_build_dispatch)
+    monkeypatch.setattr(
+        actions_api,
+        "execute_action",
+        lambda *_args, **_kwargs: {
+            "channel": "endpoint",
+            "mode": "endpoint",
+            "result": {
+                "success": 1,
+                "failed": 0,
+                "total": 1,
+                "results": [{"agent_id": "001", "ok": True, "stdout": "ok", "stderr": ""}],
+            },
+        },
+    )
+
+    actions_api._run_global_shell_async_job(
+        execution_id=999,
+        action_id="global-shell",
+        shell="powershell",
+        selected_ids=["001"],
+        raw_command="Write-Host hi",
+        run_as_system=False,
+        ai_session_id="session-1",
+        ai_config={"provider": "openai", "model": "test-model"},
+    )
+
+    assert dispatch_calls
+    assert dispatch_calls[0]["command_to_run"] == "Write-Host hi"
+    assert dispatch_calls[0]["session_id"] == "session-1"
 
 
 def test_post_action_verification_short_circuits_already_satisfied_package_targets():

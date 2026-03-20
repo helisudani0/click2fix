@@ -1,7 +1,7 @@
 import json
 import logging
-import re
 import threading
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import text
@@ -11,6 +11,14 @@ from core.action_capability_resolver import capability_resolver
 from core.action_execution import execute_action, orchestration_mode, resolve_agent_ids
 from core.audit import log_audit
 from core.endpoint_executor import EndpointExecutor
+from core.global_shell_ai import (
+    enforce_command_safety,
+    build_command_assistant_plan,
+    next_command_from_failure,
+    summarize_failure_from_result,
+    vulnerability_matches_record,
+)
+from core.indexer_client import IndexerClient
 from core.security import require_role
 from core.time_utils import utc_now_naive
 from core.wazuh_client import WazuhClient
@@ -19,11 +27,15 @@ from db.database import connect
 
 router = APIRouter(prefix="/actions")
 client = WazuhClient()
+indexer = IndexerClient()
 logger = logging.getLogger(__name__)
 
 _FLEET_TARGETS = {"all", "*", "fleet", "all-active"}
 _CONNECTED_STATUSES = {"active", "connected", "online"}
 _GLOBAL_SHELL_MAX_COMMAND_CHARS = 20000
+_GLOBAL_SHELL_MAX_ASSIST_ATTEMPTS = 8
+_AI_REMEDIATION_CONFIG_KEY = "ai_remediation"
+_ALLOWED_AI_PROVIDERS = {"openai"}
 
 
 def _ps_single_quoted(value: str) -> str:
@@ -48,309 +60,6 @@ def _wrap_cmd_for_powershell(raw_command: str) -> str:
     return f"$c={_ps_single_quoted(raw)}; cmd.exe /d /s /c $c"
 
 
-def _build_windows_discovery_upgrade_command(package_target: str) -> str:
-    hint = str(package_target or "").strip()
-    if not hint:
-        return ""
-    needle_literal = _ps_single_quoted(hint)
-    return (
-        "$ErrorActionPreference='Stop';"
-        "$ProgressPreference='SilentlyContinue';"
-        f"$needles=@({needle_literal});"
-        "function C2F-ParseWinget([string]$txt,[bool]$isUpgrade){"
-        "  $rows=@();"
-        "  foreach($line in ($txt -split \"`r?`n\")){"
-        "    $trim=[string]$line; if(-not $trim){ continue };"
-        "    $parts=[regex]::Split($trim.Trim(), '\\s{2,}') | Where-Object { $_ -ne '' };"
-        "    if($isUpgrade){"
-        "      if($parts.Count -ge 4 -and $parts[1] -and $parts[1] -ne 'Id'){ $rows += [pscustomobject]@{Name=$parts[0];Id=$parts[1];Installed=$parts[2];Available=$parts[3]} }"
-        "    } else {"
-        "      if($parts.Count -ge 2 -and $parts[1] -and $parts[1] -ne 'Id'){ $rows += [pscustomobject]@{Name=$parts[0];Id=$parts[1];Installed='';Available=''} }"
-        "    }"
-        "  };"
-        "  return $rows;"
-        "};"
-        "function C2F-Match([object[]]$rows,[string[]]$needles){"
-        "  foreach($needle in $needles){"
-        "    if(-not $needle){ continue };"
-        "    $k=$needle.ToLower();"
-        "    $hit=$rows | Where-Object { ([string]$_.Id).ToLower() -eq $k -or ([string]$_.Name).ToLower() -eq $k -or ([string]$_.Id).ToLower().Contains($k) -or ([string]$_.Name).ToLower().Contains($k) } | Select-Object -First 1;"
-        "    if($hit){ return $hit };"
-        "  };"
-        "  return $null;"
-        "};"
-        "function C2F-TryWinget([string[]]$needles){"
-        "  if(-not (Get-Command winget -ErrorAction SilentlyContinue)){ return $false };"
-        "  $upgradeRows=@();"
-        "  try { $uo=(& winget upgrade --source winget 2>&1 | Out-String); $upgradeRows=C2F-ParseWinget $uo $true } catch { };"
-        "  $hit=C2F-Match $upgradeRows $needles;"
-        "  if(-not $hit){"
-        "    foreach($needle in $needles){"
-        "      if(-not $needle){ continue };"
-        "      try { $so=(& winget search --source winget --query $needle 2>&1 | Out-String); $rows=C2F-ParseWinget $so $false; $hit=C2F-Match $rows @($needle) } catch { };"
-        "      if($hit){ break };"
-        "    };"
-        "  };"
-        "  if(-not $hit){ return $false };"
-        "  $resolvedId=[string]$hit.Id;"
-        "  if(-not $resolvedId){ return $false };"
-        "  $available=[string]$hit.Available;"
-        "  $args=@('upgrade','--id',$resolvedId,'--exact','--silent','--accept-package-agreements','--accept-source-agreements');"
-        "  if($available -and $available -notmatch '^(?i)(unknown|n/a|-)$'){ $args += @('--version',$available) };"
-        "  & winget @args | Out-Host;"
-        "  if($LASTEXITCODE -eq 0){ Write-Output ('C2F_UPGRADE winget id='+$resolvedId+' avail='+$available); return $true };"
-        "  if($resolvedId -eq 'Microsoft.AppInstaller'){"
-        "    try {"
-        "      $appx=Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller -ErrorAction SilentlyContinue | Sort-Object Version -Descending | Select-Object -First 1;"
-        "      if($appx -and $appx.InstallLocation){"
-        "        $manifest=Join-Path $appx.InstallLocation 'AppxManifest.xml';"
-        "        if(Test-Path $manifest){"
-        "          Add-AppxPackage -DisableDevelopmentMode -Register $manifest -ErrorAction SilentlyContinue | Out-Null;"
-        "          Start-Sleep -Seconds 2;"
-        "          & winget @args | Out-Host;"
-        "          if($LASTEXITCODE -eq 0){ Write-Output ('C2F_UPGRADE winget id='+$resolvedId+' avail='+$available+' fallback=appx-register'); return $true };"
-        "        }"
-        "      }"
-        "    } catch { }"
-        "  };"
-        "  $installArgs=@('install','--id',$resolvedId,'--exact','--silent','--accept-package-agreements','--accept-source-agreements');"
-        "  if($available -and $available -notmatch '^(?i)(unknown|n/a|-)$'){ $installArgs += @('--version',$available) };"
-        "  & winget @installArgs | Out-Host;"
-        "  if($LASTEXITCODE -eq 0){ Write-Output ('C2F_UPGRADE winget-install id='+$resolvedId+' avail='+$available); return $true };"
-        "  return $false;"
-        "};"
-        "function C2F-TryChoco([string[]]$needles){"
-        "  if(-not (Get-Command choco -ErrorAction SilentlyContinue)){ return $false };"
-        "  $installed=@();"
-        "  try { $local=(& choco list --local-only --limit-output 2>&1 | Out-String) } catch { $local='' };"
-        "  foreach($line in ($local -split \"`r?`n\")){"
-        "    $trim=[string]$line; if(-not $trim){ continue };"
-        "    if($trim -notmatch '\\|'){ continue };"
-        "    $name=($trim -split '\\|')[0];"
-        "    if($name){ $installed += $name.Trim() };"
-        "  };"
-        "  $pkg=$null;"
-        "  foreach($needle in $needles){"
-        "    if(-not $needle){ continue };"
-        "    $k=$needle.ToLower();"
-        "    $pkg=$installed | Where-Object { $_.ToLower() -eq $k -or $_.ToLower().Contains($k) } | Select-Object -First 1;"
-        "    if($pkg){ break };"
-        "  };"
-        "  if(-not $pkg){ return $false };"
-        "  & choco upgrade $pkg -y --no-progress --limit-output | Out-Host;"
-        "  if($LASTEXITCODE -eq 0){ Write-Output ('C2F_UPGRADE choco id='+$pkg); return $true };"
-        "  return $false;"
-        "};"
-        "$updated=$false;"
-        "if(C2F-TryWinget $needles){ $updated=$true }"
-        "elseif(C2F-TryChoco $needles){ $updated=$true };"
-        f"if(-not $updated){{ throw ('No supported upgrade path succeeded for '+{needle_literal}) }};"
-        "Write-Output ('Package update attempted: '+$needles[0]);"
-    )
-
-
-def _normalize_shell_whitespace(value: str) -> str:
-    return re.sub(r"\s+", " ", str(value or "").strip().lower())
-
-
-def _looks_like_simple_winget_upgrade_all(raw_command: str) -> bool:
-    raw = str(raw_command or "").strip()
-    if not raw:
-        return False
-    # Only rewrite plain one-liners so analyst-authored scripts stay untouched.
-    if any(token in raw for token in (";", "\n", "\r", "&&", "||", "|")):
-        return False
-    normalized = _normalize_shell_whitespace(raw)
-    if not (
-        normalized.startswith("winget upgrade --all")
-        or normalized.startswith("winget.exe upgrade --all")
-    ):
-        return False
-    if " --id " in f" {normalized} ":
-        return False
-    return True
-
-
-def _build_windows_winget_upgrade_all_command(*, include_unknown: bool = False) -> str:
-    """
-    Fleet-safe winget-all wrapper.
-
-    Goals:
-    - Treat "some packages upgraded, some failed" as PARTIAL (non-fatal) instead of hard FAIL.
-    - Repair common Microsoft.AppInstaller self-update failure (0x80070002) before deciding skip.
-    """
-    script = r"""
-$ErrorActionPreference='Continue'
-$ProgressPreference='SilentlyContinue'
-$includeUnknown=__INCLUDE_UNKNOWN__
-
-function C2F-Flat([string]$txt){
-  if(-not $txt){ return '' }
-  $line = (($txt -replace "`r"," " -replace "`n"," ").Trim())
-  if($line.Length -gt 280){ return $line.Substring(0,280) + '...' }
-  return $line
-}
-
-function C2F-ParseWingetRows([string]$txt){
-  $rows=@()
-  $seen=@{}
-  foreach($line in ($txt -split "`r?`n")){
-    $trim=[string]$line
-    if(-not $trim){ continue }
-    $clean=$trim.Trim()
-    if(-not $clean){ continue }
-    if($clean -match '^-{3,}$'){ continue }
-    if($clean -match '(?i)^\d+\s+upgrades?\s+available'){ continue }
-    if($clean -match '(?i)^name\s+id\s+version'){ continue }
-    if($clean -match '(?i)^the following packages have'){ continue }
-    $parts=[regex]::Split($clean, '\s{2,}') | Where-Object { $_ -ne '' }
-    if($parts.Count -lt 2){ continue }
-    $name=[string]$parts[0]
-    $id=[string]$parts[1]
-    if(-not $id -or $id -eq 'Id'){ continue }
-    if($seen.ContainsKey($id)){ continue }
-    $seen[$id]=$true
-    $rows += [pscustomobject]@{ Name=$name; Id=$id }
-  }
-  return $rows
-}
-
-if(-not (Get-Command winget -ErrorAction SilentlyContinue)){
-  throw 'winget is not available in this user context'
-}
-
-try { & winget source update --name winget 2>&1 | Out-Null } catch { }
-
-$listArgs=@('upgrade','--source','winget')
-if($includeUnknown){ $listArgs += '--include-unknown' }
-$listRaw = (& winget @listArgs 2>&1 | Out-String)
-$rows = C2F-ParseWingetRows $listRaw
-
-if($rows.Count -eq 0){
-  Write-Output 'No upgradable packages found.'
-  Write-Output 'C2F_SUMMARY outcome=SUCCESS total=0 upgraded=0 failed=0 skipped=0'
-  exit 0
-}
-
-$upgraded = 0
-$failed = 0
-$skipped = 0
-$issues = New-Object 'System.Collections.Generic.List[string]'
-
-foreach($row in $rows){
-  $id = [string]$row.Id
-  $name = [string]$row.Name
-  if(-not $id){ continue }
-  Write-Output ('[RUN] ' + $name + ' [' + $id + ']')
-
-  $upgradeArgs=@('upgrade','--id',$id,'--exact','--silent','--accept-package-agreements','--accept-source-agreements')
-  $out = (& winget @upgradeArgs 2>&1 | Out-String)
-  $rc = 0
-  if($LASTEXITCODE -ne $null){ try { $rc = [int]$LASTEXITCODE } catch { $rc = 1 } }
-  if($rc -eq 0){
-    $upgraded++
-    Write-Output ('[OK] ' + $id)
-    continue
-  }
-
-  $flat = C2F-Flat $out
-
-  if($id -eq 'Microsoft.AppInstaller' -and $flat -match '(?i)0x80070002'){
-    Write-Output '[INFO] Microsoft.AppInstaller fallback: re-register DesktopAppInstaller and retry.'
-    try {
-      $pkg = Get-AppxPackage -AllUsers Microsoft.DesktopAppInstaller -ErrorAction SilentlyContinue | Sort-Object Version -Descending | Select-Object -First 1
-      if($pkg -and $pkg.InstallLocation){
-        $manifest = Join-Path $pkg.InstallLocation 'AppxManifest.xml'
-        if(Test-Path $manifest){
-          Add-AppxPackage -DisableDevelopmentMode -Register $manifest -ErrorAction SilentlyContinue | Out-Null
-          Start-Sleep -Seconds 2
-          $out2 = (& winget @upgradeArgs 2>&1 | Out-String)
-          $rc2 = 0
-          if($LASTEXITCODE -ne $null){ try { $rc2 = [int]$LASTEXITCODE } catch { $rc2 = 1 } }
-          if($rc2 -eq 0){
-            $upgraded++
-            Write-Output ('[OK] ' + $id + ' (fallback repaired)')
-            continue
-          }
-          $flat = C2F-Flat $out2
-        }
-      }
-    } catch { }
-    $skipped++
-    $issues.Add($id + ' skipped: self-update incomplete (' + $flat + ')')
-    Write-Output ('[SKIP] ' + $id + ' self-update did not complete; continuing.')
-    continue
-  }
-
-  $installArgs=@('install','--id',$id,'--exact','--silent','--accept-package-agreements','--accept-source-agreements')
-  $outInstall = (& winget @installArgs 2>&1 | Out-String)
-  $rcInstall = 0
-  if($LASTEXITCODE -ne $null){ try { $rcInstall = [int]$LASTEXITCODE } catch { $rcInstall = 1 } }
-  if($rcInstall -eq 0){
-    $upgraded++
-    Write-Output ('[OK] ' + $id + ' (install fallback)')
-    continue
-  }
-
-  $failed++
-  $issues.Add($id + ' failed: ' + (C2F-Flat $outInstall))
-  Write-Output ('[FAIL] ' + $id)
-}
-
-$total = [int]$rows.Count
-$outcome = 'SUCCESS'
-if($failed -gt 0 -and $upgraded -eq 0){
-  $outcome = 'FAILED'
-} elseif($failed -gt 0 -or $skipped -gt 0){
-  $outcome = 'PARTIAL'
-}
-
-$summary = ('package upgrade summary: outcome=' + $outcome + ' total=' + $total + ' upgraded=' + $upgraded + ' failed=' + $failed + ' skipped=' + $skipped)
-Write-Output $summary
-Write-Output ('C2F_SUMMARY outcome=' + $outcome + ' total=' + $total + ' upgraded=' + $upgraded + ' failed=' + $failed + ' skipped=' + $skipped)
-if($issues.Count -gt 0){
-  Write-Output ('package issues: ' + [string]::Join(' | ', $issues))
-}
-
-if($outcome -eq 'FAILED'){
-  throw $summary
-}
-exit 0
-"""
-    include_literal = "$true" if include_unknown else "$false"
-    return script.replace("__INCLUDE_UNKNOWN__", include_literal).strip()
-
-
-def _legacy_package_hint(raw_command: str) -> str:
-    text = str(raw_command or "")
-    lowered = text.lower()
-    if "$updated=$false" not in lowered:
-        return ""
-    if "no supported package manager path succeeded for" not in lowered:
-        return ""
-    if "winget upgrade --id $pkg" not in lowered:
-        return ""
-    match = re.search(r"\$pkg\s*=\s*'([^']+)'", text, flags=re.IGNORECASE)
-    if not match:
-        match = re.search(r'\$pkg\s*=\s*"([^"]+)"', text, flags=re.IGNORECASE)
-    if not match:
-        return ""
-    return str(match.group(1) or "").strip()
-
-
-def _normalize_global_shell_command(shell: str, raw_command: str) -> str:
-    if str(shell or "").strip().lower() != "powershell":
-        return str(raw_command or "")
-    if _looks_like_simple_winget_upgrade_all(raw_command):
-        include_unknown = "--include-unknown" in _normalize_shell_whitespace(raw_command)
-        wrapped = _build_windows_winget_upgrade_all_command(include_unknown=include_unknown)
-        if wrapped:
-            return wrapped
-    hint = _legacy_package_hint(raw_command)
-    if not hint:
-        return str(raw_command or "")
-    upgraded = _build_windows_discovery_upgrade_command(hint)
-    return upgraded or str(raw_command or "")
 
 
 def _coerce_custom_os_command_arguments(
@@ -391,40 +100,6 @@ def _coerce_custom_os_command_arguments(
         normalized.append(session_value)
     return normalized
 
-
-def _looks_like_privileged_windows_command(shell: str, command: str) -> bool:
-    if str(shell or "").strip().lower() != "powershell":
-        return False
-    lowered = str(command or "").strip().lower()
-    if not lowered:
-        return False
-    return any(
-        marker in lowered
-        for marker in (
-            "get-windowsupdate",
-            "install-windowsupdate",
-            "pswindowsupdate",
-            "msiexec",
-            "wusa",
-        )
-    )
-
-
-def _looks_like_user_space_package_manager_command(shell: str, command: str) -> bool:
-    if str(shell or "").strip().lower() != "powershell":
-        return False
-    lowered = str(command or "").strip().lower()
-    if not lowered:
-        return False
-    return any(
-        marker in lowered
-        for marker in (
-            " winget ",
-            "winget ",
-            " choco ",
-            "choco ",
-        )
-    )
 
 
 def _first_real_agent_id(values) -> str | None:
@@ -613,11 +288,290 @@ def _store_execution_targets(conn, execution_id: int, rows) -> None:
         )
 
 
+def _to_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    if value is None:
+        return default
+    return bool(value)
+
+
+def _to_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _coerce_assist_attempts(value: Any, default: int = 3) -> int:
+    parsed = _to_int(value, default)
+    if parsed < 1:
+        return 1
+    if parsed > _GLOBAL_SHELL_MAX_ASSIST_ATTEMPTS:
+        return _GLOBAL_SHELL_MAX_ASSIST_ATTEMPTS
+    return parsed
+
+
+def _coerce_vulnerability_context(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key in (
+        "id",
+        "cve",
+        "title",
+        "severity",
+        "package_name",
+        "condition",
+        "verify_kb",
+        "verify_min_build",
+    ):
+        raw = value.get(key)
+        if raw is None:
+            continue
+        text = str(raw).strip()
+        if text:
+            out[key] = text
+
+    package = value.get("package")
+    if isinstance(package, dict):
+        package_name = str(package.get("name") or "").strip()
+        if package_name and "package_name" not in out:
+            out["package_name"] = package_name
+        package_condition = str(package.get("condition") or "").strip()
+        if package_condition and "condition" not in out:
+            out["condition"] = package_condition
+
+    references = value.get("references")
+    if isinstance(references, list):
+        refs = [str(item).strip() for item in references if str(item).strip()]
+        if refs:
+            out["references"] = refs[:20]
+    elif references is not None:
+        text = str(references).strip()
+        if text:
+            out["references"] = [text]
+
+    agent_ids = _normalize_agent_id_list(value.get("agent_ids") or value.get("affected_agent_ids"))
+    if agent_ids:
+        out["agent_ids"] = agent_ids
+    return out
+
+
+def _coerce_ai_provider_config(value: Any, *, source: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    source_label = "request body" if source == "request" else "tenant ai_remediation config"
+    status_code = 400 if source == "request" else 503
+    out: dict[str, Any] = {}
+    provider = str(value.get("provider") or "").strip().lower()
+    if provider:
+        if provider not in _ALLOWED_AI_PROVIDERS:
+            raise HTTPException(status_code=status_code, detail=f"Unsupported AI provider '{provider}' in {source_label}")
+        out["provider"] = provider
+    for key in ("base_url", "model", "api_key"):
+        if key not in value:
+            continue
+        out[key] = str(value.get(key) or "").strip()
+    if "enabled" in value:
+        out["enabled"] = _to_bool(value.get("enabled"), True)
+    if "timeout_seconds" in value:
+        timeout_seconds = _to_int(value.get("timeout_seconds"), -1)
+        if timeout_seconds < 1:
+            raise HTTPException(status_code=status_code, detail=f"timeout_seconds in {source_label} must be >= 1")
+        out["timeout_seconds"] = timeout_seconds
+    if "max_tokens" in value:
+        max_tokens = _to_int(value.get("max_tokens"), -1)
+        if max_tokens < 1:
+            raise HTTPException(status_code=status_code, detail=f"max_tokens in {source_label} must be >= 1")
+        out["max_tokens"] = max_tokens
+    if "temperature" in value:
+        try:
+            temperature = float(value.get("temperature"))
+        except Exception as exc:
+            raise HTTPException(status_code=status_code, detail=f"temperature in {source_label} must be a number") from exc
+        if temperature < 0 or temperature > 2:
+            raise HTTPException(status_code=status_code, detail=f"temperature in {source_label} must be between 0 and 2")
+        out["temperature"] = temperature
+    return out
+
+
+def _coerce_ai_shorthand_config(body: dict[str, Any]) -> dict[str, Any]:
+    mapping = {
+        "ai_provider": "provider",
+        "ai_base_url": "base_url",
+        "ai_model": "model",
+        "ai_api_key": "api_key",
+        "ai_timeout_seconds": "timeout_seconds",
+        "ai_temperature": "temperature",
+        "ai_max_tokens": "max_tokens",
+        "ai_enabled": "enabled",
+    }
+    out: dict[str, Any] = {}
+    for source_key, target_key in mapping.items():
+        if source_key not in body:
+            continue
+        out[target_key] = body.get(source_key)
+    return out
+
+
+def _extract_ai_config_node(node: Any) -> dict[str, Any]:
+    if not isinstance(node, dict):
+        return {}
+    if isinstance(node.get("ai_config"), dict):
+        return node.get("ai_config") or {}
+    if isinstance(node.get("ai_remediation"), dict):
+        return node.get("ai_remediation") or {}
+    if any(key in node for key in ("provider", "base_url", "model", "api_key", "timeout_seconds", "temperature", "max_tokens", "enabled")):
+        return node
+    return {}
+
+
+def _load_active_tenant_ai_config(org_id: Any) -> dict[str, Any]:
+    tenant_id = _to_int(org_id, 0)
+    if tenant_id < 1:
+        return {}
+    db = connect()
+    try:
+        row = db.execute(
+            text(
+                """
+                SELECT config_json
+                FROM tenant_config_revisions
+                WHERE org_id=:tenant_id
+                  AND config_key=:config_key
+                  AND LOWER(COALESCE(status, 'draft'))='active'
+                ORDER BY version DESC, id DESC
+                LIMIT 1
+                """
+            ),
+            {"tenant_id": tenant_id, "config_key": _AI_REMEDIATION_CONFIG_KEY},
+        ).fetchone()
+    finally:
+        db.close()
+    if not row:
+        return {}
+    raw_json = row._mapping.get("config_json") if hasattr(row, "_mapping") else (row[0] if isinstance(row, (tuple, list)) and row else row)
+    if isinstance(raw_json, str):
+        try:
+            node = json.loads(raw_json)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Active tenant ai_remediation config is not valid JSON") from exc
+    elif isinstance(raw_json, dict):
+        node = raw_json
+    else:
+        return {}
+    parsed = _extract_ai_config_node(node)
+    return _coerce_ai_provider_config(parsed, source="tenant")
+
+
+def _resolve_ai_provider_config(*, body: dict[str, Any], user: Any) -> dict[str, Any] | None:
+    if "ai_config" in body and body.get("ai_config") is not None and not isinstance(body.get("ai_config"), dict):
+        raise HTTPException(status_code=400, detail="ai_config must be a JSON object")
+    request_cfg = _coerce_ai_provider_config(body.get("ai_config"), source="request")
+    if request_cfg:
+        return request_cfg
+    shorthand_cfg = _coerce_ai_provider_config(_coerce_ai_shorthand_config(body), source="request")
+    if shorthand_cfg:
+        return shorthand_cfg
+    tenant_cfg = _load_active_tenant_ai_config((user or {}).get("org_id") if isinstance(user, dict) else None)
+    return tenant_cfg or None
+
+
+def _build_global_shell_dispatch(
+    *,
+    command_to_run: str,
+    run_as_system: bool,
+    verify_kb: str,
+    verify_min_build: str,
+    verify_stdout_contains: str,
+    session_id: str = "",
+) -> tuple[dict[str, Any], list[str]]:
+    transport_action_id = "custom-os-command"
+    action = get_action(transport_action_id)
+    arguments = _coerce_custom_os_command_arguments(
+        normalize_args(
+            action,
+            {
+                "command": command_to_run,
+                "verify_kb": verify_kb,
+                "verify_min_build": verify_min_build,
+                "verify_stdout_contains": verify_stdout_contains,
+                "run_as_system": "true" if bool(run_as_system) else "false",
+                "session_id": session_id,
+            },
+        ),
+        command=command_to_run,
+        verify_kb=verify_kb,
+        verify_min_build=verify_min_build,
+        verify_stdout_contains=verify_stdout_contains,
+        run_as_system=bool(run_as_system),
+        session_id=session_id,
+    )
+    dispatch = resolve_action_dispatch(action, arguments)
+    return dispatch, arguments
+
+
+def _result_rows_ok(payload: Any) -> bool:
+    result = payload if isinstance(payload, dict) else {}
+    rows = result.get("results")
+    if isinstance(rows, list) and rows:
+        return all(bool(row.get("ok")) for row in rows if isinstance(row, dict))
+    failed = _to_int(result.get("failed"), 0)
+    if failed > 0:
+        return False
+    if "ok" in result:
+        return bool(result.get("ok"))
+    return False
+
+
+def _check_vulnerability_clearance(
+    *,
+    vulnerability_context: dict[str, Any],
+    selected_ids: list[str],
+) -> dict[str, Any]:
+    scoped = _normalize_agent_id_list(selected_ids)
+    if not vulnerability_context or not scoped:
+        return {"checked": False, "reason": "missing_context_or_targets"}
+    if not indexer.enabled:
+        return {"checked": False, "reason": "indexer_disabled"}
+    try:
+        raw = indexer.search_vulnerabilities_fleet(limit=10000, agent_ids=scoped)
+        rows = indexer.extract_vulnerabilities(raw)
+    except Exception as exc:
+        return {"checked": False, "reason": "indexer_error", "error": _to_text(exc)}
+
+    matches = [
+        row
+        for row in rows
+        if isinstance(row, dict) and vulnerability_matches_record(row, vulnerability_context, scoped)
+    ]
+    return {
+        "checked": True,
+        "cleared": len(matches) == 0,
+        "remaining_count": len(matches),
+    }
+
+
 def _run_global_shell_async_job(
     execution_id: int,
     action_id: str,
-    dispatch: dict,
+    shell: str,
     selected_ids: list[str],
+    raw_command: str,
+    run_as_system: bool,
+    verify_kb: str = "",
+    verify_min_build: str = "",
+    verify_stdout_contains: str = "",
+    assistant_plan: dict[str, Any] | None = None,
+    auto_remediate: bool = False,
+    max_attempts: int = 1,
+    vulnerability_context: dict[str, Any] | None = None,
+    ai_session_id: str = "",
+    ai_config: dict[str, Any] | None = None,
+    allow_destructive: bool = False,
 ) -> None:
     db = connect()
     execution = None
@@ -625,8 +579,32 @@ def _run_global_shell_async_job(
     step_name = "orchestration"
     step_stdout = ""
     step_stderr = ""
-    execution_status = "SUCCESS"
-    step_status = "SUCCESS"
+    execution_status = "FAILED"
+    step_status = "FAILED"
+    current_raw_command = str(raw_command or "").strip()
+    current_run_as_system = bool(run_as_system)
+    current_verify_kb = str(verify_kb or "").strip()
+    current_verify_min_build = str(verify_min_build or "").strip()
+    current_verify_stdout_contains = str(verify_stdout_contains or "").strip()
+    attempts_budget = _coerce_assist_attempts(max_attempts, 1 if not auto_remediate else 3)
+    used_commands: list[str] = []
+    attempt_records: list[dict[str, Any]] = []
+    last_failure = ""
+    final_result_payload: dict[str, Any] = {}
+    effective_context = _coerce_vulnerability_context(vulnerability_context)
+    if not auto_remediate:
+        attempts_budget = 1
+
+    if not current_raw_command and isinstance(assistant_plan, dict):
+        rec = assistant_plan.get("recommended")
+        if isinstance(rec, dict):
+            current_raw_command = str(rec.get("command") or "").strip()
+            current_run_as_system = bool(current_run_as_system or rec.get("run_as_system"))
+            if not current_verify_kb:
+                current_verify_kb = str(rec.get("verify_kb") or "").strip()
+            if not current_verify_min_build:
+                current_verify_min_build = str(rec.get("verify_min_build") or "").strip()
+
     try:
         db.execute(
             text("UPDATE executions SET status=:status WHERE id=:id"),
@@ -643,39 +621,227 @@ def _run_global_shell_async_job(
                 "stderr": "",
             },
         )
-        try:
-            execution = execute_action(
-                client,
-                action_id,
-                dispatch,
-                selected_ids,
-                execution_id=int(execution_id),
+
+        for attempt_no in range(1, attempts_budget + 1):
+            if not current_raw_command:
+                last_failure = "No command available for this attempt"
+                break
+            if len(current_raw_command) > _GLOBAL_SHELL_MAX_COMMAND_CHARS:
+                last_failure = f"command exceeds {_GLOBAL_SHELL_MAX_COMMAND_CHARS} characters"
+                attempt_records.append(
+                    {
+                        "attempt": attempt_no,
+                        "command": current_raw_command,
+                        "command_used": "",
+                        "run_as_system": bool(current_run_as_system),
+                        "verify_kb": current_verify_kb,
+                        "verify_min_build": current_verify_min_build,
+                        "verify_stdout_contains": current_verify_stdout_contains,
+                        "risk_score": 100,
+                        "risk_reasons": ["Command length limit exceeded"],
+                        "ok": False,
+                        "failure": last_failure,
+                        "vulnerability_check": {"checked": False, "reason": "not_executed"},
+                    }
+                )
+                break
+            try:
+                safety = enforce_command_safety(
+                    current_raw_command,
+                    shell=shell,
+                    allow_destructive=allow_destructive,
+                )
+            except HTTPException as exc:
+                last_failure = _to_text(exc.detail or exc)
+                attempt_records.append(
+                    {
+                        "attempt": attempt_no,
+                        "command": current_raw_command,
+                        "command_used": "",
+                        "run_as_system": bool(current_run_as_system),
+                        "verify_kb": current_verify_kb,
+                        "verify_min_build": current_verify_min_build,
+                        "verify_stdout_contains": current_verify_stdout_contains,
+                        "risk_score": 100,
+                        "risk_reasons": ["Blocked by safety guard"],
+                        "ok": False,
+                        "failure": last_failure,
+                        "vulnerability_check": {"checked": False, "reason": "blocked"},
+                    }
+                )
+                break
+            used_commands.append(current_raw_command)
+            command_to_run = current_raw_command
+            if str(shell or "").strip().lower() == "cmd":
+                command_to_run = _wrap_cmd_for_powershell(current_raw_command)
+            dispatch, _ = _build_global_shell_dispatch(
+                command_to_run=command_to_run,
+                run_as_system=current_run_as_system,
+                verify_kb=current_verify_kb,
+                verify_min_build=current_verify_min_build,
+                verify_stdout_contains=current_verify_stdout_contains,
+                session_id=ai_session_id,
             )
-            step_name = execution.get("channel") or "orchestration"
-            detail = f"channel={execution.get('channel')}; command={execution.get('command_used')}"
-            attempts = execution.get("attempts") or []
-            if attempts:
-                detail += f"; attempts={','.join(attempts)}"
-            step_stdout = f"{detail}\n{json.dumps(execution.get('result'), default=str)}"
-            result_payload = execution.get("result")
-            if isinstance(result_payload, dict) and isinstance(result_payload.get("results"), list):
-                target_rows = result_payload.get("results")
-        except HTTPException as exc:
-            execution_status = "FAILED"
-            step_status = "FAILED"
-            if isinstance(exc.detail, dict):
-                step_name = "endpoint"
-                step_stderr = _to_text(exc.detail.get("message") or exc.detail)
-                result_payload = exc.detail.get("result")
-                if isinstance(result_payload, dict) and isinstance(result_payload.get("results"), list):
+
+            publish_event(
+                int(execution_id),
+                {
+                    "type": "step_start",
+                    "step": f"orchestration:attempt-{attempt_no}",
+                    "status": "RUNNING",
+                    "stdout": f"attempt={attempt_no}; command={current_raw_command}",
+                    "stderr": "",
+                },
+            )
+
+            attempt_ok = False
+            failure_summary = ""
+            vuln_check: dict[str, Any] = {"checked": False, "reason": "not_requested"}
+            result_payload: dict[str, Any] = {}
+            try:
+                execution = execute_action(
+                    client,
+                    action_id,
+                    dispatch,
+                    selected_ids,
+                    execution_id=int(execution_id),
+                )
+                step_name = execution.get("channel") or "orchestration"
+                result_payload = execution.get("result") if isinstance(execution.get("result"), dict) else {}
+                final_result_payload = result_payload
+                if isinstance(result_payload.get("results"), list):
                     target_rows = result_payload.get("results")
-            else:
+                attempt_ok = _result_rows_ok(result_payload)
+                if not attempt_ok:
+                    failure_summary = summarize_failure_from_result(result_payload) or "Execution returned target failures."
+            except HTTPException as exc:
+                step_name = "endpoint" if isinstance(exc.detail, dict) else "orchestration"
+                if isinstance(exc.detail, dict):
+                    failure_summary = _to_text(exc.detail.get("message") or exc.detail)
+                    result_obj = exc.detail.get("result")
+                    result_payload = result_obj if isinstance(result_obj, dict) else {}
+                    if isinstance(result_payload.get("results"), list):
+                        target_rows = result_payload.get("results")
+                    final_result_payload = result_payload or final_result_payload
+                else:
+                    failure_summary = _to_text(exc.detail)
+            except Exception as exc:
                 step_name = "orchestration"
-                step_stderr = _to_text(exc.detail)
-        except Exception as exc:
-            execution_status = "FAILED"
+                failure_summary = _to_text(exc)
+
+            if attempt_ok and effective_context:
+                vuln_check = _check_vulnerability_clearance(
+                    vulnerability_context=effective_context,
+                    selected_ids=selected_ids,
+                )
+                if vuln_check.get("checked") and not vuln_check.get("cleared"):
+                    remaining = _to_int(vuln_check.get("remaining_count"), 0)
+                    attempt_ok = False
+                    failure_summary = (
+                        f"Command executed but vulnerability still present for {remaining} target(s) in indexer."
+                    )
+            elif not effective_context:
+                vuln_check = {"checked": False, "reason": "no_vulnerability_context"}
+
+            attempt_record = {
+                "attempt": attempt_no,
+                "command": current_raw_command,
+                "command_used": command_to_run,
+                "run_as_system": bool(current_run_as_system),
+                "verify_kb": current_verify_kb,
+                "verify_min_build": current_verify_min_build,
+                "verify_stdout_contains": current_verify_stdout_contains,
+                "risk_score": _to_int(safety.get("risk_score"), 0),
+                "risk_reasons": safety.get("reasons") or [],
+                "ok": bool(attempt_ok),
+                "failure": failure_summary,
+                "vulnerability_check": vuln_check,
+                "result_summary": {
+                    "success": _to_int(result_payload.get("success"), 0),
+                    "failed": _to_int(result_payload.get("failed"), 0),
+                    "total": _to_int(result_payload.get("total"), 0),
+                },
+            }
+            attempt_records.append(attempt_record)
+
+            db.execute(
+                text(
+                    """
+                    INSERT INTO execution_steps
+                    (execution_id, step, stdout, stderr, status)
+                    VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                    """
+                ),
+                {
+                    "execution_id": execution_id,
+                    "step": f"orchestration_attempt_{attempt_no}",
+                    "stdout": json.dumps(attempt_record, default=str),
+                    "stderr": "" if attempt_ok else failure_summary,
+                    "status": "SUCCESS" if attempt_ok else "FAILED",
+                },
+            )
+            db.commit()
+
+            publish_event(
+                int(execution_id),
+                {
+                    "type": "step_done" if attempt_ok else "step_failed",
+                    "step": f"orchestration:attempt-{attempt_no}",
+                    "status": "SUCCESS" if attempt_ok else "FAILED",
+                    "stdout": json.dumps(attempt_record.get("result_summary"), default=str),
+                    "stderr": "" if attempt_ok else failure_summary,
+                },
+            )
+
+            if attempt_ok:
+                execution_status = "SUCCESS"
+                step_status = "SUCCESS"
+                last_failure = ""
+                break
+
+            last_failure = failure_summary or "Execution attempt failed."
+            if attempt_no >= attempts_budget:
+                break
+
+            next_attempt = next_command_from_failure(
+                plan=assistant_plan or {},
+                used_commands=used_commands,
+                failure_text=last_failure,
+                current_run_as_system=current_run_as_system,
+                shell=shell,
+                execution_result=result_payload,
+                allow_destructive=allow_destructive,
+                session_id=ai_session_id,
+                ai_config=ai_config,
+            )
+            if not next_attempt:
+                break
+
+            next_command = str(next_attempt.get("command") or "").strip()
+            if not next_command:
+                break
+            current_raw_command = next_command
+            current_run_as_system = bool(next_attempt.get("run_as_system", current_run_as_system))
+            next_verify_kb = str(next_attempt.get("verify_kb") or "").strip()
+            next_verify_min_build = str(next_attempt.get("verify_min_build") or "").strip()
+            next_verify_stdout = str(next_attempt.get("verify_stdout_contains") or "").strip()
+            if next_verify_kb:
+                current_verify_kb = next_verify_kb
+            if next_verify_min_build:
+                current_verify_min_build = next_verify_min_build
+            if next_verify_stdout:
+                current_verify_stdout_contains = next_verify_stdout
+
+        if execution_status != "SUCCESS":
             step_status = "FAILED"
-            step_stderr = _to_text(exc)
+            step_stderr = last_failure or "Global shell remediation did not complete successfully."
+        detail_payload = {
+            "attempts": attempt_records,
+            "final_result": final_result_payload,
+            "auto_remediate": bool(auto_remediate),
+            "max_attempts": attempts_budget,
+        }
+        step_stdout = json.dumps(detail_payload, default=str)
 
         db.execute(
             text(
@@ -687,7 +853,7 @@ def _run_global_shell_async_job(
             ),
             {
                 "execution_id": execution_id,
-                "step": step_name,
+                "step": "orchestration",
                 "stdout": step_stdout,
                 "stderr": step_stderr,
                 "status": step_status,
@@ -1048,6 +1214,58 @@ async def run_action(request: Request, user=Depends(require_role("admin"))):
     }
 
 
+@router.post("/global-shell/assist")
+async def global_shell_assist(request: Request, user=Depends(require_role("admin"))):
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    shell = str(body.get("shell") or "powershell").strip().lower()
+    if shell not in {"powershell", "cmd"}:
+        raise HTTPException(status_code=400, detail="shell must be 'powershell' or 'cmd'")
+    prompt = str(body.get("prompt") or body.get("assistant_prompt") or "").strip()
+    scoped_agent_ids = _normalize_agent_id_list(body.get("agent_ids") or body.get("agents"))
+    single_agent = _normalize_agent_identifier(body.get("agent_id") or "")
+    if single_agent:
+        scoped_agent_ids = _normalize_agent_id_list([*scoped_agent_ids, single_agent])
+    allow_destructive = _to_bool(body.get("allow_destructive"), False)
+    ai_session_id = str(body.get("ai_session_id") or body.get("session_id") or "").strip()
+    vulnerability_context = _coerce_vulnerability_context(
+        body.get("vulnerability_context") or body.get("vulnerability")
+    )
+    ai_config = _resolve_ai_provider_config(body=body if isinstance(body, dict) else {}, user=user)
+    if not prompt and not vulnerability_context:
+        raise HTTPException(
+            status_code=400,
+            detail="prompt or vulnerability_context is required",
+        )
+
+    plan = build_command_assistant_plan(
+        prompt=prompt,
+        shell=shell,
+        vulnerability_context=vulnerability_context,
+        scoped_agent_ids=scoped_agent_ids,
+        session_id=ai_session_id or None,
+        allow_destructive=allow_destructive,
+        ai_config=ai_config,
+    )
+    recommended = plan.get("recommended")
+    if not isinstance(recommended, dict) or not str(recommended.get("command") or "").strip():
+        raise HTTPException(
+            status_code=422,
+            detail="No safe command candidate could be inferred from prompt/context",
+        )
+    return {
+        "ok": True,
+        "shell": shell,
+        "plan": plan,
+        "recommended": recommended,
+        "candidate_count": len(plan.get("candidates") or []),
+    }
+
+
 @router.post("/global-shell")
 async def run_global_shell(request: Request, user=Depends(require_role("admin"))):
     body = {}
@@ -1061,39 +1279,25 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         logger.warning("global-shell rejected: invalid shell=%s", shell)
         raise HTTPException(status_code=400, detail="shell must be 'powershell' or 'cmd'")
     async_raw = body.get("async")
-    if async_raw is None:
-        async_mode = True
-    elif isinstance(async_raw, bool):
-        async_mode = async_raw
-    elif isinstance(async_raw, str):
-        async_mode = async_raw.strip().lower() in {"1", "true", "yes", "on"}
-    else:
-        async_mode = bool(async_raw)
+    async_mode = True if async_raw is None else _to_bool(async_raw, True)
 
+    assistant_prompt = str(body.get("assistant_prompt") or body.get("prompt") or "").strip()
+    vulnerability_context = _coerce_vulnerability_context(
+        body.get("vulnerability_context") or body.get("vulnerability")
+    )
+    effective_context = dict(vulnerability_context or {})
+    allow_destructive = _to_bool(body.get("allow_destructive"), False)
+    auto_remediate = _to_bool(body.get("auto_remediate"), False)
+    max_attempts = _coerce_assist_attempts(
+        body.get("max_attempts"),
+        3 if auto_remediate else 1,
+    )
     raw_command = str(body.get("command") or "").strip()
     ai_session_id = str(body.get("ai_session_id") or body.get("session_id") or "").strip()
-    if not raw_command:
-        logger.warning("global-shell rejected: empty command")
-        raise HTTPException(status_code=400, detail="command is required")
-    if len(raw_command) > _GLOBAL_SHELL_MAX_COMMAND_CHARS:
-        logger.warning(
-            "global-shell rejected: command too long len=%s max=%s",
-            len(raw_command),
-            _GLOBAL_SHELL_MAX_COMMAND_CHARS,
-        )
-        raise HTTPException(
-            status_code=400,
-            detail=f"command is too long (max {_GLOBAL_SHELL_MAX_COMMAND_CHARS} chars)",
-        )
-    run_as_system_raw = body.get("run_as_system")
-    if run_as_system_raw is None:
-        run_as_system = False
-    elif isinstance(run_as_system_raw, bool):
-        run_as_system = run_as_system_raw
-    elif isinstance(run_as_system_raw, str):
-        run_as_system = run_as_system_raw.strip().lower() in {"1", "true", "yes", "on"}
-    else:
-        run_as_system = bool(run_as_system_raw)
+    ai_config = _resolve_ai_provider_config(body=body if isinstance(body, dict) else {}, user=user)
+
+    run_as_system_explicit = body.get("run_as_system")
+    run_as_system = _to_bool(run_as_system_explicit, False)
     raw_justification = str(body.get("justification") or body.get("reason") or "").strip()
     justification_provided = len(raw_justification) >= 12
     justification = (
@@ -1101,6 +1305,10 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         if justification_provided
         else "Global shell execution requested by analyst."
     )
+
+    verify_kb = str(body.get("verify_kb") or "").strip()
+    verify_min_build = str(body.get("verify_min_build") or "").strip()
+    verify_stdout_contains = str(body.get("verify_stdout_contains") or "").strip()
 
     target_agent_id = _normalize_agent_identifier(body.get("agent_id") or "")
     target_group = str(body.get("group") or "").strip()
@@ -1179,44 +1387,112 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
             detail=detail,
         )
 
-    # Global Shell must execute analyst-authored commands verbatim.
+    assistant_plan: dict[str, Any] = {}
+    assistant_recommended: dict[str, Any] = {}
+    assistant_generated_command = False
+    assistant_plan_error = ""
+
+    should_build_plan = bool(assistant_prompt or effective_context) or not raw_command
+    if should_build_plan:
+        planning_prompt = assistant_prompt
+        if not planning_prompt:
+            planning_prompt = (
+                "Remediate this vulnerability safely using the shortest viable command."
+                if effective_context
+                else "Generate the safest shortest viable command for this task."
+            )
+        try:
+            planned = build_command_assistant_plan(
+                prompt=planning_prompt,
+                shell=shell,
+                vulnerability_context=effective_context,
+                scoped_agent_ids=selected_ids,
+                session_id=ai_session_id or None,
+                allow_destructive=allow_destructive,
+                ai_config=ai_config,
+            )
+            if isinstance(planned, dict):
+                assistant_plan = planned
+                recommended = planned.get("recommended")
+                if isinstance(recommended, dict):
+                    assistant_recommended = recommended
+                if not ai_session_id:
+                    ai_session_id = str(planned.get("session_id") or "").strip()
+        except HTTPException as exc:
+            if not raw_command:
+                raise
+            assistant_plan_error = _to_text(exc.detail or exc)
+        except Exception as exc:
+            if not raw_command:
+                raise HTTPException(status_code=503, detail=f"AI planning failed: {_to_text(exc)}")
+            assistant_plan_error = _to_text(exc)
+
+    if not raw_command:
+        recommended_command = str(assistant_recommended.get("command") or "").strip()
+        if not recommended_command:
+            raise HTTPException(
+                status_code=422,
+                detail="No safe command candidate could be inferred from prompt/context",
+            )
+        raw_command = recommended_command
+        assistant_generated_command = True
+        if run_as_system_explicit is None:
+            run_as_system = _to_bool(assistant_recommended.get("run_as_system"), run_as_system)
+        if not verify_kb:
+            verify_kb = str(assistant_recommended.get("verify_kb") or "").strip()
+        if not verify_min_build:
+            verify_min_build = str(assistant_recommended.get("verify_min_build") or "").strip()
+        if not verify_stdout_contains:
+            verify_stdout_contains = str(assistant_recommended.get("verify_stdout_contains") or "").strip()
+
+    if not raw_command:
+        raise HTTPException(status_code=400, detail="command is required")
+    if len(raw_command) > _GLOBAL_SHELL_MAX_COMMAND_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"command exceeds {_GLOBAL_SHELL_MAX_COMMAND_CHARS} characters",
+        )
+
+    initial_safety = enforce_command_safety(
+        raw_command,
+        shell=shell,
+        allow_destructive=allow_destructive,
+    )
+
     command_to_run = raw_command
     if shell == "cmd":
         command_to_run = _wrap_cmd_for_powershell(raw_command)
 
-    # Respect explicit analyst selection from request body.
     effective_run_as_system = bool(run_as_system)
-    verify_kb = str(body.get("verify_kb") or "").strip()
-    verify_min_build = str(body.get("verify_min_build") or "").strip()
-    verify_stdout_contains = str(body.get("verify_stdout_contains") or "").strip()
-
     execution_action_id = "global-shell"
     transport_action_id = "custom-os-command"
-    action = get_action(transport_action_id)
-    arguments = _coerce_custom_os_command_arguments(
-        normalize_args(
-            action,
-            {
-                "command": command_to_run,
-                "verify_kb": verify_kb,
-                "verify_min_build": verify_min_build,
-                "verify_stdout_contains": verify_stdout_contains,
-                "run_as_system": "true" if effective_run_as_system else "false",
-                "session_id": ai_session_id,
-            },
-        ),
-        command=command_to_run,
+    _, arguments = _build_global_shell_dispatch(
+        command_to_run=command_to_run,
+        run_as_system=effective_run_as_system,
         verify_kb=verify_kb,
         verify_min_build=verify_min_build,
         verify_stdout_contains=verify_stdout_contains,
-        run_as_system=effective_run_as_system,
         session_id=ai_session_id,
     )
-    dispatch = resolve_action_dispatch(action, arguments)
     actor = user.get("sub") if isinstance(user, dict) else str(user)
     org_id = user.get("org_id") if isinstance(user, dict) else None
 
-    # Run async by default so large fleet shell requests return immediately and stream via execution history.
+    assistant_meta = {
+        "used": bool(assistant_plan),
+        "session_id": ai_session_id or None,
+        "prompt": assistant_prompt,
+        "generated_command": bool(assistant_generated_command),
+        "auto_remediate": bool(auto_remediate),
+        "max_attempts": int(max_attempts),
+        "recommended": assistant_recommended if assistant_recommended else None,
+        "candidate_count": len(assistant_plan.get("candidates") or []) if isinstance(assistant_plan, dict) else 0,
+        "risk_score": _to_int(initial_safety.get("risk_score"), 0),
+        "risk_reasons": initial_safety.get("reasons") or [],
+        "allow_destructive": bool(allow_destructive),
+    }
+    if assistant_plan_error:
+        assistant_meta["error"] = assistant_plan_error
+
     if async_mode:
         db = connect()
         try:
@@ -1261,7 +1537,24 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
 
         worker = threading.Thread(
             target=_run_global_shell_async_job,
-            args=(execution_id, execution_action_id, dispatch, selected_ids),
+            args=(
+                execution_id,
+                execution_action_id,
+                shell,
+                selected_ids,
+                raw_command,
+                effective_run_as_system,
+                verify_kb,
+                verify_min_build,
+                verify_stdout_contains,
+                assistant_plan if isinstance(assistant_plan, dict) else {},
+                bool(auto_remediate),
+                int(max_attempts),
+                effective_context,
+                ai_session_id,
+                ai_config if isinstance(ai_config, dict) else None,
+                bool(allow_destructive),
+            ),
             daemon=True,
         )
         worker.start()
@@ -1289,6 +1582,8 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
                 f"connected_seen={summary['connected_agents_seen']}; "
                 f"skipped_non_windows={summary['skipped_non_windows']}; "
                 f"run_as_system={'yes' if effective_run_as_system else 'no'}; "
+                f"assistant_used={'yes' if assistant_meta['used'] else 'no'}; "
+                f"auto_remediate={'yes' if auto_remediate else 'no'}; "
                 f"justification_provided={'yes' if justification_provided else 'no'}"
             ),
             org_id=org_id,
@@ -1309,10 +1604,172 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
             "summary": summary,
             "justification_provided": bool(justification_provided),
             "history_available": True,
+            "assistant": assistant_meta,
         }
 
-    execution = execute_action(client, execution_action_id, dispatch, selected_ids)
-    result = execution.get("result") if isinstance(execution, dict) else {}
+    attempts_budget = _coerce_assist_attempts(max_attempts, 1 if not auto_remediate else 3)
+    if not auto_remediate:
+        attempts_budget = 1
+
+    used_commands: list[str] = []
+    attempt_records: list[dict[str, Any]] = []
+    current_raw_command = raw_command
+    current_run_as_system = effective_run_as_system
+    current_verify_kb = verify_kb
+    current_verify_min_build = verify_min_build
+    current_verify_stdout_contains = verify_stdout_contains
+    last_execution = None
+    last_result: dict[str, Any] = {}
+    last_failure = ""
+
+    for attempt_no in range(1, attempts_budget + 1):
+        if len(current_raw_command) > _GLOBAL_SHELL_MAX_COMMAND_CHARS:
+            last_failure = f"command exceeds {_GLOBAL_SHELL_MAX_COMMAND_CHARS} characters"
+            attempt_records.append(
+                {
+                    "attempt": attempt_no,
+                    "command": current_raw_command,
+                    "command_used": "",
+                    "run_as_system": bool(current_run_as_system),
+                    "verify_kb": current_verify_kb,
+                    "verify_min_build": current_verify_min_build,
+                    "verify_stdout_contains": current_verify_stdout_contains,
+                    "risk_score": 100,
+                    "risk_reasons": ["Command length limit exceeded"],
+                    "ok": False,
+                    "failure": last_failure,
+                    "vulnerability_check": {"checked": False, "reason": "not_executed"},
+                }
+            )
+            break
+
+        try:
+            attempt_safety = enforce_command_safety(
+                current_raw_command,
+                shell=shell,
+                allow_destructive=allow_destructive,
+            )
+            risk_score = _to_int(attempt_safety.get("risk_score"), 0)
+            risk_reasons = attempt_safety.get("reasons") or []
+        except HTTPException as exc:
+            last_failure = _to_text(exc.detail or exc)
+            attempt_records.append(
+                {
+                    "attempt": attempt_no,
+                    "command": current_raw_command,
+                    "command_used": "",
+                    "run_as_system": bool(current_run_as_system),
+                    "verify_kb": current_verify_kb,
+                    "verify_min_build": current_verify_min_build,
+                    "verify_stdout_contains": current_verify_stdout_contains,
+                    "risk_score": 100,
+                    "risk_reasons": ["Blocked by safety guard"],
+                    "ok": False,
+                    "failure": last_failure,
+                    "vulnerability_check": {"checked": False, "reason": "blocked"},
+                }
+            )
+            break
+
+        used_commands.append(current_raw_command)
+        current_command_used = (
+            current_raw_command if shell == "powershell" else _wrap_cmd_for_powershell(current_raw_command)
+        )
+        attempt_dispatch, _ = _build_global_shell_dispatch(
+            command_to_run=current_command_used,
+            run_as_system=current_run_as_system,
+            verify_kb=current_verify_kb,
+            verify_min_build=current_verify_min_build,
+            verify_stdout_contains=current_verify_stdout_contains,
+            session_id=ai_session_id,
+        )
+        attempt_ok = False
+        failure = ""
+        vuln_check: dict[str, Any] = {"checked": False, "reason": "not_requested"}
+        try:
+            last_execution = execute_action(client, execution_action_id, attempt_dispatch, selected_ids)
+            last_result = last_execution.get("result") if isinstance(last_execution.get("result"), dict) else {}
+            attempt_ok = _result_rows_ok(last_result)
+            if not attempt_ok:
+                failure = summarize_failure_from_result(last_result) or "Execution returned target failures."
+        except HTTPException as exc:
+            if isinstance(exc.detail, dict):
+                last_result = exc.detail.get("result") if isinstance(exc.detail.get("result"), dict) else {}
+                failure = _to_text(exc.detail.get("message") or exc.detail)
+            else:
+                failure = _to_text(exc.detail)
+        except Exception as exc:
+            failure = _to_text(exc)
+
+        if attempt_ok and effective_context:
+            vuln_check = _check_vulnerability_clearance(
+                vulnerability_context=effective_context,
+                selected_ids=selected_ids,
+            )
+            if vuln_check.get("checked") and not vuln_check.get("cleared"):
+                remain = _to_int(vuln_check.get("remaining_count"), 0)
+                attempt_ok = False
+                failure = f"Command executed but vulnerability is still present for {remain} target(s)."
+        elif not effective_context:
+            vuln_check = {"checked": False, "reason": "no_vulnerability_context"}
+
+        attempt_records.append(
+            {
+                "attempt": attempt_no,
+                "command": current_raw_command,
+                "command_used": current_command_used,
+                "run_as_system": bool(current_run_as_system),
+                "verify_kb": current_verify_kb,
+                "verify_min_build": current_verify_min_build,
+                "verify_stdout_contains": current_verify_stdout_contains,
+                "risk_score": risk_score,
+                "risk_reasons": risk_reasons,
+                "ok": bool(attempt_ok),
+                "failure": failure,
+                "vulnerability_check": vuln_check,
+                "result_summary": {
+                    "success": _to_int(last_result.get("success"), 0),
+                    "failed": _to_int(last_result.get("failed"), 0),
+                    "total": _to_int(last_result.get("total"), 0),
+                },
+            }
+        )
+        if attempt_ok:
+            last_failure = ""
+            break
+
+        last_failure = failure or "Execution attempt failed."
+        if attempt_no >= attempts_budget:
+            break
+
+        next_attempt = next_command_from_failure(
+            plan=assistant_plan or {},
+            used_commands=used_commands,
+            failure_text=last_failure,
+            current_run_as_system=current_run_as_system,
+            shell=shell,
+            execution_result=last_result,
+            allow_destructive=allow_destructive,
+            session_id=ai_session_id or None,
+            ai_config=ai_config,
+        )
+        if not next_attempt:
+            break
+        next_command = str(next_attempt.get("command") or "").strip()
+        if not next_command:
+            break
+        current_raw_command = next_command
+        current_run_as_system = bool(next_attempt.get("run_as_system", current_run_as_system))
+        next_verify_kb = str(next_attempt.get("verify_kb") or "").strip()
+        next_verify_min_build = str(next_attempt.get("verify_min_build") or "").strip()
+        next_verify_stdout = str(next_attempt.get("verify_stdout_contains") or "").strip()
+        if next_verify_kb:
+            current_verify_kb = next_verify_kb
+        if next_verify_min_build:
+            current_verify_min_build = next_verify_min_build
+        if next_verify_stdout:
+            current_verify_stdout_contains = next_verify_stdout
+
     summary = {
         "target_mode": target_mode,
         "requested_agents": len(requested_set) if requested_set else None,
@@ -1321,23 +1778,29 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         "targeted_agents": len(selected_ids),
         "excluded_agents": excluded_count,
         "skipped_non_windows": skipped_non_windows,
-        "success": int(result.get("success") or 0) if isinstance(result, dict) else 0,
-        "failed": int(result.get("failed") or 0) if isinstance(result, dict) else 0,
+        "success": int(last_result.get("success") or 0) if isinstance(last_result, dict) else 0,
+        "failed": int(last_result.get("failed") or 0) if isinstance(last_result, dict) else len(selected_ids),
     }
+    ok = bool(attempt_records and attempt_records[-1].get("ok"))
     return {
-        "status": "executed" if summary["failed"] == 0 else "executed_with_failures",
+        "status": "executed" if ok else "executed_with_failures",
         "action_id": execution_action_id,
         "transport_action_id": transport_action_id,
         "shell": shell,
         "command": raw_command,
-        "command_used": command_to_run,
+        "command_used": attempt_records[-1].get("command_used") if attempt_records else command_to_run,
         "run_as_system": effective_run_as_system,
         "session_id": ai_session_id or None,
-        "channel": execution.get("channel"),
-        "mode": execution.get("mode"),
-        "attempts": execution.get("attempts"),
+        "channel": last_execution.get("channel") if isinstance(last_execution, dict) else "endpoint",
+        "mode": last_execution.get("mode") if isinstance(last_execution, dict) else "endpoint",
+        "attempts": [row.get("command") for row in attempt_records if row.get("command")],
         "agent_ids": selected_ids,
         "summary": summary,
         "justification_provided": bool(justification_provided),
-        "result": result,
+        "result": last_result if isinstance(last_result, dict) else {"ok": False},
+        "assistant": {
+            **assistant_meta,
+            "attempt_records": attempt_records,
+            "failure": last_failure,
+        },
     }

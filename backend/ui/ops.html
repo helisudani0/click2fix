@@ -8,7 +8,7 @@
       @import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap");
       :root {
         color-scheme: light;
-        --bg: #f5f7fa;
+        --bg: #edf3fa;
         --panel: #ffffff;
         --panel-strong: #f7f9fb;
         --border: #d7e1ea;
@@ -19,31 +19,67 @@
         --danger: #d64545;
         --success: #17a673;
         --warning: #f0ad4e;
-        --shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+        --shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
       }
       * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
       body {
         margin: 0;
         font-family: "Manrope", "Segoe UI", system-ui, sans-serif;
         background: var(--bg);
         color: var(--text);
         min-height: 100vh;
+        position: relative;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(1100px 700px at -10% -18%, rgba(0, 167, 181, 0.14), transparent 62%),
+          radial-gradient(940px 660px at 110% -10%, rgba(43, 125, 233, 0.12), transparent 60%),
+          linear-gradient(180deg, #f4f8fd, #e4edf7);
+        z-index: -2;
+      }
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background:
+          repeating-linear-gradient(
+            90deg,
+            rgba(15, 34, 57, 0.025) 0,
+            rgba(15, 34, 57, 0.025) 1px,
+            transparent 1px,
+            transparent 120px
+          ),
+          repeating-linear-gradient(
+            0deg,
+            rgba(15, 34, 57, 0.018) 0,
+            rgba(15, 34, 57, 0.018) 1px,
+            transparent 1px,
+            transparent 120px
+          );
+        z-index: -1;
       }
       .ops-layout {
         display: grid;
-        grid-template-columns: 220px minmax(0, 1fr);
+        grid-template-columns: 252px minmax(0, 1fr);
         min-height: 100vh;
       }
       .sidebar {
         position: sticky;
         top: 0;
         height: 100vh;
-        padding: 16px;
-        background: linear-gradient(180deg, #ffffff, #f5f7fa 70%);
-        border-right: 1px solid var(--border);
+        padding: 18px 16px 16px;
+        background: linear-gradient(180deg, #0f1e31, #12243c 58%, #142a45 100%);
+        border-right: 1px solid rgba(157, 186, 215, 0.22);
+        box-shadow: inset -1px 0 0 rgba(157, 186, 215, 0.1);
         display: flex;
         flex-direction: column;
-        gap: 22px;
+        gap: 18px;
       }
       .brand {
         display: flex;
@@ -59,73 +95,136 @@
         font-weight: 700;
         background: linear-gradient(135deg, var(--accent), var(--accent-2));
         color: #ffffff;
-        box-shadow: 0 10px 24px rgba(0, 167, 181, 0.2);
+        box-shadow: 0 12px 24px rgba(0, 167, 181, 0.24);
       }
-      .brand-title { font-weight: 700; }
-      .brand-subtitle { color: var(--muted); font-size: 0.8rem; }
+      .brand-title { font-weight: 700; color: #f2f7ff; letter-spacing: 0.03em; }
+      .brand-subtitle { color: #9cb3cc; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.1em; }
       .sidebar nav {
-        display: flex;
-        flex-direction: column;
+        display: grid;
         gap: 8px;
       }
       .sidebar nav a {
-        color: var(--muted);
+        color: #dce9f9;
         text-decoration: none;
-        padding: 8px 10px;
+        padding: 10px 12px;
         border-radius: 10px;
-        border: 1px solid transparent;
+        border: 1px solid rgba(157, 186, 215, 0.16);
+        background: rgba(255, 255, 255, 0.03);
+        transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease, transform 0.15s ease;
       }
       .sidebar nav a:hover {
-        color: var(--text);
-        background: #eef4f7;
-        border-color: rgba(0, 167, 181, 0.18);
+        color: #ffffff;
+        background: linear-gradient(135deg, rgba(12, 176, 187, 0.26), rgba(29, 94, 196, 0.2));
+        border-color: rgba(12, 176, 187, 0.44);
+        transform: translateX(1px);
       }
       .sidebar-footer {
         margin-top: auto;
         font-size: 0.85rem;
-        color: var(--muted);
+        color: #a8c0da;
+        border-top: 1px solid rgba(157, 186, 215, 0.2);
+        padding-top: 12px;
       }
       .main {
         display: flex;
         flex-direction: column;
-        gap: 20px;
-        padding: 14px 12px 26px;
+        gap: 22px;
+        padding: 20px 18px 30px;
         min-width: 0;
       }
       .topbar {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: space-between;
-        gap: 16px;
-        padding: 18px 20px;
-        border: 1px solid var(--border);
-        border-radius: 16px;
-        background: rgba(255, 255, 255, 0.92);
+        gap: 18px;
+        padding: 22px 24px;
+        border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border));
+        border-radius: 20px;
+        background: rgba(255, 255, 255, 0.9);
         box-shadow: var(--shadow);
+        position: sticky;
+        top: 12px;
+        z-index: 10;
+        backdrop-filter: blur(10px);
       }
-      .topbar h1 { margin: 0; font-size: 1.4rem; }
-      .topbar p { margin: 4px 0 0; color: var(--muted); }
+      .topbar-copy { display: grid; gap: 10px; min-width: 0; }
+      .topbar-kicker {
+        display: inline-flex;
+        align-items: center;
+        width: fit-content;
+        padding: 4px 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(0, 167, 181, 0.26);
+        background: rgba(0, 167, 181, 0.08);
+        color: #0b6e75;
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .topbar h1 { margin: 0; font-size: 1.58rem; letter-spacing: 0.02em; }
+      .topbar p { margin: 0; color: var(--muted); max-width: 58ch; }
+      .topbar-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .topbar-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: #ffffff;
+        color: #26415d;
+        text-decoration: none;
+        font-size: 0.76rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+      }
+      .topbar-link:hover {
+        background: color-mix(in srgb, var(--accent) 12%, #ffffff);
+        border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+        color: #10385b;
+      }
+      .topbar-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        justify-content: flex-end;
+      }
       .section {
         display: flex;
         flex-direction: column;
-        gap: 16px;
+        gap: 18px;
+        padding: 18px;
+        border: 1px solid color-mix(in srgb, var(--accent) 12%, var(--border));
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.82);
+        box-shadow: var(--shadow);
+        scroll-margin-top: 104px;
       }
+      .section-header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
       .section-header h2 {
         margin: 0;
-        font-size: 1.1rem;
+        font-size: 1.12rem;
       }
       .section-header p {
         margin: 4px 0 0;
         color: var(--muted);
-        font-size: 0.85rem;
+        font-size: 0.86rem;
       }
-      .row { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
-      .row.wide { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+      .row { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+      .row.wide { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
       .card {
-        background: #ffffff;
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        padding: 16px;
+        background: linear-gradient(180deg, #ffffff, #f7fbff 100%);
+        border: 1px solid color-mix(in srgb, var(--accent) 12%, var(--border));
+        border-radius: 18px;
+        padding: 18px;
         box-shadow: var(--shadow);
         min-width: 0;
         overflow: visible;
@@ -138,7 +237,7 @@
         transform: translateY(-2px);
         border-color: rgba(0, 167, 181, 0.35);
       }
-      .card h3 { margin: 0 0 8px; font-size: 1rem; }
+      .card h3 { margin: 0 0 10px; font-size: 1rem; }
       .muted { color: var(--muted); }
       .stat {
         display: flex; justify-content: space-between; align-items: center;
@@ -153,17 +252,24 @@
       .badge.success { background: rgba(23,166,115,0.12); color: #0f7a55; border-color: rgba(23,166,115,0.35); }
       .badge.failed { background: rgba(214,69,69,0.12); color: #b42323; border-color: rgba(214,69,69,0.35); }
       .badge.neutral { background: rgba(148,163,184,0.15); color: #57677a; border-color: rgba(148,163,184,0.35); }
-      .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+      .actions { display: flex; gap: 10px; flex-wrap: wrap; }
       button {
         background: linear-gradient(135deg, var(--accent), var(--accent-2));
         border: none; color: #ffffff; padding: 8px 14px; border-radius: 10px; cursor: pointer;
         font-weight: 600;
+        transition: transform 0.15s ease, box-shadow 0.18s ease, opacity 0.18s ease, border-color 0.18s ease;
       }
+      button:hover { transform: translateY(-1px); box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08); }
       button.secondary { background: #ffffff; color: var(--text); border: 1px solid var(--border); }
       button.danger { background: rgba(214,69,69,0.1); color: #b42323; border: 1px solid rgba(214,69,69,0.35); }
       input, select, textarea {
-        width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+        width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
         background: #ffffff; color: var(--text);
+      }
+      input:focus, select:focus, textarea:focus {
+        outline: none;
+        border-color: rgba(0, 167, 181, 0.55);
+        box-shadow: 0 0 0 3px rgba(0, 167, 181, 0.14);
       }
       table { width: 100%; border-collapse: collapse; table-layout: auto; }
       th, td {
@@ -177,8 +283,18 @@
         vertical-align: top;
         font-size: 0.79rem;
       }
-      th { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; background: #f2f5f9; }
-      pre { margin: 0; white-space: pre-wrap; font-size: 0.82rem; background: #f4f7fb; padding: 12px; border-radius: 10px; border: 1px solid var(--border); }
+      th { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; background: #f2f5f9; position: sticky; top: 0; z-index: 1; }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        font-size: 0.82rem;
+        background: #f4f7fb;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        max-height: min(58vh, 780px);
+        overflow: auto;
+      }
       .error { color: #b42323; }
       .split { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
       .pill {
@@ -187,15 +303,35 @@
       }
       .hidden { display: none; }
       .table-scroll {
-        max-height: 52vh;
-        overflow-x: hidden;
-        overflow-y: auto;
+        max-height: min(58vh, 760px);
+        overflow: auto;
         border: 1px solid var(--border);
-        border-radius: 10px;
+        border-radius: 12px;
+        background: #ffffff;
+        scrollbar-gutter: stable both-edges;
       }
       .table-scroll table {
         min-width: 0;
         width: 100%;
+      }
+      .table-scroll::-webkit-scrollbar,
+      pre::-webkit-scrollbar,
+      .api-list-scroll::-webkit-scrollbar {
+        width: 12px;
+        height: 12px;
+      }
+      .table-scroll::-webkit-scrollbar-thumb,
+      pre::-webkit-scrollbar-thumb,
+      .api-list-scroll::-webkit-scrollbar-thumb {
+        background: linear-gradient(180deg, rgba(0, 167, 181, 0.72), rgba(43, 125, 233, 0.64));
+        border-radius: 999px;
+        border: 2px solid rgba(255, 255, 255, 0.92);
+      }
+      .table-scroll::-webkit-scrollbar-track,
+      pre::-webkit-scrollbar-track,
+      .api-list-scroll::-webkit-scrollbar-track {
+        background: rgba(223, 233, 244, 0.92);
+        border-radius: 999px;
       }
       .mt-8 { margin-top: 8px; }
       .mt-10 { margin-top: 10px; }
@@ -317,7 +453,10 @@
       @media (max-width: 1024px) {
         .ops-layout { grid-template-columns: 1fr; }
         .sidebar { position: relative; height: auto; }
-        .topbar { flex-direction: column; align-items: flex-start; }
+        .topbar { flex-direction: column; align-items: flex-start; top: 0; }
+        .topbar-actions { width: 100%; justify-content: flex-start; }
+        .topbar-links { width: 100%; }
+        .section { padding: 16px; }
       }
     </style>
   </head>
@@ -343,11 +482,21 @@
 
       <main class="main">
         <div class="topbar">
-          <div>
-            <h1>Click2Fix Backend</h1>
-            <p>Operational control plane for Wazuh SOAR automation.</p>
+          <div class="topbar-copy">
+            <div class="topbar-kicker">Control Plane</div>
+            <div>
+              <h1>Backend Ops Console</h1>
+              <p>Operational control plane for Wazuh SOAR automation, governance workflows, and authenticated API diagnostics.</p>
+            </div>
+            <div class="topbar-links">
+              <a class="topbar-link" href="#overview">Overview</a>
+              <a class="topbar-link" href="#integrations">Integrations</a>
+              <a class="topbar-link" href="#automation">Automation</a>
+              <a class="topbar-link" href="#governance">Governance</a>
+              <a class="topbar-link" href="#api">API Tools</a>
+            </div>
           </div>
-          <div class="actions">
+          <div class="actions topbar-actions">
             <button id="refreshBtn" class="secondary">Refresh</button>
             <button id="docsBtn" class="secondary">Open Swagger</button>
             <button id="logoutTop" class="secondary">Logout</button>

@@ -97,6 +97,24 @@ normalize_port() {
   fi
 }
 
+current_advertise_host() {
+  local fallback="${1:-localhost}"
+  local candidate=""
+  if command -v ip >/dev/null 2>&1; then
+    candidate="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i=="src") { print $(i+1); exit }}')"
+  fi
+  if [[ -z "${candidate}" ]] && command -v hostname >/dev/null 2>&1; then
+    candidate="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -Ev '^(127\.|169\.254\.|$)' | head -n 1 || true)"
+  fi
+  if [[ -n "${candidate}" ]]; then
+    echo "${candidate}"
+  elif [[ -n "${fallback}" ]]; then
+    echo "${fallback}"
+  else
+    echo "localhost"
+  fi
+}
+
 resolve_port_conflicts() {
   local public_host frontend_port backend_port db_port old_frontend_port
   local changed=0
@@ -192,12 +210,16 @@ EOF
       bash "${SCRIPT_DIR}/upgrade.sh"
       ;;
     8)
-      public_host="$(env_get C2F_PUBLIC_HOST "${ENV_FILE}")"
+      configured_host="$(env_get C2F_PUBLIC_HOST "${ENV_FILE}")"
+      public_host="$(current_advertise_host "${configured_host}")"
       frontend_port="$(env_get C2F_FRONTEND_PORT "${ENV_FILE}")"
       backend_port="$(env_get C2F_BACKEND_PORT "${ENV_FILE}")"
-      [[ -n "${public_host}" ]] || public_host="localhost"
       [[ -n "${frontend_port}" ]] || frontend_port="5173"
       [[ -n "${backend_port}" ]] || backend_port="8000"
+      if [[ -n "${configured_host}" && "${configured_host}" != "${public_host}" ]]; then
+        echo "Detected current host IP: ${public_host}"
+        echo "Configured host from first setup: ${configured_host}"
+      fi
       echo "UI URL: http://${public_host}:${frontend_port}"
       echo "Backend API/docs: http://${public_host}:${backend_port}/docs"
       echo "Backend Ops: http://${public_host}:${backend_port}/ops"

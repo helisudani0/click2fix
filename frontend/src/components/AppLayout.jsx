@@ -507,7 +507,14 @@ export default function AppLayout() {
     if (typeof window === "undefined") return;
     const token = String(getLegacyToken() || "").trim();
     const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
-    const opsUrl = `${window.location.origin}/ops${tokenQuery}`;
+    let opsOrigin = window.location.origin;
+    try {
+      const apiBase = String(api?.defaults?.baseURL || "/api").trim();
+      opsOrigin = new URL(apiBase, window.location.origin).origin;
+    } catch {
+      opsOrigin = window.location.origin;
+    }
+    const opsUrl = `${opsOrigin}/ops${tokenQuery}`;
     window.open(opsUrl, "_blank", "noopener,noreferrer");
   };
 

@@ -111,6 +111,38 @@ function Parse-PortOrDefault {
   return $DefaultPort
 }
 
+function Get-CurrentAdvertiseHost {
+  param([string]$FallbackHost = "localhost")
+
+  try {
+    $route = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction Stop |
+      Sort-Object -Property RouteMetric, InterfaceMetric |
+      Select-Object -First 1
+    if ($route) {
+      $ip = Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $route.InterfaceIndex -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -and $_.IPAddress -notmatch '^(127\.|169\.254\.)' } |
+        Select-Object -First 1 -ExpandProperty IPAddress
+      if (-not [string]::IsNullOrWhiteSpace($ip)) {
+        return $ip
+      }
+    }
+  } catch {}
+
+  try {
+    $ip = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+      Where-Object { $_.IPAddress -and $_.IPAddress -notmatch '^(127\.|169\.254\.)' } |
+      Select-Object -First 1 -ExpandProperty IPAddress
+    if (-not [string]::IsNullOrWhiteSpace($ip)) {
+      return $ip
+    }
+  } catch {}
+
+  if (-not [string]::IsNullOrWhiteSpace($FallbackHost)) {
+    return $FallbackHost
+  }
+  return "localhost"
+}
+
 function Resolve-PortConflicts {
   param([string]$EnvPath)
   if (-not (Test-Path $EnvPath)) { return }
@@ -215,12 +247,16 @@ while ($true) {
         & powershell -NoProfile -ExecutionPolicy Bypass -File $upgradeScript -EnvFile $EnvFile -ComposeFile $ComposeFile
       }
       "8" {
-        $publicHost = Get-EnvValue -Path $envPath -Key "C2F_PUBLIC_HOST"
-        if ([string]::IsNullOrWhiteSpace($publicHost)) { $publicHost = "localhost" }
+        $configuredHost = Get-EnvValue -Path $envPath -Key "C2F_PUBLIC_HOST"
+        $publicHost = Get-CurrentAdvertiseHost -FallbackHost $configuredHost
         $frontendPort = Get-EnvValue -Path $envPath -Key "C2F_FRONTEND_PORT"
         if ([string]::IsNullOrWhiteSpace($frontendPort)) { $frontendPort = "5173" }
         $backendPort = Get-EnvValue -Path $envPath -Key "C2F_BACKEND_PORT"
         if ([string]::IsNullOrWhiteSpace($backendPort)) { $backendPort = "8000" }
+        if (-not [string]::IsNullOrWhiteSpace($configuredHost) -and $configuredHost -ne $publicHost) {
+          Write-Host "Detected current host IP: $publicHost" -ForegroundColor Cyan
+          Write-Host "Configured host from first setup: $configuredHost" -ForegroundColor DarkGray
+        }
         Write-Host "UI URL: http://$publicHost`:$frontendPort"
         Write-Host "Backend API/docs: http://$publicHost`:$backendPort/docs"
         Write-Host "Backend Ops: http://$publicHost`:$backendPort/ops"

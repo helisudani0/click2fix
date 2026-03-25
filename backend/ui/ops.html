@@ -230,7 +230,7 @@
       .mini-track {
         height: 10px;
         border-radius: 999px;
-        background: #e6edf4;
+        background: rgba(255, 255, 255, 0.08);
         overflow: hidden;
       }
       .mini-progress {
@@ -239,10 +239,10 @@
         border-radius: 999px;
         overflow: hidden;
         border: none;
-        background: #e6edf4;
+        background: rgba(255, 255, 255, 0.08);
       }
       .mini-progress::-webkit-progress-bar {
-        background: #e6edf4;
+        background: rgba(255, 255, 255, 0.08);
         border-radius: 999px;
       }
       .mini-progress::-webkit-progress-value {
@@ -673,7 +673,7 @@
       .badge.failed::before { content: "\26A0"; }
       .badge.neutral::before { content: "\25CF"; }
       .policy-chip {
-        background: #f4f8fd;
+        background: rgba(255, 255, 255, 0.03);
         border: 1px solid var(--border);
         border-radius: 12px;
         padding: 10px;
@@ -692,7 +692,7 @@
         .nav-group-links {
           grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
         }
-        .topbar { flex-direction: column; align-items: flex-start; top: 0; }
+        .topbar { flex-direction: column; align-items: flex-start; top: auto; }
         .topbar-right,
         .topbar-shortcuts { width: 100%; justify-content: flex-start; }
         .section { padding: 16px; }

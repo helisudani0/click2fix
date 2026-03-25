@@ -11,18 +11,19 @@ import MissionBriefing from "./MissionBriefing";
 import { APP_TIMEZONE_LABEL } from "../utils/time";
 import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
-const SIDEBAR_STORAGE_KEY = "c2f-sidebar-collapsed-v2";
-const PRIORITY_PANEL_STORAGE_KEY = "c2f-priority-panel-collapsed-v2";
-const PRIORITY_PANEL_HEIGHT_STORAGE_KEY = "c2f-priority-panel-height-v2";
-const SIDEBAR_WIDTH_STORAGE_KEY = "c2f-sidebar-width-v2";
-const OPS_PANEL_COMPACT_STORAGE_KEY = "c2f-ops-panel-compact-v2";
+const SIDEBAR_STORAGE_KEY = "c2f-sidebar-collapsed-v3";
+const PRIORITY_PANEL_STORAGE_KEY = "c2f-priority-panel-collapsed-v3";
+const PRIORITY_PANEL_HEIGHT_STORAGE_KEY = "c2f-priority-panel-height-v3";
+const SIDEBAR_WIDTH_STORAGE_KEY = "c2f-sidebar-width-v3";
+const OPS_PANEL_COMPACT_STORAGE_KEY = "c2f-ops-panel-compact-v3";
+const PRIORITY_QUEUE_STORAGE_KEY = "c2f-priority-queue-v1";
 const MISSION_BRIEFING_STORAGE_KEY = "c2f-mission-briefing-v1";
-const DEFAULT_PRIORITY_PANEL_HEIGHT = 320;
+const DEFAULT_PRIORITY_PANEL_HEIGHT = 288;
 const MIN_PRIORITY_PANEL_HEIGHT = 170;
 const MAX_PRIORITY_PANEL_HEIGHT = 520;
-const DEFAULT_SIDEBAR_WIDTH = 352;
-const MIN_SIDEBAR_WIDTH = 248;
-const MAX_SIDEBAR_WIDTH = 640;
+const DEFAULT_SIDEBAR_WIDTH = 336;
+const MIN_SIDEBAR_WIDTH = 260;
+const MAX_SIDEBAR_WIDTH = 560;
 
 const ROUTE_LABELS = {
   "/": "Dashboard",
@@ -129,6 +130,38 @@ const shortLabel = (value) =>
     .slice(0, 3)
     .toUpperCase() || "NAV";
 
+const DEFAULT_PRIORITY_QUEUE = PRIORITY_LINKS.map((item) => ({
+  to: item.to,
+  enabled: true,
+}));
+
+const normalizePriorityQueue = (value) => {
+  const fallback = DEFAULT_PRIORITY_QUEUE;
+  if (!value) return fallback;
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return fallback;
+    const byRoute = new Map(PRIORITY_LINKS.map((item) => [item.to, item]));
+    const normalized = [];
+    parsed.forEach((entry) => {
+      const route = String(entry?.to || "").trim();
+      if (!byRoute.has(route) || normalized.some((item) => item.to === route)) return;
+      normalized.push({
+        to: route,
+        enabled: entry?.enabled !== false,
+      });
+    });
+    PRIORITY_LINKS.forEach((item) => {
+      if (!normalized.some((entry) => entry.to === item.to)) {
+        normalized.push({ to: item.to, enabled: true });
+      }
+    });
+    return normalized;
+  } catch {
+    return fallback;
+  }
+};
+
 const clampPriorityPanelHeight = (value) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return DEFAULT_PRIORITY_PANEL_HEIGHT;
@@ -189,6 +222,10 @@ export default function AppLayout() {
     if (typeof window === "undefined") return DEFAULT_PRIORITY_PANEL_HEIGHT;
     return clampPriorityPanelHeight(window.localStorage.getItem(PRIORITY_PANEL_HEIGHT_STORAGE_KEY));
   });
+  const [priorityQueueItems, setPriorityQueueItems] = useState(() => {
+    if (typeof window === "undefined") return DEFAULT_PRIORITY_QUEUE;
+    return normalizePriorityQueue(window.localStorage.getItem(PRIORITY_QUEUE_STORAGE_KEY));
+  });
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     if (typeof window === "undefined") return DEFAULT_SIDEBAR_WIDTH;
     return clampSidebarWidth(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
@@ -209,6 +246,7 @@ export default function AppLayout() {
     socketLive: false,
   });
   const [missionBriefingOpen, setMissionBriefingOpen] = useState(false);
+  const [priorityConfigOpen, setPriorityConfigOpen] = useState(false);
   const isGlobalShellRoute = location.pathname.startsWith("/global-shell");
 
   useEffect(() => {
@@ -228,6 +266,11 @@ export default function AppLayout() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
+    window.localStorage.setItem(PRIORITY_QUEUE_STORAGE_KEY, JSON.stringify(priorityQueueItems));
+  }, [priorityQueueItems]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
     window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
   }, [sidebarWidth]);
 
@@ -235,6 +278,12 @@ export default function AppLayout() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(OPS_PANEL_COMPACT_STORAGE_KEY, opsCompact ? "1" : "0");
   }, [opsCompact]);
+
+  useEffect(() => {
+    if (priorityPanelCollapsed || sidebarCollapsed) {
+      setPriorityConfigOpen(false);
+    }
+  }, [priorityPanelCollapsed, sidebarCollapsed]);
 
   const stopPriorityResize = useCallback(() => {
     if (typeof window !== "undefined" && priorityResizeRef.current) {
@@ -527,6 +576,36 @@ export default function AppLayout() {
   };
 
   const healthTone = backendHealth.socketLive ? "success" : "pending";
+  const priorityLinks = useMemo(() => {
+    const byRoute = new Map(PRIORITY_LINKS.map((item) => [item.to, item]));
+    return priorityQueueItems
+      .filter((entry) => entry.enabled !== false)
+      .map((entry) => byRoute.get(entry.to))
+      .filter(Boolean);
+  }, [priorityQueueItems]);
+
+  const updatePriorityQueueItem = useCallback((route, patch) => {
+    setPriorityQueueItems((current) =>
+      current.map((item) => (item.to === route ? { ...item, ...patch } : item))
+    );
+  }, []);
+
+  const movePriorityQueueItem = useCallback((route, direction) => {
+    setPriorityQueueItems((current) => {
+      const index = current.findIndex((item) => item.to === route);
+      if (index < 0) return current;
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= current.length) return current;
+      const next = [...current];
+      const [item] = next.splice(index, 1);
+      next.splice(nextIndex, 0, item);
+      return next;
+    });
+  }, []);
+
+  const resetPriorityQueue = useCallback(() => {
+    setPriorityQueueItems(DEFAULT_PRIORITY_QUEUE);
+  }, []);
 
   return (
     <div
@@ -566,21 +645,82 @@ export default function AppLayout() {
           >
             <div className="priority-panel-header">
               <div className="priority-title">Priority Queue</div>
-              <button
-                type="button"
-                className="panel-collapse-btn"
-                onClick={() => setPriorityPanelCollapsed((prev) => !prev)}
-                aria-expanded={!priorityPanelCollapsed}
-                aria-label={priorityPanelCollapsed ? "Expand priority queue" : "Collapse priority queue"}
-                title={priorityPanelCollapsed ? "Expand priority queue" : "Collapse priority queue"}
-              >
-                {priorityPanelCollapsed ? "+" : "-"}
-              </button>
+              <div className="priority-panel-actions">
+                {!priorityPanelCollapsed ? (
+                  <button
+                    type="button"
+                    className="panel-collapse-btn"
+                    onClick={() => setPriorityConfigOpen((prev) => !prev)}
+                    aria-pressed={priorityConfigOpen}
+                    title={priorityConfigOpen ? "Close priority queue settings" : "Customize priority queue"}
+                  >
+                    {priorityConfigOpen ? "Done" : "Edit"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="panel-collapse-btn"
+                  onClick={() => setPriorityPanelCollapsed((prev) => !prev)}
+                  aria-expanded={!priorityPanelCollapsed}
+                  aria-label={priorityPanelCollapsed ? "Expand priority queue" : "Collapse priority queue"}
+                  title={priorityPanelCollapsed ? "Expand priority queue" : "Collapse priority queue"}
+                >
+                  {priorityPanelCollapsed ? "+" : "-"}
+                </button>
+              </div>
             </div>
             {!priorityPanelCollapsed ? (
               <div className="priority-panel-body">
+                {priorityConfigOpen ? (
+                  <div className="priority-config">
+                    <div className="priority-config-header">
+                      <span className="meta-line">Choose which shortcuts stay in the queue and reorder them for your workflow.</span>
+                      <button type="button" className="panel-collapse-btn" onClick={resetPriorityQueue} title="Reset priority queue">
+                        Reset
+                      </button>
+                    </div>
+                    <div className="priority-config-list">
+                      {priorityQueueItems.map((item, index) => {
+                        const meta = PRIORITY_LINKS.find((link) => link.to === item.to);
+                        if (!meta) return null;
+                        return (
+                          <div key={item.to} className="priority-config-row">
+                            <label className="priority-config-toggle">
+                              <input
+                                type="checkbox"
+                                checked={item.enabled !== false}
+                                onChange={(event) => updatePriorityQueueItem(item.to, { enabled: event.target.checked })}
+                              />
+                              <span>{meta.label}</span>
+                            </label>
+                            <div className="priority-config-actions">
+                              <button
+                                type="button"
+                                className="panel-collapse-btn"
+                                onClick={() => movePriorityQueueItem(item.to, -1)}
+                                disabled={index === 0}
+                                title="Move up"
+                              >
+                                Up
+                              </button>
+                              <button
+                                type="button"
+                                className="panel-collapse-btn"
+                                onClick={() => movePriorityQueueItem(item.to, 1)}
+                                disabled={index === priorityQueueItems.length - 1}
+                                title="Move down"
+                              >
+                                Down
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="priority-links">
-                  {PRIORITY_LINKS.map((item) => (
+                  {priorityLinks.length ? priorityLinks.map((item) => (
                     <NavLink
                       key={item.to}
                       to={item.to}
@@ -590,7 +730,11 @@ export default function AppLayout() {
                       <span className="nav-link-badge">{shortLabel(item.label)}</span>
                       <span className="nav-link-label">{item.label}</span>
                     </NavLink>
-                  ))}
+                  )) : (
+                    <div className="empty-state priority-empty-state">
+                      Enable at least one priority shortcut in Edit mode.
+                    </div>
+                  )}
                 </div>
               </div>
             ) : null}

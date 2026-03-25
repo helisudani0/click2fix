@@ -5,7 +5,7 @@ import {
   runSchedulerJobNow,
   updateSchedulerJob,
 } from "../api/wazuh";
-import { formatWazuhTimestamp } from "../utils/time";
+import RelativeTimestamp from "../components/RelativeTimestamp";
 
 const toJob = (row) => {
   if (Array.isArray(row)) {
@@ -129,7 +129,7 @@ export default function Scheduler() {
     }
   };
 
-  if (loading) return <div className="page">Loading scheduler jobs...</div>;
+  if (loading) return <div className="page"><div className="empty-state">Loading scheduler jobs...</div></div>;
 
   return (
     <div className="page">
@@ -246,7 +246,7 @@ export default function Scheduler() {
                       </span>
                     </td>
                     <td>{job.requireApproval ? "yes" : "no"}</td>
-                    <td>{formatWazuhTimestamp(job.lastRun)}</td>
+                    <td><RelativeTimestamp value={job.lastRun} /></td>
                     <td>
                       <div className="page-actions">
                         <button className="btn secondary" onClick={() => toggleJob(job)}>

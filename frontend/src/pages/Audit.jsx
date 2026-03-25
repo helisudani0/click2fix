@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { getAudit } from "../api/wazuh";
-import { formatWazuhTimestamp } from "../utils/time";
+import RelativeTimestamp from "../components/RelativeTimestamp";
 
 const auditRow = (row) => {
   if (Array.isArray(row)) {
@@ -100,43 +100,45 @@ export default function Audit() {
           </button>
         </div>
 
-        <table className="table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Actor</th>
-              <th>Action</th>
-              <th>Entity</th>
-              <th>Detail</th>
-              <th>IP</th>
-              <th>Time</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
+        <div className="table-scroll">
+          <table className="table readable compact">
+            <thead>
               <tr>
-                <td colSpan="7" className="text-center">
-                  No audit events
-                </td>
+                <th>ID</th>
+                <th>Actor</th>
+                <th>Action</th>
+                <th>Entity</th>
+                <th>Detail</th>
+                <th>IP</th>
+                <th>Time</th>
               </tr>
-            ) : (
-              rows.map((raw) => {
-                const row = auditRow(raw);
-                return (
-                  <tr key={row.id}>
-                    <td>{row.id}</td>
-                    <td>{row.actor || "-"}</td>
-                    <td>{row.action || "-"}</td>
-                    <td>{row.entityType}:{row.entityId}</td>
-                    <td>{row.detail || "-"}</td>
-                    <td>{row.ipAddress || "-"}</td>
-                    <td>{formatWazuhTimestamp(row.createdAt)}</td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="text-center">
+                    No audit events
+                  </td>
+                </tr>
+              ) : (
+                rows.map((raw) => {
+                  const row = auditRow(raw);
+                  return (
+                    <tr key={row.id}>
+                      <td>{row.id}</td>
+                      <td>{row.actor || "-"}</td>
+                      <td>{row.action || "-"}</td>
+                      <td>{row.entityType}:{row.entityId}</td>
+                      <td>{row.detail || "-"}</td>
+                      <td>{row.ipAddress || "-"}</td>
+                      <td><RelativeTimestamp value={row.createdAt} /></td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

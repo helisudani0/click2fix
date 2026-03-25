@@ -190,7 +190,7 @@ export default function Executions() {
     return totals;
   }, [parsedRuns]);
 
-  if (loading) return <div className="empty-state">Loading execution workspace...</div>;
+  if (loading) return <div className="page"><div className="empty-state">Loading execution workspace...</div></div>;
   if (error) return <div className="empty-state">Error: {error}</div>;
 
   return (

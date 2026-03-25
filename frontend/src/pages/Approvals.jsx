@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import api from "../api/client";
-import { formatWazuhTimestamp } from "../utils/time";
+import { decideApproval, getPendingApprovals } from "../api/wazuh";
+import RelativeTimestamp from "../components/RelativeTimestamp";
 
 const approvalRow = (row) => {
   if (Array.isArray(row)) {
@@ -34,17 +34,17 @@ export default function Approvals() {
   const [rows, setRows] = useState([]);
 
   const load = () =>
-    api.get("/approvals/pending")
+    getPendingApprovals()
       .then(r => setRows(r.data));
 
   useEffect(load, []);
 
   const approve = id =>
-    api.post(`/approvals/${id}/approve`)
+    decideApproval(id, { decision: "approve" })
       .then(load);
 
   const reject = id =>
-    api.post(`/approvals/${id}/reject`)
+    decideApproval(id, { decision: "reject" })
       .then(load);
 
   return (
@@ -59,55 +59,63 @@ export default function Approvals() {
         </div>
       </div>
 
-      <div className="table-scroll">
-        <table className="table readable">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Agent</th>
-              <th>Action</th>
-              <th>Requested By</th>
-              <th>Alert</th>
-              <th>Approvals</th>
-              <th>Justification</th>
-              <th>Requested At</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {rows.length === 0 ? (
+      <div className="card">
+        <div className="card-header">
+          <div>
+            <h3>Approval Queue</h3>
+            <p className="muted">Review automation requests before they execute on endpoints.</p>
+          </div>
+          <span className="chip">{rows.length} pending</span>
+        </div>
+        <div className="table-scroll">
+          <table className="table readable compact">
+            <thead>
               <tr>
-                <td colSpan="9" className="text-center">
-                  No pending approvals
-                </td>
+                <th>ID</th>
+                <th>Agent</th>
+                <th>Action</th>
+                <th>Requested By</th>
+                <th>Alert</th>
+                <th>Approvals</th>
+                <th>Justification</th>
+                <th>Requested</th>
+                <th>Actions</th>
               </tr>
-            ) : (
-              rows.map((raw) => {
-                const row = approvalRow(raw);
-                return (
-                <tr key={row.id}>
-                  <td>{row.id}</td>
-                  <td>{row.agent || "-"}</td>
-                  <td>{row.action || "-"}</td>
-                  <td>{row.requestedBy || "-"}</td>
-                  <td>{row.alertId || "-"}</td>
-                  <td>{row.approved} / {row.required}</td>
-                  <td>{row.justification || "-"}</td>
-                  <td>{formatWazuhTimestamp(row.createdAt)}</td>
-                  <td>
-                    <div className="page-actions">
-                      <button className="btn success" onClick={() => approve(row.id)}>Approve</button>
-                      <button className="btn danger" onClick={() => reject(row.id)}>Reject</button>
-                    </div>
+            </thead>
+
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan="9" className="text-center">
+                    No pending approvals
                   </td>
                 </tr>
-              );
-            })
-            )}
-          </tbody>
-
-        </table>
+              ) : (
+                rows.map((raw) => {
+                  const row = approvalRow(raw);
+                  return (
+                    <tr key={row.id}>
+                      <td>{row.id}</td>
+                      <td>{row.agent || "-"}</td>
+                      <td>{row.action || "-"}</td>
+                      <td>{row.requestedBy || "-"}</td>
+                      <td>{row.alertId || "-"}</td>
+                      <td>{row.approved} / {row.required}</td>
+                      <td>{row.justification || "-"}</td>
+                      <td><RelativeTimestamp value={row.createdAt} /></td>
+                      <td>
+                        <div className="page-actions">
+                          <button className="btn success" onClick={() => approve(row.id)}>Approve</button>
+                          <button className="btn danger" onClick={() => reject(row.id)}>Reject</button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

@@ -1,6 +1,27 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import api from "../api/client";
+import {
+  addCaseNote,
+  attachCaseAlert,
+  createCaseRecord,
+  downloadCaseAttachment,
+  downloadCaseEvidence,
+  getCaseAttackPath,
+  getCaseAttachments,
+  getCaseDetail,
+  getCaseEvidence,
+  getCaseEvidenceCustody,
+  getCaseIocGraph,
+  getCaseTimeline,
+  getCaseTimelineExportUrl,
+  getCases,
+  lockCaseEvidence,
+  updateCaseRisk,
+  updateCaseStatus,
+  uploadCaseAttachment,
+  uploadCaseEvidence,
+} from "../api/wazuh";
+import RelativeTimestamp from "../components/RelativeTimestamp";
 import { formatWazuhTimestamp } from "../utils/time";
 
 export default function Cases() {
@@ -39,7 +60,7 @@ export default function Cases() {
   const loadCases = async () => {
     try {
       setLoading(true);
-      const response = await api.get("/cases");
+      const response = await getCases();
       setCases(response.data);
       setError(null);
     } catch (err) {
@@ -58,10 +79,8 @@ export default function Cases() {
     setDetailLoading(true);
     try {
       const [detailRes, timelineRes] = await Promise.all([
-        api.get(`/cases/${caseId}`),
-        api.get(`/cases/${caseId}/timeline`, {
-          params: eventType ? { event_type: eventType } : undefined
-        })
+        getCaseDetail(caseId),
+        getCaseTimeline(caseId, eventType ? { event_type: eventType } : undefined)
       ]);
       setDetail(detailRes.data);
       setTimeline(timelineRes.data || []);
@@ -74,14 +93,14 @@ export default function Cases() {
         setRiskImpact("medium");
       }
       const [attackRes, attachmentsRes] = await Promise.all([
-        api.get(`/cases/${caseId}/attack-path`),
-        api.get(`/cases/${caseId}/attachments`)
+        getCaseAttackPath(caseId),
+        getCaseAttachments(caseId)
       ]);
       setAttackPath(attackRes.data || []);
       setAttachments(attachmentsRes.data || []);
       const [evidenceRes, graphRes] = await Promise.all([
-        api.get(`/cases/${caseId}/evidence`),
-        api.get(`/cases/${caseId}/ioc-graph`)
+        getCaseEvidence(caseId),
+        getCaseIocGraph(caseId)
       ]);
       setEvidence(evidenceRes.data || []);
       setIocGraph(graphRes.data || { nodes: [], edges: [] });
@@ -103,17 +122,13 @@ export default function Cases() {
       return;
     }
     try {
-      const res = await api.post("/cases", null, {
-        params: {
-          title: newCaseTitle,
-          description: newCaseDesc || "Investigation case"
-        }
+      const res = await createCaseRecord({
+        title: newCaseTitle,
+        description: newCaseDesc || "Investigation case",
       });
       const caseId = res.data?.id;
       if (caseId && newAlertId) {
-        await api.post(`/cases/${caseId}/alerts`, null, {
-          params: { alert_id: newAlertId }
-        });
+        await attachCaseAlert(caseId, newAlertId);
       }
       setNewCaseTitle("");
       setNewCaseDesc("");
@@ -143,9 +158,7 @@ export default function Cases() {
   const submitNote = async () => {
     if (!note.trim() || !selectedId) return;
     try {
-      await api.post(`/cases/${selectedId}/notes`, null, {
-        params: { note }
-      });
+      await addCaseNote(selectedId, note);
       setNote("");
       await loadCaseDetail(selectedId);
     } catch (err) {
@@ -156,9 +169,7 @@ export default function Cases() {
   const updateStatus = async () => {
     if (!selectedId) return;
     try {
-      await api.post(`/cases/${selectedId}/status`, null, {
-        params: { status: statusValue }
-      });
+      await updateCaseStatus(selectedId, statusValue);
       await loadCaseDetail(selectedId);
       await loadCases();
     } catch (err) {
@@ -169,7 +180,7 @@ export default function Cases() {
   const updateRisk = async () => {
     if (!selectedId) return;
     try {
-      await api.post(`/cases/${selectedId}/risk`, {
+      await updateCaseRisk(selectedId, {
         risk_score: riskScore === "" ? null : Number(riskScore),
         impact: riskImpact
       });
@@ -184,9 +195,7 @@ export default function Cases() {
     try {
       const form = new FormData();
       form.append("file", file);
-      await api.post(`/cases/${selectedId}/attachments`, form, {
-        headers: { "Content-Type": "multipart/form-data" }
-      });
+      await uploadCaseAttachment(selectedId, form);
       setFile(null);
       await loadCaseDetail(selectedId);
     } catch (err) {
@@ -199,9 +208,7 @@ export default function Cases() {
     try {
       const id = attachment[0];
       const filename = attachment[1];
-      const res = await api.get(`/cases/${selectedId}/attachments/${id}`, {
-        responseType: "blob"
-      });
+      const res = await downloadCaseAttachment(selectedId, id);
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement("a");
       link.href = url;
@@ -222,9 +229,7 @@ export default function Cases() {
       if (evidenceLabel) form.append("label", evidenceLabel);
       if (evidenceCategory) form.append("category", evidenceCategory);
       if (evidenceNotes) form.append("notes", evidenceNotes);
-      await api.post(`/cases/${selectedId}/evidence`, form, {
-        headers: { "Content-Type": "multipart/form-data" }
-      });
+      await uploadCaseEvidence(selectedId, form);
       setEvidenceFile(null);
       setEvidenceLabel("");
       setEvidenceCategory("");
@@ -240,9 +245,7 @@ export default function Cases() {
     try {
       const id = item[0];
       const filename = item[1];
-      const res = await api.get(`/cases/${selectedId}/evidence/${id}/download`, {
-        responseType: "blob"
-      });
+      const res = await downloadCaseEvidence(selectedId, id);
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement("a");
       link.href = url;
@@ -260,7 +263,7 @@ export default function Cases() {
     try {
       const id = item[0];
       setSelectedEvidence(item);
-      const res = await api.get(`/cases/${selectedId}/evidence/${id}/custody`);
+      const res = await getCaseEvidenceCustody(selectedId, id);
       setCustody(res.data || []);
     } catch (err) {
       setError(err.response?.data?.detail || err.message);
@@ -269,12 +272,11 @@ export default function Cases() {
 
   const exportTimeline = (format) => {
     if (!selectedId) return;
-    const params = new URLSearchParams();
-    if (timelineFilter) {
-      params.append("event_type", timelineFilter);
-    }
-    params.append("format", format);
-    window.open(`/api/cases/${selectedId}/timeline/export?${params.toString()}`, "_blank");
+    const url = getCaseTimelineExportUrl(selectedId, {
+      event_type: timelineFilter || undefined,
+      format
+    });
+    window.open(url, "_blank");
   };
 
   const timelineTypes = [
@@ -331,7 +333,7 @@ export default function Cases() {
     if (!selectedId) return;
     try {
       const id = item[0];
-      await api.post(`/cases/${selectedId}/evidence/${id}/lock`);
+      await lockCaseEvidence(selectedId, id);
       await loadCaseDetail(selectedId);
       await loadCustody(item);
     } catch (err) {
@@ -420,8 +422,8 @@ export default function Cases() {
     );
   };
 
-  if (loading) return <div>Loading cases...</div>;
-  if (error) return <div>Error: {error}</div>;
+  if (loading) return <div className="page"><div className="empty-state">Loading cases...</div></div>;
+  if (error) return <div className="page"><div className="empty-state">Error: {error}</div></div>;
 
   return (
     <div className="page">
@@ -527,49 +529,60 @@ export default function Cases() {
         </div>
       </div>
 
-      <table className="table">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Title</th>
-            <th>Status</th>
-            <th>Owner</th>
-            <th>Created</th>
-          </tr>
-        </thead>
-
-        <tbody>
-          {filteredCases.length === 0 ? (
-            <tr>
-              <td colSpan="5" className="text-center">
-                No cases found
-              </td>
-            </tr>
-          ) : (
-            filteredCases.map(c => (
-              <tr
-                key={c[0]}
-                onClick={() => {
-                  setSelectedId(c[0]);
-                  setSelectedEvidence(null);
-                  setCustody([]);
-                  loadCaseDetail(c[0]);
-                  setSearchParams({ case: String(c[0]) });
-                }}
-                className={`clickable ${selectedId === c[0] ? "selected" : ""}`}
-              >
-                <td>{c[0]}</td>
-                <td>{c[1]}</td>
-                <td>
-                  <span className={`status-pill ${statusClass(c[3])}`}>{c[3]}</span>
-                </td>
-                <td>{c[4]}</td>
-                <td>{formatWazuhTimestamp(c[5])}</td>
+      <div className="card">
+        <div className="card-header">
+          <div>
+            <h3>Case Queue</h3>
+            <p className="muted">Current investigations and ownership across the case desk.</p>
+          </div>
+          <span className="chip">{filteredCases.length} visible</span>
+        </div>
+        <div className="table-scroll">
+          <table className="table readable">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Title</th>
+                <th>Status</th>
+                <th>Owner</th>
+                <th>Created</th>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+            </thead>
+
+            <tbody>
+              {filteredCases.length === 0 ? (
+                <tr>
+                  <td colSpan="5" className="text-center">
+                    No cases found
+                  </td>
+                </tr>
+              ) : (
+                filteredCases.map(c => (
+                  <tr
+                    key={c[0]}
+                    onClick={() => {
+                      setSelectedId(c[0]);
+                      setSelectedEvidence(null);
+                      setCustody([]);
+                      loadCaseDetail(c[0]);
+                      setSearchParams({ case: String(c[0]) });
+                    }}
+                    className={`clickable ${selectedId === c[0] ? "selected" : ""}`}
+                  >
+                    <td>{c[0]}</td>
+                    <td>{c[1]}</td>
+                    <td>
+                      <span className={`status-pill ${statusClass(c[3])}`}>{c[3]}</span>
+                    </td>
+                    <td>{c[4]}</td>
+                    <td><RelativeTimestamp value={c[5]} /></td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {selectedId && (
         <div className="grid-2 mt-24">

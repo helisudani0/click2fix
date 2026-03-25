@@ -502,12 +502,67 @@ p {
   gap: 8px;
 }
 
+.priority-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .priority-panel-body {
   min-height: 110px;
   flex: 1 1 auto;
   overflow: auto;
   padding-right: 2px;
   overscroll-behavior: contain;
+}
+
+.priority-config {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid rgba(157, 186, 215, 0.16);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.priority-config-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.priority-config-list {
+  display: grid;
+  gap: 8px;
+}
+
+.priority-config-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.priority-config-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #dce9f9;
+  font-size: 0.8rem;
+}
+
+.priority-config-toggle input {
+  accent-color: var(--accent);
+}
+
+.priority-config-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .priority-panel.collapsed {
@@ -936,7 +991,7 @@ p {
   height: 8px;
   border-radius: 999px;
   background: var(--success);
-  box-shadow: 0 0 10px rgba(23, 166, 115, 0.45);
+  box-shadow: 0 0 0 3px rgba(23, 166, 115, 0.16);
 }
 
 .main-content {
@@ -1109,6 +1164,7 @@ p {
   justify-content: flex-end;
   gap: 10px;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .content {
@@ -2370,13 +2426,15 @@ table tbody tr.selected,
 }
 
 .pill.active {
-  background: rgba(52, 211, 153, 0.14);
-  color: #bbf7d0;
+  background: rgba(16, 185, 129, 0.12);
+  color: #d9fff0;
+  border: 1px solid rgba(16, 185, 129, 0.24);
 }
 
 .pill.inactive {
-  background: rgba(248, 113, 113, 0.12);
-  color: #fecaca;
+  background: rgba(239, 68, 68, 0.12);
+  color: #ffe2e2;
+  border: 1px solid rgba(239, 68, 68, 0.22);
 }
 
 .list {
@@ -3018,13 +3076,13 @@ svg {
 
   .topbar {
     position: relative;
-    grid-template-columns: 1fr;
+    flex-direction: column;
   }
 
   .topbar-right {
     width: 100%;
     grid-template-columns: 1fr;
-    justify-self: stretch;
+    margin-left: 0;
   }
 
   .topbar-shortcuts {

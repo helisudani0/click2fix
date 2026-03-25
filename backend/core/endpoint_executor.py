@@ -5519,7 +5519,12 @@ catch {
         ctx = context or {}
         event_sink = ctx.get("_event_sink") if isinstance(ctx, dict) and callable(ctx.get("_event_sink")) else None
         aid = str(action_id or "").strip().lower()
-        force_serial = aid in {"custom-os-command"}
+        force_serial = False
+        if aid == "custom-os-command":
+            # Keep SYSTEM custom commands serialized, but allow non-SYSTEM commands
+            # (for example, whoami across multiple endpoints) to run in parallel.
+            run_as_system = _bool(action_args[4] if len(action_args) > 4 else False, False)
+            force_serial = bool(run_as_system)
         stagger_actions = {"patch-windows", "windows-os-update", "fleet-software-update", "package-update"}
         use_stagger = (
             aid in stagger_actions

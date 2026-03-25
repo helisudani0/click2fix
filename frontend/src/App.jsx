@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { Routes, Route } from "react-router-dom";
 import AppLayout from "./components/AppLayout";
 import RequireAuth from "./components/RequireAuth";
-import "./index.css";
+import "./index-base.css";
 import "./styles/console-redesign-v4.css";
 
 const Dashboard = lazy(() => import("./components/Dashboard"));

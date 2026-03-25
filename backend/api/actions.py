@@ -25,6 +25,7 @@ from core.global_shell_ai import (
 )
 from core.indexer_client import IndexerClient
 from core.security import require_role
+from core.security_monitoring import record_security_event
 from core.time_utils import utc_now_naive
 from core.wazuh_client import WazuhClient
 from core.ws_bus import publish_event
@@ -1555,11 +1556,27 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
             detail=f"command exceeds {_GLOBAL_SHELL_MAX_COMMAND_CHARS} characters",
         )
 
-    initial_safety = enforce_command_safety(
-        raw_command,
-        shell=shell,
-        allow_destructive=allow_destructive,
-    )
+    try:
+        initial_safety = enforce_command_safety(
+            raw_command,
+            shell=shell,
+            allow_destructive=allow_destructive,
+        )
+    except HTTPException as exc:
+        record_security_event(
+            "execution.global_shell_blocked",
+            severity="warning",
+            request=request,
+            user=user if isinstance(user, dict) else None,
+            detail=str(exc.detail),
+            metadata={
+                "shell": shell,
+                "target_mode": target_mode,
+                "target_count": len(selected_ids),
+                "run_as_system": bool(run_as_system),
+            },
+        )
+        raise
 
     command_to_run = raw_command
     if shell == "cmd":
@@ -1577,6 +1594,25 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
     )
     actor = user.get("sub") if isinstance(user, dict) else str(user)
     org_id = user.get("org_id") if isinstance(user, dict) else None
+    initial_risk_score = _to_int(initial_safety.get("risk_score"), 0)
+
+    if initial_risk_score >= 60 or effective_run_as_system or len(selected_ids) >= 25:
+        record_security_event(
+            "execution.global_shell_launch",
+            severity="warning" if (initial_risk_score >= 80 or effective_run_as_system or len(selected_ids) >= 25) else "info",
+            request=request,
+            user=user if isinstance(user, dict) else None,
+            detail="Global Shell launch requested",
+            metadata={
+                "shell": shell,
+                "target_mode": target_mode,
+                "target_count": len(selected_ids),
+                "run_as_system": bool(effective_run_as_system),
+                "risk_score": initial_risk_score,
+                "assistant_used": bool(assistant_plan),
+                "auto_remediate": bool(auto_remediate),
+            },
+        )
 
     assistant_meta = {
         "used": bool(assistant_plan),

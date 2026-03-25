@@ -555,8 +555,6 @@ export default function AppLayout() {
 
   const openOpsConsole = () => {
     if (typeof window === "undefined") return;
-    const token = String(getLegacyToken() || "").trim();
-    const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
     let opsOrigin = window.location.origin;
     try {
       const apiBase = String(api?.defaults?.baseURL || "/api").trim();
@@ -564,7 +562,7 @@ export default function AppLayout() {
     } catch {
       opsOrigin = window.location.origin;
     }
-    const opsUrl = `${opsOrigin}/ops${tokenQuery}`;
+    const opsUrl = `${opsOrigin}/ops`;
     window.open(opsUrl, "_blank", "noopener,noreferrer");
   };
 
@@ -869,43 +867,47 @@ export default function AppLayout() {
       <main className="main-content">
         <div className="topbar">
           <div className="topbar-left">
-            <div className="topbar-title-row">
-              <div className="topbar-title">{currentPageLabel}</div>
+            <div className="topbar-title-block">
+              <div className="topbar-title-row">
+                <div className="topbar-title">{currentPageLabel}</div>
+              </div>
+              <div className="topbar-subtitle">Security Operations Console</div>
+              <div className="topbar-breadcrumbs">
+                {breadcrumbs.map((item, index) => (
+                  <span key={`${item.href}-${item.label}`}>
+                    {index > 0 ? " / " : ""}
+                    {item.label}
+                  </span>
+                ))}{" "}
+                | Timezone: {APP_TIMEZONE_LABEL}
+              </div>
             </div>
-            <div className="topbar-subtitle">Security Operations Console</div>
-            <div className="topbar-breadcrumbs">
-              {breadcrumbs.map((item, index) => (
-                <span key={`${item.href}-${item.label}`}>
-                  {index > 0 ? " / " : ""}
-                  {item.label}
-                </span>
-              ))}{" "}
-              | Timezone: {APP_TIMEZONE_LABEL}
-            </div>
-            <div className="topbar-shortcuts" aria-label="Quick navigation">
-              <NavLink to="/alerts" className={({ isActive }) => `topbar-shortcut${isActive ? " active" : ""}`}>
-                Alerts
-              </NavLink>
-              <NavLink to="/cases" className={({ isActive }) => `topbar-shortcut${isActive ? " active" : ""}`}>
-                Cases
-              </NavLink>
-              <NavLink to="/approvals" className={({ isActive }) => `topbar-shortcut${isActive ? " active" : ""}`}>
-                Approvals
-              </NavLink>
-            </div>
-            <div className="topbar-health-hud">
-              <div className="health-hud-label">Backend Health</div>
-              <div className="health-hud-metrics">
-                <span className={`status-pill ${healthTone}`}>
-                  {backendHealth.socketLive ? "Socket Live" : "Reconnecting"}
-                </span>
-                <span className="health-hud-metric">{backendHealth.activeExecutions} active executions</span>
-                <span className="health-hud-metric">
-                  {backendHealth.socketLatencyMs !== null ? `${backendHealth.socketLatencyMs} ms socket` : "Measuring latency"}
-                </span>
-                {backendHealth.queuedExecutions > 0 ? (
-                  <span className="health-hud-metric">{backendHealth.queuedExecutions} queued</span>
-                ) : null}
+            <div className="topbar-meta-row">
+              <div className="topbar-shortcuts" aria-label="Quick navigation">
+                <NavLink to="/alerts" className={({ isActive }) => `topbar-shortcut${isActive ? " active" : ""}`}>
+                  Alerts
+                </NavLink>
+                <NavLink to="/cases" className={({ isActive }) => `topbar-shortcut${isActive ? " active" : ""}`}>
+                  Cases
+                </NavLink>
+                <NavLink to="/approvals" className={({ isActive }) => `topbar-shortcut${isActive ? " active" : ""}`}>
+                  Approvals
+                </NavLink>
+              </div>
+              <div className="topbar-health-hud">
+                <div className="health-hud-label">Backend Health</div>
+                <div className="health-hud-metrics">
+                  <span className={`status-pill ${healthTone}`}>
+                    {backendHealth.socketLive ? "Socket Live" : "Reconnecting"}
+                  </span>
+                  <span className="health-hud-metric">{backendHealth.activeExecutions} active executions</span>
+                  <span className="health-hud-metric">
+                    {backendHealth.socketLatencyMs !== null ? `${backendHealth.socketLatencyMs} ms socket` : "Measuring latency"}
+                  </span>
+                  {backendHealth.queuedExecutions > 0 ? (
+                    <span className="health-hud-metric">{backendHealth.queuedExecutions} queued</span>
+                  ) : null}
+                </div>
               </div>
             </div>
           </div>

@@ -4,20 +4,24 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from core.security import ROLE_LEVELS, decode_token, extract_request_token, oauth
+from core.security_monitoring import record_security_event
 
 router = APIRouter()
 OPS_PATH = Path(__file__).resolve().parents[1] / "ui" / "ops.html"
 
 
-def _resolve_admin_user(request: Request, bearer_token: str | None, query_token: str | None):
+def _resolve_admin_user(request: Request, bearer_token: str | None):
     candidates: list[str] = []
     request_token = extract_request_token(request, bearer_token)
     if request_token:
         candidates.append(request_token)
-    token_q = str(query_token or "").strip()
-    if token_q and token_q not in candidates:
-        candidates.append(token_q)
     if not candidates:
+        record_security_event(
+            "ops.auth_missing",
+            severity="warning",
+            request=request,
+            detail="Ops console request did not include a valid auth cookie or bearer token",
+        )
         raise HTTPException(
             status_code=401,
             detail="Not authenticated",
@@ -29,8 +33,21 @@ def _resolve_admin_user(request: Request, bearer_token: str | None, query_token:
         except HTTPException:
             continue
         if ROLE_LEVELS.get(str(user.get("role") or "").lower(), 0) < ROLE_LEVELS["admin"]:
+            record_security_event(
+                "ops.auth_forbidden",
+                severity="warning",
+                request=request,
+                user=user,
+                detail="Non-admin user attempted to open ops console",
+            )
             raise HTTPException(status_code=403, detail="Forbidden")
         return user
+    record_security_event(
+        "ops.auth_rejected",
+        severity="warning",
+        request=request,
+        detail="Ops console request used invalid or revoked credentials",
+    )
     raise HTTPException(
         status_code=401,
         detail="Not authenticated",
@@ -39,8 +56,8 @@ def _resolve_admin_user(request: Request, bearer_token: str | None, query_token:
 
 
 @router.get("/ops", include_in_schema=False)
-def ops_console(request: Request, token: str | None = None, bearer_token: str | None = Depends(oauth)):
-    _resolve_admin_user(request, bearer_token, token)
+def ops_console(request: Request, bearer_token: str | None = Depends(oauth)):
+    _resolve_admin_user(request, bearer_token)
     if OPS_PATH.exists():
         nonce = secrets.token_urlsafe(16)
         html = OPS_PATH.read_text(encoding="utf-8").replace("__CSP_NONCE__", nonce)

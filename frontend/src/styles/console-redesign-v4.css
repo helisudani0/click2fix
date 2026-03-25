@@ -512,3 +512,391 @@ body.console-redesign-v4 .login-hint {
     padding: 12px;
   }
 }
+
+body.console-redesign-v4 .app-layout {
+  min-height: 100vh;
+  padding: 16px;
+  background:
+    radial-gradient(980px 560px at -6% -12%, rgba(73, 133, 214, 0.14), transparent 58%),
+    radial-gradient(1040px 640px at 108% -6%, rgba(30, 154, 120, 0.08), transparent 62%),
+    linear-gradient(180deg, #040911, #07111c 48%, #09131f 100%);
+}
+
+body.console-redesign-v4 .sidebar {
+  min-height: calc(100vh - 32px);
+  border: 1px solid rgba(121, 145, 175, 0.24);
+  border-right: none;
+  border-radius: 24px 0 0 24px;
+  background:
+    linear-gradient(180deg, rgba(7, 13, 22, 0.98), rgba(8, 15, 27, 0.985)),
+    linear-gradient(180deg, rgba(74, 133, 214, 0.06), transparent 18%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+body.console-redesign-v4 .app-layout.sidebar-collapsed .sidebar {
+  border-right: 1px solid rgba(121, 145, 175, 0.24);
+  border-radius: 24px;
+}
+
+body.console-redesign-v4 .app-layout-divider-handle {
+  width: 10px;
+  background: linear-gradient(180deg, rgba(37, 53, 76, 0.88), rgba(18, 29, 46, 0.94));
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.04), inset -1px 0 0 rgba(255, 255, 255, 0.04);
+}
+
+body.console-redesign-v4 .brand {
+  align-items: flex-start;
+  gap: 14px;
+}
+
+body.console-redesign-v4 .brand-badge {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #18558b, #143d67);
+}
+
+body.console-redesign-v4 .brand-copy {
+  display: grid;
+  gap: 2px;
+}
+
+body.console-redesign-v4 .brand-title {
+  font-size: 1.08rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+body.console-redesign-v4 .brand-subtitle {
+  max-width: 18ch;
+  color: #8fa7c3;
+  font-size: 0.71rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  line-height: 1.45;
+}
+
+body.console-redesign-v4 .brand-version {
+  font-size: 0.8rem;
+  color: #a9bdd5;
+}
+
+body.console-redesign-v4 .priority-panel,
+body.console-redesign-v4 .sidebar-module-shell,
+body.console-redesign-v4 .ops-panel {
+  border-radius: 18px;
+  border: 1px solid rgba(121, 145, 175, 0.18);
+  background: linear-gradient(180deg, rgba(14, 26, 43, 0.92), rgba(11, 21, 35, 0.97));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+body.console-redesign-v4 .priority-title,
+body.console-redesign-v4 .nav-group-title {
+  font-size: 0.74rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #9aaec5;
+}
+
+body.console-redesign-v4 .priority-link,
+body.console-redesign-v4 .nav-link,
+body.console-redesign-v4 .ops-accordion-toggle,
+body.console-redesign-v4 .ops-link {
+  min-height: 42px;
+  border-radius: 14px;
+  border-color: rgba(121, 145, 175, 0.16);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+body.console-redesign-v4 .nav-link-badge {
+  background: rgba(140, 164, 194, 0.08);
+  color: #9eb4cc;
+}
+
+body.console-redesign-v4 .sidebar-footer {
+  margin-top: 6px;
+  padding-top: 14px;
+}
+
+body.console-redesign-v4 .main-content {
+  min-height: calc(100vh - 32px);
+  background: transparent;
+}
+
+body.console-redesign-v4 .workspace-shell {
+  min-height: calc(100vh - 32px);
+  border: 1px solid rgba(121, 145, 175, 0.22);
+  border-left: none;
+  border-radius: 0 24px 24px 0;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(8, 15, 25, 0.96), rgba(9, 17, 28, 0.985)),
+    radial-gradient(720px 420px at 0% 0%, rgba(74, 133, 214, 0.08), transparent 64%);
+  box-shadow: 0 18px 44px rgba(1, 7, 14, 0.26);
+}
+
+body.console-redesign-v4 .app-layout.sidebar-collapsed .workspace-shell {
+  border-left: 1px solid rgba(121, 145, 175, 0.22);
+  border-radius: 24px;
+}
+
+body.console-redesign-v4 .topbar {
+  position: static;
+  padding: 20px 24px 18px;
+  background:
+    linear-gradient(180deg, rgba(10, 17, 28, 0.98), rgba(11, 20, 33, 0.95)),
+    linear-gradient(90deg, rgba(74, 133, 214, 0.04), transparent 24%);
+  border-bottom: 1px solid rgba(121, 145, 175, 0.18);
+  box-shadow: none;
+}
+
+body.console-redesign-v4 .topbar-left {
+  gap: 8px;
+}
+
+body.console-redesign-v4 .topbar-title-block {
+  gap: 8px;
+}
+
+body.console-redesign-v4 .topbar-kicker {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #8fa6c1;
+}
+
+body.console-redesign-v4 .topbar-title-row {
+  align-items: center;
+  gap: 12px;
+}
+
+body.console-redesign-v4 .topbar-title {
+  font-size: clamp(1.7rem, 1.8vw, 2.15rem);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: #f2f7ff;
+}
+
+body.console-redesign-v4 .topbar-subtitle {
+  display: none;
+}
+
+body.console-redesign-v4 .topbar-context {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(121, 145, 175, 0.18);
+  background: rgba(255, 255, 255, 0.025);
+  color: #93abc6;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+body.console-redesign-v4 .topbar-breadcrumbs {
+  font-size: 0.82rem;
+  color: #8ea5c0;
+}
+
+body.console-redesign-v4 .topbar-right {
+  align-items: center;
+  grid-template-columns: minmax(340px, 1fr) auto;
+  gap: 14px;
+}
+
+body.console-redesign-v4 .search {
+  border-radius: 16px;
+  padding: 6px;
+  border: 1px solid rgba(121, 145, 175, 0.18);
+  background: rgba(255, 255, 255, 0.02);
+  box-shadow: none;
+}
+
+body.console-redesign-v4 .search input {
+  padding: 12px 14px;
+}
+
+body.console-redesign-v4 .topbar-actions {
+  gap: 8px;
+}
+
+body.console-redesign-v4 .content-stage {
+  padding: 22px 24px 30px;
+  gap: 22px;
+}
+
+body.console-redesign-v4 .page {
+  gap: 22px;
+}
+
+body.console-redesign-v4 .page-header {
+  align-items: end;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(121, 145, 175, 0.14);
+}
+
+body.console-redesign-v4 .page-header h2 {
+  font-size: clamp(1.45rem, 1.6vw, 1.85rem);
+  letter-spacing: -0.02em;
+}
+
+body.console-redesign-v4 .page-header .muted {
+  color: #92a8c3;
+  max-width: 84ch;
+}
+
+body.console-redesign-v4 .card,
+body.console-redesign-v4 .mission-card,
+body.console-redesign-v4 .stat-card,
+body.console-redesign-v4 .kpi-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  border: 1px solid rgba(121, 145, 175, 0.16);
+  background: linear-gradient(180deg, rgba(14, 25, 41, 0.96), rgba(10, 19, 32, 0.99));
+  box-shadow: 0 16px 34px rgba(1, 7, 14, 0.18);
+}
+
+body.console-redesign-v4 .card::before,
+body.console-redesign-v4 .mission-card::before,
+body.console-redesign-v4 .stat-card::before,
+body.console-redesign-v4 .kpi-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(74, 133, 214, 0.82), rgba(30, 154, 120, 0.5), transparent 80%);
+}
+
+body.console-redesign-v4 .card-header {
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(121, 145, 175, 0.12);
+}
+
+body.console-redesign-v4 .mission-grid {
+  gap: 14px;
+}
+
+body.console-redesign-v4 .mission-card {
+  min-height: 138px;
+  padding: 20px 18px;
+}
+
+body.console-redesign-v4 .mission-label,
+body.console-redesign-v4 .stat-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #97abc3;
+}
+
+body.console-redesign-v4 .mission-value,
+body.console-redesign-v4 .stat-value {
+  font-size: clamp(1.7rem, 2vw, 2.3rem);
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+body.console-redesign-v4 .table-shell,
+body.console-redesign-v4 .table-wrap,
+body.console-redesign-v4 .table-card {
+  border-radius: 18px;
+  border-color: rgba(121, 145, 175, 0.16);
+  background: linear-gradient(180deg, rgba(11, 20, 33, 0.96), rgba(9, 18, 30, 0.99));
+}
+
+body.console-redesign-v4 table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(20, 31, 48, 0.96);
+  color: #8da5c0;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-bottom-color: rgba(121, 145, 175, 0.14);
+}
+
+body.console-redesign-v4 table tbody tr {
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+body.console-redesign-v4 table tbody tr:hover {
+  background: rgba(74, 133, 214, 0.06);
+}
+
+body.console-redesign-v4 table tbody td {
+  border-bottom-color: rgba(121, 145, 175, 0.1);
+}
+
+body.console-redesign-v4 .status-pill {
+  min-height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+body.console-redesign-v4 .btn.secondary,
+body.console-redesign-v4 .btn.primary,
+body.console-redesign-v4 .panel-collapse-btn {
+  min-height: 38px;
+  border-radius: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+body.console-redesign-v4 .input,
+body.console-redesign-v4 textarea.input,
+body.console-redesign-v4 select.input {
+  min-height: 42px;
+  border-radius: 14px;
+  border-color: rgba(121, 145, 175, 0.18);
+  background: rgba(11, 19, 31, 0.92);
+}
+
+body.console-redesign-v4 .empty-state {
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(13, 23, 37, 0.84), rgba(10, 18, 30, 0.96));
+}
+
+@media (max-width: 1080px) {
+  body.console-redesign-v4 .app-layout {
+    padding: 10px;
+  }
+
+  body.console-redesign-v4 .sidebar,
+  body.console-redesign-v4 .workspace-shell,
+  body.console-redesign-v4 .app-layout.sidebar-collapsed .workspace-shell,
+  body.console-redesign-v4 .app-layout.sidebar-collapsed .sidebar {
+    border-radius: 20px;
+    border-left: 1px solid rgba(121, 145, 175, 0.2);
+    border-right: 1px solid rgba(121, 145, 175, 0.2);
+  }
+
+  body.console-redesign-v4 .topbar {
+    padding: 16px 16px 14px;
+  }
+
+  body.console-redesign-v4 .topbar-right {
+    grid-template-columns: 1fr;
+  }
+
+  body.console-redesign-v4 .content-stage {
+    padding: 16px;
+  }
+
+  body.console-redesign-v4 .topbar-context {
+    display: none;
+  }
+}

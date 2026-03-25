@@ -821,61 +821,64 @@ export default function AppLayout() {
       ) : null}
 
       <main className="main-content">
-        <div className="topbar">
-          <div className="topbar-left">
-            <div className="topbar-title-block">
-              <div className="topbar-title-row">
-                <div className="topbar-title">{currentPageLabel}</div>
+        <div className="workspace-shell">
+          <div className="topbar">
+            <div className="topbar-left">
+              <div className="topbar-title-block">
+                <div className="topbar-kicker">SOC Workspace</div>
+                <div className="topbar-title-row">
+                  <div className="topbar-title">{currentPageLabel}</div>
+                  <span className="topbar-context">Live Operations Surface</span>
+                </div>
+                <div className="topbar-breadcrumbs">
+                  {breadcrumbs.map((item, index) => (
+                    <span key={`${item.href}-${item.label}`}>
+                      {index > 0 ? " / " : ""}
+                      {item.label}
+                    </span>
+                  ))}{" "}
+                  | Timezone: {APP_TIMEZONE_LABEL}
+                </div>
               </div>
-              <div className="topbar-subtitle">Security Operations Console</div>
-              <div className="topbar-breadcrumbs">
-                {breadcrumbs.map((item, index) => (
-                  <span key={`${item.href}-${item.label}`}>
-                    {index > 0 ? " / " : ""}
-                    {item.label}
-                  </span>
-                ))}{" "}
-                | Timezone: {APP_TIMEZONE_LABEL}
+            </div>
+            <div className="topbar-right">
+              <form className="search" onSubmit={submitSearch}>
+                <input
+                  aria-label="Search alerts, agents, actions"
+                  placeholder="Search by alert ID, CVE, host, IP, IOC..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+                <button className="btn secondary" type="submit">Search</button>
+              </form>
+              <div className="topbar-actions">
+                <span className={`topbar-health-dot ${healthTone}`} aria-hidden="true" />
+                <span className="topbar-health-inline topbar-health-primary">
+                  {backendHealth.socketLive ? "Socket live" : "Reconnecting"}
+                </span>
+                <span className="topbar-health-inline topbar-health-secondary">{backendHealth.activeExecutions} active</span>
+                <span className="topbar-health-inline topbar-health-secondary">
+                  {backendHealth.socketLatencyMs !== null ? `${backendHealth.socketLatencyMs} ms` : "Latency --"}
+                </span>
+                {backendHealth.queuedExecutions > 0 ? (
+                  <span className="topbar-health-inline topbar-health-secondary">{backendHealth.queuedExecutions} queued</span>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn secondary sidebar-toggle-mobile"
+                  onClick={() => setSidebarCollapsed((prev) => !prev)}
+                  aria-pressed={sidebarCollapsed}
+                >
+                  {sidebarCollapsed ? "Expand Nav" : "Collapse Nav"}
+                </button>
+                <button className="btn secondary" onClick={logout}>Logout</button>
               </div>
             </div>
           </div>
-          <div className="topbar-right">
-            <form className="search" onSubmit={submitSearch}>
-              <input
-                aria-label="Search alerts, agents, actions"
-                placeholder="Search by alert ID, CVE, host, IP, IOC..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-              <button className="btn secondary" type="submit">Search</button>
-            </form>
-            <div className="topbar-actions">
-              <span className={`topbar-health-dot ${healthTone}`} aria-hidden="true" />
-              <span className="topbar-health-inline topbar-health-primary">
-                {backendHealth.socketLive ? "Socket live" : "Reconnecting"}
-              </span>
-              <span className="topbar-health-inline topbar-health-secondary">{backendHealth.activeExecutions} active</span>
-              <span className="topbar-health-inline topbar-health-secondary">
-                {backendHealth.socketLatencyMs !== null ? `${backendHealth.socketLatencyMs} ms` : "Latency --"}
-              </span>
-              {backendHealth.queuedExecutions > 0 ? (
-                <span className="topbar-health-inline topbar-health-secondary">{backendHealth.queuedExecutions} queued</span>
-              ) : null}
-              <button
-                type="button"
-                className="btn secondary sidebar-toggle-mobile"
-                onClick={() => setSidebarCollapsed((prev) => !prev)}
-                aria-pressed={sidebarCollapsed}
-              >
-                {sidebarCollapsed ? "Expand Nav" : "Collapse Nav"}
-              </button>
-              <button className="btn secondary" onClick={logout}>Logout</button>
-            </div>
-          </div>
-        </div>
 
-        <div className="content">
-          <Outlet />
+          <div className="content content-stage">
+            <Outlet />
+          </div>
         </div>
       </main>
     </div>

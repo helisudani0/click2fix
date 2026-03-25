@@ -4,7 +4,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from core.active_defense import build_contextual_approval_policy
-from core.actions import get_action, normalize_args, resolve_action_dispatch
+from core.actions import ensure_public_action, get_action, normalize_args, resolve_action_dispatch
 from core.action_execution import execute_action, resolve_agent_ids
 from core.approval_policy import get_policy
 from core.audit import log_audit
@@ -105,6 +105,7 @@ def create_approval_request_record(
     )
     if not action_id or (not normalized_agent_id and not normalized_group and not normalized_agent_ids):
         raise HTTPException(status_code=400, detail="action_id and agent_id or group are required")
+    action_id = ensure_public_action(action_id)
 
     action = get_action(action_id)
     arguments = normalize_args(action, args)
@@ -470,6 +471,7 @@ def approve(id: int, request: Request, user=Depends(require_role("analyst"))):
         if isinstance(agent_id, str) and agent_id.startswith("group:"):
             group = agent_id.split(":", 1)[1]
         agent_ids = resolve_agent_ids(client, target=agent_id, group=group)
+        action_id = ensure_public_action(action_id)
         action = get_action(action_id)
         arguments = normalize_args(action, args)
         dispatch = resolve_action_dispatch(action, arguments)

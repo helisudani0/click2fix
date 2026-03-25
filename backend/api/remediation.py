@@ -11,7 +11,7 @@ try:
 except ImportError:  # Backward-compatible fallback for v1.1.x deployments.
     def action_requires_approval_handshake(*_args, **_kwargs):
         return False
-from core.actions import get_action, normalize_args, resolve_action_dispatch
+from core.actions import ensure_public_action, get_action, normalize_args, resolve_action_dispatch
 from core.action_execution import execute_action, resolve_agent_ids
 from core.audit import log_audit
 from core.security import require_role
@@ -596,6 +596,7 @@ async def remediate(
 
     if not action_id or (not agent_id and not group and not agent_ids):
         raise HTTPException(status_code=400, detail="action_id and agent_id or group are required")
+    action_id = ensure_public_action(action_id)
 
     action = get_action(action_id)
     arguments = normalize_args(action, args)

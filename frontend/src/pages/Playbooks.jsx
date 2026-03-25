@@ -115,57 +115,9 @@ const blankPlaybook = () =>
     ],
   });
 
-const PLAYBOOK_ONLY_ACTIONS = [
-  {
-    id: "custom-os-command",
-    label: "Global Shell Command",
-    description: "Run a shell command as a playbook step using the same backend transport as Global Shell.",
-    inputs: [
-      {
-        name: "command",
-        label: "Command",
-        placeholder: "Windows: Write-Output C2F_PLAYBOOK_OK | Linux: echo C2F_PLAYBOOK_OK",
-      },
-      {
-        name: "verify_kb",
-        label: "Verify KB (Windows, optional)",
-        placeholder: "Example: KB5075912",
-      },
-      {
-        name: "verify_min_build",
-        label: "Verify Min Build (Windows, optional)",
-        placeholder: "Example: 19045.6937",
-      },
-      {
-        name: "verify_stdout_contains",
-        label: "Verify Output Contains (optional)",
-        placeholder: "Example: C2F_PLAYBOOK_OK",
-      },
-      {
-        name: "run_as_system",
-        label: "Run As SYSTEM (Windows, optional)",
-        placeholder: "true | false",
-      },
-    ],
-    category: "execution",
-    risk: "critical",
-    custom: true,
-    capabilities: {
-      supported_os: ["windows", "linux"],
-      preferred_channel: "endpoint",
-      requires_credentials: true,
-      requires_network: false,
-      timeout_seconds: 1800,
-      validation: [
-        { field: "command", required: true },
-      ],
-    },
-  },
-];
-
 const mergePlaybookActions = (items = []) => {
   const merged = new Map();
-  [...items, ...PLAYBOOK_ONLY_ACTIONS].forEach((item) => {
+  items.forEach((item) => {
     const id = String(item?.id || "").trim();
     if (!id) return;
     merged.set(id, item);
@@ -481,6 +433,7 @@ export default function Playbooks() {
         <div>
           <h2>Playbooks</h2>
           <p className="muted">Generate or manually build playbooks, then run them across single agents, groups, or the fleet.</p>
+          <p className="muted">Custom shell-style steps are blocked. Playbooks can use approved catalog actions only.</p>
         </div>
         <div className="page-actions">
           <button className="btn secondary" onClick={refresh} disabled={loading}>

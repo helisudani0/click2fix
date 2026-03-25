@@ -19,6 +19,17 @@ _INTERNAL_ONLY_ACTION_IDS = {
 }
 
 
+def is_internal_only_action(action_id: str) -> bool:
+    return str(action_id or "").strip().lower() in _INTERNAL_ONLY_ACTION_IDS
+
+
+def ensure_public_action(action_id: str) -> str:
+    value = str(action_id or "").strip()
+    if is_internal_only_action(value):
+        raise HTTPException(status_code=403, detail=f"Action '{value}' is reserved for internal orchestration")
+    return value
+
+
 def _actions_config() -> List[Dict[str, Any]]:
     cfg = SETTINGS.get("active_response", {}) if isinstance(SETTINGS, dict) else {}
     if not cfg.get("enabled", True):

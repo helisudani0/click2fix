@@ -15,6 +15,55 @@ from core.settings import SETTINGS
 from core.wazuh_client import WazuhClient
 
 _MAX_COMMAND_CHARS = 20000
+_ABSOLUTE_BLOCK_PATTERNS = (
+    (r"\b(?:invoke-expression|iex)\b", "Dynamic script execution is not allowed"),
+    (r"\b(?:set-executionpolicy|executionpolicy\s+bypass)\b", "Execution policy bypass is not allowed"),
+    (
+        r"\b(?:powershell|pwsh)(?:\.exe)?\b[^\r\n]{0,120}\b(?:-e\b|-enc\b|-encodedcommand\b)",
+        "Nested encoded shell execution is not allowed",
+    ),
+    (
+        r"\b(?:invoke-webrequest|iwr|invoke-restmethod|irm|curl(?:\.exe)?|wget|start-bitstransfer|bitsadmin|certutil(?:\.exe)?)\b[\s\S]{0,220}(?:https?|ftp)://",
+        "Direct network download/upload commands are not allowed from Global Shell",
+    ),
+    (r"downloadstring\s*\(", "Downloaded script execution is not allowed"),
+    (
+        r"\b(?:net\s+user|net\s+localgroup|new-localuser|add-localgroupmember|useradd|usermod|passwd)\b",
+        "Identity or privilege changes are not allowed from Global Shell",
+    ),
+    (
+        r"\b(?:register-scheduledtask|new-scheduledtask|schtasks(?:\.exe)?\s+/create)\b",
+        "Scheduled task persistence is not allowed",
+    ),
+    (
+        r"\b(?:reg(?:\.exe)?\s+add|new-itemproperty|set-itemproperty)\b[\s\S]{0,160}\\(?:run|runonce)\b",
+        "Registry autorun persistence is not allowed",
+    ),
+    (
+        r"\b(?:set-mppreference|add-mppreference)\b[\s\S]{0,160}(?:disable|exclusion)",
+        "Security-control bypass is not allowed",
+    ),
+    (
+        r"\b(?:sc(?:\.exe)?\s+(?:config|create)|new-service)\b",
+        "Service creation or service-start policy changes are not allowed",
+    ),
+    (
+        r"\b(?:wmic\b[\s\S]{0,160}\bprocess\b[\s\S]{0,80}\bcall\b[\s\S]{0,80}\bcreate|register-wmievent|set-wmiinstance)\b",
+        "WMI-based process launch or persistence is not allowed",
+    ),
+    (
+        r"\b(?:netsh\s+advfirewall\b[\s\S]{0,120}\boff\b|set-netfirewallprofile\b[\s\S]{0,120}\bdisabled?\b)",
+        "Disabling the firewall is not allowed",
+    ),
+    (
+        r"\b(?:vssadmin|wbadmin|bcdedit|cipher(?:\.exe)?\s+/w)\b",
+        "Backup or recovery tampering is not allowed",
+    ),
+    (
+        r"\b(?:shutdown(?:\.exe)?|restart-computer|stop-computer)\b",
+        "Forced reboot or shutdown is not allowed from Global Shell",
+    ),
+)
 
 
 def _dict(v: Any) -> Dict[str, Any]:
@@ -180,6 +229,11 @@ def assess_command_safety(command: str, *, shell: str, allow_destructive: bool =
     cmd = _text(command)
     raw = cmd.lower()
     key = _norm_key(cmd)
+    absolute_block_reasons = [
+        reason
+        for pattern, reason in _ABSOLUTE_BLOCK_PATTERNS
+        if re.search(pattern, raw, flags=re.IGNORECASE)
+    ]
     destructive = any(
         re.search(pat, raw, flags=re.IGNORECASE)
         for pat in (
@@ -193,6 +247,9 @@ def assess_command_safety(command: str, *, shell: str, allow_destructive: bool =
     )
     risk = 10
     reasons: List[str] = []
+    if absolute_block_reasons:
+        risk = 100
+        reasons.extend(absolute_block_reasons)
     if destructive:
         risk = 96
         reasons.append("Potentially destructive operation")
@@ -205,14 +262,28 @@ def assess_command_safety(command: str, *, shell: str, allow_destructive: bool =
     if any(tok in key for tok in ("stop service", "disable", "sc config", "set service", "restart service")):
         risk = max(risk, 58)
     requires_privilege = bool("sudo " in raw or "runas " in raw or ("start-process" in raw and "-verb runas" in raw))
-    blocked = bool(destructive and not allow_destructive)
-    return {"risk_score": int(max(0, min(100, risk))), "reasons": reasons, "destructive": destructive, "requires_privilege": requires_privilege, "blocked": blocked, "shell": _norm_shell(shell)}
+    absolute_blocked = bool(absolute_block_reasons)
+    blocked = bool(absolute_blocked or (destructive and not allow_destructive))
+    blocked_reason = absolute_block_reasons[0] if absolute_block_reasons else ("Potentially destructive operation" if blocked else "")
+    return {
+        "risk_score": int(max(0, min(100, risk))),
+        "reasons": reasons,
+        "destructive": destructive,
+        "requires_privilege": requires_privilege,
+        "blocked": blocked,
+        "absolute_blocked": absolute_blocked,
+        "blocked_reason": blocked_reason,
+        "shell": _norm_shell(shell),
+    }
 
 
 def enforce_command_safety(command: str, *, shell: str, allow_destructive: bool = False) -> Dict[str, Any]:
     out = assess_command_safety(command, shell=shell, allow_destructive=allow_destructive)
     if out.get("blocked"):
-        raise HTTPException(status_code=400, detail="Command blocked by safety guard; set allow_destructive=true to override")
+        detail = f"Command blocked by safety guard: {out.get('blocked_reason') or 'high-risk pattern detected'}"
+        if out.get("destructive") and not out.get("absolute_blocked"):
+            detail += "; set allow_destructive=true to override"
+        raise HTTPException(status_code=400, detail=detail)
     return out
 
 

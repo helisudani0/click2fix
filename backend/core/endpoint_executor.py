@@ -2596,7 +2596,6 @@ class EndpointExecutor:
 			  [string]$VerifyMinBuild = "",
 			  [string]$VerifyStdoutContains = "",
 			  [string]$RunAsSystem = "false",
-			  [string]$SessionId = "",
 			  [int]$MaxRuntimeSeconds = 1800
 			)
 
@@ -2725,354 +2724,7 @@ class EndpointExecutor:
 					  }
 					}
 
-				function C2F-SessionRoot {
-				  param(
-				    [string]$Id,
-				    [string]$ModeHint = "false"
-				  )
-				  $clean = ([string]$Id).Trim()
-				  if (-not $clean) { return "" }
-				  $safe = -join ($clean.ToCharArray() | Where-Object { [char]::IsLetterOrDigit($_) -or $_ -in @('-','_','.') })
-				  if (-not $safe) { throw "custom-os-command session_id is invalid" }
-				  $mode = "user"
-				  if ([string]$ModeHint -match '^(?i:true|1|yes|on)$') { $mode = "system" }
-				  return (Join-Path "C:\Click2Fix\shell-sessions" (Join-Path $mode $safe))
-				}
-
-				function C2F-SessionPaths {
-				  param(
-				    [string]$Id,
-				    [string]$ModeHint = "false"
-				  )
-				  $root = C2F-SessionRoot -Id $Id -ModeHint $ModeHint
-				  if (-not $root) { return @{} }
-				  return @{
-				    root = $root
-				    request_dir = (Join-Path $root "requests")
-				    result_dir = (Join-Path $root "results")
-				    heartbeat = (Join-Path $root "heartbeat.json")
-				    current = (Join-Path $root "current.json")
-				    host_script = (Join-Path $root "host.ps1")
-				    host_pid = (Join-Path $root "host.pid")
-				  }
-				}
-
-				function C2F-SessionHostScriptContent {
-				  return @'
-param(
-  [string]$SessionRoot = "",
-  [int]$IdleTimeoutSeconds = 1800
-)
-
-$ErrorActionPreference = "Continue"
-$ProgressPreference = "SilentlyContinue"
-
-if (-not $SessionRoot) { exit 1 }
-$requestDir = Join-Path $SessionRoot "requests"
-$resultDir = Join-Path $SessionRoot "results"
-$heartbeatPath = Join-Path $SessionRoot "heartbeat.json"
-$currentPath = Join-Path $SessionRoot "current.json"
-$hostPidPath = Join-Path $SessionRoot "host.pid"
-$controlDir = "C:\Click2Fix\control"
-
-New-Item -ItemType Directory -Path $SessionRoot,$requestDir,$resultDir,$controlDir -Force | Out-Null
-Set-Content -Path $hostPidPath -Value ([string]$PID) -Encoding ASCII
-
-$runspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
-$runspace.Open()
-$lastActivity = Get-Date
-
-function Write-SessionHeartbeat {
-  param(
-    [string]$State = "idle",
-    [string]$CurrentExecId = ""
-  )
-  try {
-    [pscustomobject]@{
-      pid = $PID
-      state = $State
-      current_exec_id = $CurrentExecId
-      last_seen = (Get-Date).ToString("o")
-      session_root = $SessionRoot
-    } | ConvertTo-Json -Compress | Set-Content -Path $heartbeatPath -Encoding UTF8
-  } catch { }
-}
-
-Write-SessionHeartbeat -State "idle"
-
-try {
-  while ($true) {
-    $requestFile = Get-ChildItem -Path $requestDir -Filter "*.json" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime, Name | Select-Object -First 1
-    if (-not $requestFile) {
-      Write-SessionHeartbeat -State "idle"
-      if (((Get-Date) - $lastActivity).TotalSeconds -ge [Math]::Max(60, [int]$IdleTimeoutSeconds)) {
-        break
-      }
-      Start-Sleep -Seconds 2
-      continue
-    }
-
-    $request = $null
-    try {
-      $request = Get-Content -Path $requestFile.FullName -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-    } catch {
-      try { Remove-Item -Path $requestFile.FullName -Force -ErrorAction SilentlyContinue } catch { }
-      Start-Sleep -Milliseconds 300
-      continue
-    }
-
-    $requestId = [string]$request.request_id
-    if (-not $requestId) { $requestId = [guid]::NewGuid().ToString("N") }
-    $execId = [string]$request.exec_id
-    $encodedCommand = [string]$request.encoded_command
-    $resultPath = Join-Path $resultDir ($requestId + ".json")
-    $commandText = ""
-    $state = "completed"
-    $rc = 0
-    $stdoutText = ""
-    $stderrText = ""
-
-    try {
-      $commandText = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encodedCommand))
-    } catch {
-      $state = "failed"
-      $rc = 1
-      $stderrText = "Invalid encoded session command payload"
-    }
-
-    $lastActivity = Get-Date
-    try {
-      [pscustomobject]@{
-        exec_id = $execId
-        request_id = $requestId
-        pid = $PID
-        started_at = (Get-Date).ToString("o")
-      } | ConvertTo-Json -Compress | Set-Content -Path $currentPath -Encoding UTF8
-    } catch { }
-    Write-SessionHeartbeat -State "running" -CurrentExecId $execId
-
-    if ($rc -eq 0) {
-      $ps = [powershell]::Create()
-      $ps.Runspace = $runspace
-      $null = $ps.AddScript($commandText)
-      $async = $ps.BeginInvoke()
-      $cancelFlag = Join-Path $controlDir ("cancel-" + $execId + ".flag")
-      $killFlag = Join-Path $controlDir ("kill-" + $execId + ".flag")
-      try {
-        while (-not $async.AsyncWaitHandle.WaitOne(1000)) {
-          $lastActivity = Get-Date
-          Write-SessionHeartbeat -State "running" -CurrentExecId $execId
-          if (Test-Path -LiteralPath $killFlag) {
-            try { $ps.Stop() } catch { }
-            $state = "killed"
-            $rc = 1
-            $stderrText = "Execution killed by operator"
-            break
-          }
-          if (Test-Path -LiteralPath $cancelFlag) {
-            try { $ps.Stop() } catch { }
-            $state = "cancelled"
-            $rc = 1
-            $stderrText = "Execution cancelled by operator"
-            break
-          }
-        }
-
-        if ($state -eq "completed") {
-          try {
-            $invokeOut = $ps.EndInvoke($async)
-            if ($invokeOut) { $stdoutText = [string]($invokeOut | Out-String) }
-          } catch {
-            $state = "failed"
-            $rc = 1
-            $stderrText = [string]$_.Exception.Message
-          }
-
-          foreach ($streamText in @(
-            @($ps.Streams.Information | ForEach-Object { if ($_.MessageData -ne $null) { [string]$_.MessageData } }),
-            @($ps.Streams.Warning | ForEach-Object { [string]$_.Message }),
-            @($ps.Streams.Verbose | ForEach-Object { [string]$_.Message }),
-            @($ps.Streams.Debug | ForEach-Object { [string]$_.Message })
-          )) {
-            if ($streamText.Count -gt 0) {
-              $streamOut = [string]($streamText | Out-String)
-              if ($streamOut.Trim()) { $stdoutText = $stdoutText + $streamOut }
-            }
-          }
-
-          $errorText = @($ps.Streams.Error | ForEach-Object { [string]$_ })
-          if ($errorText.Count -gt 0) {
-            $state = "failed"
-            $rc = 1
-            $errOut = [string]($errorText | Out-String)
-            if ($stderrText) {
-              $stderrText = $stderrText + [Environment]::NewLine + $errOut
-            } else {
-              $stderrText = $errOut
-            }
-          }
-        }
-      } finally {
-        try { $ps.Dispose() } catch { }
-      }
-    }
-
-    try {
-      [pscustomobject]@{
-        status = $state
-        rc = [int]$rc
-        output = [string]$stdoutText
-        error = [string]$stderrText
-        completed_at = (Get-Date).ToString("o")
-      } | ConvertTo-Json -Compress | Set-Content -Path $resultPath -Encoding UTF8
-    } catch { }
-    try { Remove-Item -Path $requestFile.FullName -Force -ErrorAction SilentlyContinue } catch { }
-    try { Remove-Item -Path $currentPath -Force -ErrorAction SilentlyContinue } catch { }
-    Write-SessionHeartbeat -State "idle"
-  }
-} finally {
-  Write-SessionHeartbeat -State "closed"
-  try { Remove-Item -Path $currentPath -Force -ErrorAction SilentlyContinue } catch { }
-  try { $runspace.Dispose() } catch { }
-}
-'@
-				}
-
-				function C2F-ReadJsonFile {
-				  param([string]$Path)
-				  if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
-				  try {
-				    return (Get-Content -Path $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop)
-				  } catch {
-				    return $null
-				  }
-				}
-
-				function C2F-SessionHostAlive {
-				  param([hashtable]$Paths)
-				  if (-not $Paths -or -not $Paths.host_pid) { return $false }
-				  if (-not (Test-Path -LiteralPath $Paths.host_pid)) { return $false }
-				  try {
-				    $rawPid = [string](Get-Content -Path $Paths.host_pid -Raw -ErrorAction Stop)
-				    if (-not $rawPid.Trim()) { return $false }
-				    $proc = Get-Process -Id ([int]$rawPid.Trim()) -ErrorAction Stop
-				    return [bool]$proc
-				  } catch {
-				    return $false
-				  }
-				}
-
-				function C2F-EnsureSessionHost {
-				  param(
-				    [string]$Id,
-				    [string]$ModeHint = "false",
-				    [int]$IdleTimeoutSeconds = 1800
-				  )
-				  $paths = C2F-SessionPaths -Id $Id -ModeHint $ModeHint
-				  if (-not $paths.root) { return @{} }
-				  New-Item -ItemType Directory -Path $paths.root,$paths.request_dir,$paths.result_dir -Force | Out-Null
-				  $hostScript = C2F-SessionHostScriptContent
-				  Set-Content -Path $paths.host_script -Value $hostScript -Encoding UTF8
-				  $heartbeat = C2F-ReadJsonFile -Path $paths.heartbeat
-				  $alive = C2F-SessionHostAlive -Paths $paths
-				  $fresh = $false
-				  if ($heartbeat -and $heartbeat.last_seen) {
-				    try {
-				      $lastSeen = [datetime]::Parse([string]$heartbeat.last_seen)
-				      $fresh = (((Get-Date) - $lastSeen).TotalSeconds -lt ([Math]::Max(60, [int]$IdleTimeoutSeconds) + 60))
-				    } catch {
-				      $fresh = $false
-				    }
-				  }
-				  if ($alive -and $fresh) {
-				    return $paths
-				  }
-				  try {
-				    $proc = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", $paths.host_script, "-SessionRoot", $paths.root, "-IdleTimeoutSeconds", ([string][Math]::Max(300, [int]$IdleTimeoutSeconds))) -PassThru -WindowStyle Hidden
-				    Set-Content -Path $paths.host_pid -Value ([string]$proc.Id) -Encoding ASCII
-				  } catch {
-				    throw ("custom-os-command session host failed to start: " + [string]$_.Exception.Message)
-				  }
-				  $deadline = (Get-Date).AddSeconds(15)
-				  while ((Get-Date) -lt $deadline) {
-				    Start-Sleep -Milliseconds 500
-				    $hb = C2F-ReadJsonFile -Path $paths.heartbeat
-				    if ($hb -and [string]$hb.pid -eq [string]$proc.Id) {
-				      return $paths
-				    }
-				    if ($proc.HasExited) { break }
-				  }
-				  throw "custom-os-command session host did not publish a heartbeat"
-				}
-
-				function C2F-StopSessionRequest {
-				  param(
-				    [hashtable]$Paths,
-				    [string]$ExecId,
-				    [string]$Reason = "timeout"
-				  )
-				  if (-not $ExecId) { return }
-				  $controlDir = "C:\Click2Fix\control"
-				  try { New-Item -ItemType Directory -Path $controlDir -Force | Out-Null } catch { }
-				  $killFlag = Join-Path $controlDir ("kill-" + $ExecId + ".flag")
-				  try { New-Item -ItemType File -Path $killFlag -Force | Out-Null } catch { }
-				  $currentInfo = C2F-ReadJsonFile -Path $Paths.current
-				  if ($currentInfo -and [string]$currentInfo.pid) {
-				    try { Stop-Process -Id ([int][string]$currentInfo.pid) -Force -ErrorAction Stop } catch { }
-				  }
-				}
-
-				function C2F-RunSessionCommand {
-				  param(
-				    [string]$Id,
-				    [string]$ModeHint = "false",
-				    [string]$EncodedCommand,
-				    [int]$TimeoutSeconds = 300
-				  )
-				  $paths = C2F-EnsureSessionHost -Id $Id -ModeHint $ModeHint -IdleTimeoutSeconds 1800
-				  $requestId = [guid]::NewGuid().ToString("N")
-				  $requestPath = Join-Path $paths.request_dir ($requestId + ".json")
-				  $resultPath = Join-Path $paths.result_dir ($requestId + ".json")
-				  try {
-				    [pscustomobject]@{
-				      request_id = $requestId
-				      exec_id = $ExecId
-				      encoded_command = $EncodedCommand
-				      created_at = (Get-Date).ToString("o")
-				    } | ConvertTo-Json -Compress | Set-Content -Path $requestPath -Encoding UTF8
-				  } catch {
-				    throw ("custom-os-command failed to queue session request: " + [string]$_.Exception.Message)
-				  }
-				  $deadline = (Get-Date).AddSeconds([Math]::Max(30, [int]$TimeoutSeconds))
-				  $nextHeartbeat = Get-Date
-				  while ((Get-Date) -lt $deadline) {
-				    if (Test-Path -LiteralPath $resultPath) {
-				      $result = C2F-ReadJsonFile -Path $resultPath
-				      try { Remove-Item -Path $resultPath -Force -ErrorAction SilentlyContinue } catch { }
-				      if (-not $result) {
-				        throw "custom-os-command session result was unreadable"
-				      }
-				      return @{
-				        rc = [int]($result.rc)
-				        output = [string]($result.output)
-				        error = [string]($result.error)
-				        state = [string]($result.status)
-				      }
-				    }
-				    if ((Get-Date) -ge $nextHeartbeat) {
-				      $hb = C2F-ReadJsonFile -Path $paths.heartbeat
-				      if ($hb) {
-				        C2F-Evidence ("session_heartbeat=true|session_id=" + $Id + "|pid=" + [string]$hb.pid + "|state=" + [string]$hb.state)
-				      }
-				      $nextHeartbeat = (Get-Date).AddSeconds(15)
-				    }
-				    Start-Sleep -Seconds 2
-				  }
-				  C2F-StopSessionRequest -Paths $paths -ExecId $ExecId -Reason "timeout"
-				  throw ("custom-os-command timed out after " + [string]$TimeoutSeconds + "s")
-				}
-
-				function C2F-TestBinaryHeader {
+					function C2F-TestBinaryHeader {
 				  param([string]$Path)
 			  try {
 			    $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
@@ -3214,42 +2866,26 @@ try {
 		    throw ("custom-os-command command file missing: " + $CommandFile)
 		  }
 
-				  $payload = C2F-LoadCommandPayload -CommandPath $CommandFile
-				  $cmd = [string]$payload.command
-				  $encodedCommand = [string]$payload.encoded
-				  $sessionKey = ([string]$SessionId).Trim()
-				  if (-not $cmd -or -not $cmd.Trim()) {
-				    throw "custom-os-command requires command argument"
-				  }
+					  $payload = C2F-LoadCommandPayload -CommandPath $CommandFile
+					  $cmd = [string]$payload.command
+					  $encodedCommand = [string]$payload.encoded
+					  if (-not $cmd -or -not $cmd.Trim()) {
+					    throw "custom-os-command requires command argument"
+					  }
 
-					  $safe = $cmd.Replace("|", "/").Replace("`r", " ").Replace("`n", " ")
-					  if ($safe.Length -gt 220) { $safe = $safe.Substring(0, 220) + "..." }
-					  C2F-Evidence ("custom_command=" + $safe)
-					  C2F-Evidence ("run_as_system=" + [string]$RunAsSystem)
-					  if ($sessionKey) {
-					    C2F-Evidence ("session_id=" + $sessionKey)
-					    $run = C2F-RunSessionCommand -Id $sessionKey -ModeHint $RunAsSystem -EncodedCommand $encodedCommand -TimeoutSeconds $MaxRuntimeSeconds
-					  } else {
-					    $run = C2F-RunEncodedCommand -EncodedCommand $encodedCommand -TimeoutSeconds $MaxRuntimeSeconds
-					  }
-						  $out = [string]$run.output
-						  $runError = [string]$run.error
-						  $runState = [string]$run.state
-						  # Some native tools emit UTF-16/UTF-8 mixed output with embedded nulls.
-						  # Normalize early so history/output previews remain readable.
-						  $out = ($out -replace "`0", "")
-						  $runError = ($runError -replace "`0", "")
-						  $rc = [int]$run.rc
-					  if ($sessionKey -and $runState) {
-					    C2F-Evidence ("session_state=" + $runState)
-					  }
-					  if ($sessionKey -and $runState -eq "cancelled") {
-					    throw "custom-os-command cancelled by operator"
-					  }
-					  if ($sessionKey -and $runState -eq "killed") {
-					    throw "custom-os-command killed by operator"
-					  }
-					  if ($rc -ne 0) {
+						  $safe = $cmd.Replace("|", "/").Replace("`r", " ").Replace("`n", " ")
+						  if ($safe.Length -gt 220) { $safe = $safe.Substring(0, 220) + "..." }
+						  C2F-Evidence ("custom_command=" + $safe)
+						  C2F-Evidence ("run_as_system=" + [string]$RunAsSystem)
+						  $run = C2F-RunEncodedCommand -EncodedCommand $encodedCommand -TimeoutSeconds $MaxRuntimeSeconds
+							  $out = [string]$run.output
+							  $runError = [string]$run.error
+							  # Some native tools emit UTF-16/UTF-8 mixed output with embedded nulls.
+							  # Normalize early so history/output previews remain readable.
+							  $out = ($out -replace "`0", "")
+							  $runError = ($runError -replace "`0", "")
+							  $rc = [int]$run.rc
+						  if ($rc -ne 0) {
 				    $errOut = [string]$out
 				    if ($runError.Trim()) {
 				      if ($errOut.Trim()) {
@@ -6283,7 +5919,6 @@ catch {
                     task_args["VerifyMinBuild"] = action_args[2] if len(action_args) > 2 else ""
                     task_args["VerifyStdoutContains"] = action_args[3] if len(action_args) > 3 else ""
                     task_args["RunAsSystem"] = _bool(action_args[4] if len(action_args) > 4 else False, False)
-                    task_args["SessionId"] = action_args[5] if len(action_args) > 5 else ""
                     task_args["MaxRuntimeSeconds"] = max(180, int(timeout_seconds))
 
                 try:
@@ -6971,7 +6606,6 @@ catch {
                 "VerifyKb": "",
                 "VerifyMinBuild": "",
                 "VerifyStdoutContains": "",
-                "SessionId": "",
                 "MaxRuntimeSeconds": 1800,
             },
         }
@@ -7473,16 +7107,6 @@ catch {
                     "try{ New-Item -ItemType File -Path $kill -Force | Out-Null }catch{};"
                     "$c2f=Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine -match '\\\\Click2Fix\\\\scripts\\\\' -and $_.CommandLine -match ('-ExecId\\s+'+$exec) };"
                     "foreach($p in $c2f){ try{ Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop }catch{} };"
-                    "$roots=Get-ChildItem -Path 'C:\\\\Click2Fix\\\\shell-sessions' -Directory -Recurse -ErrorAction SilentlyContinue;"
-                    "foreach($root in $roots){"
-                    "$current=Join-Path $root.FullName 'current.json';"
-                    "if(-not (Test-Path -LiteralPath $current)){ continue };"
-                    "try{ $info=Get-Content -Path $current -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }catch{ continue };"
-                    "if([string]$info.exec_id -ne $exec){ continue };"
-                    "try{ if($info.pid){ Stop-Process -Id ([int][string]$info.pid) -Force -ErrorAction Stop } }catch{};"
-                    "$hostPid=Join-Path $root.FullName 'host.pid';"
-                    "try{ if(Test-Path -LiteralPath $hostPid){ $pidRaw=[string](Get-Content -Path $hostPid -Raw -ErrorAction Stop); if($pidRaw.Trim()){ Stop-Process -Id ([int]$pidRaw.Trim()) -Force -ErrorAction Stop } } }catch{};"
-                    "};"
                 )
                 try:
                     self._run_winrm(target, stop_script, timeout_seconds=45)

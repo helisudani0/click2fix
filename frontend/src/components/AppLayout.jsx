@@ -644,10 +644,10 @@ export default function AppLayout() {
                   aria-pressed={opsCompact}
                   title={opsCompact ? "Expand ops modules" : "Collapse ops modules to icon mode"}
                 >
-                  {opsCompact ? "+" : "[]"}
+                  {opsCompact ? "Full" : "Mini"}
                 </button>
                 <button type="button" className="panel-collapse-btn" onClick={openOpsConsole} title="Open backend ops console">
-                  {"->"}
+                  Open
                 </button>
               </div>
             </div>
@@ -777,7 +777,7 @@ export default function AppLayout() {
             </form>
             <div className="topbar-actions">
               <button type="button" className="btn secondary" onClick={() => setMissionBriefingOpen(true)} aria-label="Open mission briefing">
-                ?
+                Guide
               </button>
               <button
                 type="button"

@@ -230,6 +230,17 @@ export const closeChange = (id) => api.post(`/changes/${id}/close`);
 export const requestApproval = (payload) =>
   api.post("/approvals/request", payload);
 
+export const getPendingApprovals = (params = {}) =>
+  api.get("/approvals/pending", { params });
+
+export const decideApproval = (id, payload = {}) => {
+  const decision = String(payload?.decision || payload?.action || payload?.status || "").trim().toLowerCase() === "reject"
+    ? "reject"
+    : "approve";
+  const path = decision === "reject" ? `/approvals/${id}/reject` : `/approvals/${id}/approve`;
+  return api.post(path, { ...payload, decision });
+};
+
 export const runAction = (payload) =>
   api.post("/remediate", payload);
 
@@ -280,3 +291,4 @@ export const retryFailedExecution = (executionId, payload = {}) =>
 
 export const getExecutionHealth = () =>
   api.get("/executions/health");
+

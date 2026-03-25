@@ -16,10 +16,10 @@ const PRIORITY_PANEL_HEIGHT_STORAGE_KEY = "c2f-priority-panel-height-v4";
 const SIDEBAR_WIDTH_STORAGE_KEY = "c2f-sidebar-width-v4";
 const OPS_PANEL_COMPACT_STORAGE_KEY = "c2f-ops-panel-compact-v4";
 const PRIORITY_QUEUE_STORAGE_KEY = "c2f-priority-queue-v2";
-const DEFAULT_PRIORITY_PANEL_HEIGHT = 224;
-const MIN_PRIORITY_PANEL_HEIGHT = 140;
-const MAX_PRIORITY_PANEL_HEIGHT = 420;
-const DEFAULT_SIDEBAR_WIDTH = 304;
+const DEFAULT_PRIORITY_PANEL_HEIGHT = 272;
+const MIN_PRIORITY_PANEL_HEIGHT = 170;
+const MAX_PRIORITY_PANEL_HEIGHT = 520;
+const DEFAULT_SIDEBAR_WIDTH = 320;
 const MIN_SIDEBAR_WIDTH = 260;
 const MAX_SIDEBAR_WIDTH = 560;
 
@@ -188,7 +188,7 @@ export default function AppLayout() {
   const [priorityPanelCollapsed, setPriorityPanelCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
     const persisted = window.localStorage.getItem(PRIORITY_PANEL_STORAGE_KEY);
-    return persisted === null ? true : persisted === "1";
+    return persisted === null ? false : persisted === "1";
   });
   const [priorityPanelHeight, setPriorityPanelHeight] = useState(() => {
     if (typeof window === "undefined") return DEFAULT_PRIORITY_PANEL_HEIGHT;
@@ -205,7 +205,7 @@ export default function AppLayout() {
   const [opsCompact, setOpsCompact] = useState(() => {
     if (typeof window === "undefined") return false;
     const persisted = window.localStorage.getItem(OPS_PANEL_COMPACT_STORAGE_KEY);
-    return persisted === null ? true : persisted === "1";
+    return persisted === null ? false : persisted === "1";
   });
   const [openOpsSections, setOpenOpsSections] = useState(() => ({
     organizations: true,

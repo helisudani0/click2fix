@@ -286,8 +286,8 @@ export default function Alerts() {
                       </span>
                     </span>
                   </th>
-                  <th>Rule</th>
-                  <th>Agent</th>
+                  <th className="alerts-col-rule">Rule</th>
+                  <th className="alerts-col-agent">Agent</th>
                   <th>
                     <span className="column-guide">
                       Groups
@@ -296,7 +296,7 @@ export default function Alerts() {
                       </span>
                     </span>
                   </th>
-                  <th>Timestamp</th>
+                  <th className="alerts-col-time">Timestamp</th>
                 </tr>
             </thead>
             <tbody>
@@ -320,10 +320,16 @@ export default function Alerts() {
                     <td>
                       <span className={`status-pill ${severityClass(alert.level)}`}>{alert.level}</span>
                     </td>
-                    <td>{alert.rule}</td>
-                    <td>{alert.agentName}</td>
-                    <td>{alert.groups || "-"}</td>
-                    <td><RelativeTimestamp value={alert.timestampRaw} /></td>
+                    <td className="alerts-col-rule">
+                      <span className="table-wrap-cell">{alert.rule}</span>
+                    </td>
+                    <td className="alerts-col-agent">
+                      <span className="table-wrap-cell">{alert.agentName}</span>
+                    </td>
+                    <td className="alerts-col-groups">
+                      <span className="table-wrap-cell">{alert.groups || "-"}</span>
+                    </td>
+                    <td className="alerts-col-time"><RelativeTimestamp value={alert.timestampRaw} /></td>
                   </tr>
                 ))
               )}

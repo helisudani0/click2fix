@@ -94,6 +94,23 @@ const formatDuration = (start, end) => {
   return `${hours}h ${minutes}m`;
 };
 
+const middleMaskToken = (value) => {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length <= 12) return text;
+  return `${text.slice(0, 4)}...${text.slice(-4)}`;
+};
+
+const summarizeTarget = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "-";
+  return raw
+    .split(",")
+    .map((part) => middleMaskToken(part))
+    .filter(Boolean)
+    .join(", ");
+};
+
 export default function Executions() {
   const [runs, setRuns] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -318,10 +335,10 @@ export default function Executions() {
                             </div>
                           </td>
                           <td className="execution-col-action" title={run.action || "-"}>
-                            <span className="execution-cell-text">{run.action || "-"}</span>
+                            <span className="execution-cell-text execution-action-text">{run.action || "-"}</span>
                           </td>
                           <td className="execution-col-target" title={run.agent || "-"}>
-                            <span className="execution-cell-text">{run.agent || "-"}</span>
+                            <span className="execution-cell-text execution-target-text">{summarizeTarget(run.agent || "-")}</span>
                           </td>
                           <td className="execution-col-approver" title={run.approvedBy || "-"}>
                             <span className="execution-cell-text">{run.approvedBy || "-"}</span>

@@ -884,58 +884,39 @@ export default function AppLayout() {
             </div>
           </div>
           <div className="topbar-right">
-            <div className="topbar-control-row">
-              <div className="topbar-shortcuts" aria-label="Quick navigation">
-                <NavLink to="/alerts" className={({ isActive }) => `topbar-shortcut${isActive ? " active" : ""}`}>
-                  Alerts
-                </NavLink>
-                <NavLink to="/cases" className={({ isActive }) => `topbar-shortcut${isActive ? " active" : ""}`}>
-                  Cases
-                </NavLink>
-                <NavLink to="/approvals" className={({ isActive }) => `topbar-shortcut${isActive ? " active" : ""}`}>
-                  Approvals
-                </NavLink>
-              </div>
-              <div className="topbar-health-hud">
-                <div className="health-hud-label">Backend Health</div>
-                <div className="health-hud-metrics">
-                  <span className={`status-pill ${healthTone}`}>
-                    {backendHealth.socketLive ? "Socket Live" : "Reconnecting"}
-                  </span>
-                  <span className="health-hud-metric">{backendHealth.activeExecutions} active executions</span>
-                  <span className="health-hud-metric">
-                    {backendHealth.socketLatencyMs !== null ? `${backendHealth.socketLatencyMs} ms socket` : "Measuring latency"}
-                  </span>
-                  {backendHealth.queuedExecutions > 0 ? (
-                    <span className="health-hud-metric">{backendHealth.queuedExecutions} queued</span>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-            <div className="topbar-command-row">
-              <form className="search" onSubmit={submitSearch}>
-                <input
-                  aria-label="Search alerts, agents, actions"
-                  placeholder="Search by alert ID, CVE, host, IP, IOC..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-                <button className="btn secondary" type="submit">Search</button>
-              </form>
-              <div className="topbar-actions">
-                <button type="button" className="btn secondary" onClick={() => setMissionBriefingOpen(true)} aria-label="Open mission briefing">
-                  Guide
-                </button>
-                <button
-                  type="button"
-                  className="btn secondary sidebar-toggle-mobile"
-                  onClick={() => setSidebarCollapsed((prev) => !prev)}
-                  aria-pressed={sidebarCollapsed}
-                >
-                  {sidebarCollapsed ? "Expand Nav" : "Collapse Nav"}
-                </button>
-                <button className="btn secondary" onClick={logout}>Logout</button>
-              </div>
+            <form className="search" onSubmit={submitSearch}>
+              <input
+                aria-label="Search alerts, agents, actions"
+                placeholder="Search by alert ID, CVE, host, IP, IOC..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <button className="btn secondary" type="submit">Search</button>
+            </form>
+            <div className="topbar-actions">
+              <span className={`topbar-health-dot ${healthTone}`} aria-hidden="true" />
+              <span className="topbar-health-inline">
+                {backendHealth.socketLive ? "Socket live" : "Reconnecting"}
+              </span>
+              <span className="topbar-health-inline">{backendHealth.activeExecutions} active</span>
+              <span className="topbar-health-inline">
+                {backendHealth.socketLatencyMs !== null ? `${backendHealth.socketLatencyMs} ms` : "Latency --"}
+              </span>
+              {backendHealth.queuedExecutions > 0 ? (
+                <span className="topbar-health-inline">{backendHealth.queuedExecutions} queued</span>
+              ) : null}
+              <button type="button" className="btn secondary" onClick={() => setMissionBriefingOpen(true)} aria-label="Open mission briefing">
+                Guide
+              </button>
+              <button
+                type="button"
+                className="btn secondary sidebar-toggle-mobile"
+                onClick={() => setSidebarCollapsed((prev) => !prev)}
+                aria-pressed={sidebarCollapsed}
+              >
+                {sidebarCollapsed ? "Expand Nav" : "Collapse Nav"}
+              </button>
+              <button className="btn secondary" onClick={logout}>Logout</button>
             </div>
           </div>
         </div>

@@ -429,7 +429,7 @@ export default function Playbooks() {
   );
 
   return (
-    <div className="page">
+    <div className="page page-route-playbooks">
       <div className="page-header">
         <div>
           <h2>Playbooks</h2>
@@ -767,3 +767,4 @@ export default function Playbooks() {
     </div>
   );
 }
+

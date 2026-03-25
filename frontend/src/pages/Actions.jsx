@@ -410,7 +410,7 @@ export default function Actions() {
   }, []);
 
   return (
-    <div className="page actions-page">
+    <div className="page actions-page page-route-actions">
       <div className="page-header">
         <div>
           <h2>Actions Workspace</h2>
@@ -709,3 +709,4 @@ export default function Actions() {
     </div>
   );
 }
+

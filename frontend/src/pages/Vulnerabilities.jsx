@@ -327,7 +327,7 @@ export default function Vulnerabilities() {
   };
 
   return (
-    <div className="page">
+    <div className="page page-route-vulnerabilities">
       <div className="page-header">
         <div>
           <h2>Vulnerabilities</h2>
@@ -812,3 +812,4 @@ export default function Vulnerabilities() {
     </div>
   );
 }
+

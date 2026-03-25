@@ -106,7 +106,7 @@ export default function Changes() {
   };
 
   return (
-    <div className="page">
+    <div className="page page-route-changes">
       <div className="page-header">
         <div>
           <h2>Change Management</h2>
@@ -242,3 +242,4 @@ export default function Changes() {
     </div>
   );
 }
+

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -360,8 +361,59 @@ def test_run_endpoint_returns_partial_without_raising(monkeypatch):
     )
 
     assert payload["result"]["overall_status"] == "PARTIAL"
+
+
+def test_actions_run_accepts_agent_ids_without_single_agent(monkeypatch):
+    captured = {}
+
+    class _FakeRequest:
+        def __init__(self):
+            self.client = type("Client", (), {"host": "127.0.0.1"})()
+
+        async def json(self):
+            return {
+                "action_id": "sca-rescan",
+                "agent_ids": ["1", "002"],
+                "exclude_agent_ids": ["002"],
+                "args": {},
+            }
+
+    monkeypatch.setattr(actions_api, "ensure_public_action", lambda action_id: str(action_id))
+    monkeypatch.setattr(
+        actions_api,
+        "get_action",
+        lambda _aid: {"id": "sca-rescan", "command": "sca-rescan", "inputs": [], "custom": True},
+    )
+    monkeypatch.setattr(actions_api, "normalize_args", lambda _action, _args: [])
+    monkeypatch.setattr(
+        actions_api,
+        "resolve_action_dispatch",
+        lambda _action, _arguments: {"action_command": "sca-rescan", "arguments": []},
+    )
+    monkeypatch.setattr(actions_api, "action_requires_approval_handshake", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(actions_api, "log_audit", lambda *_args, **_kwargs: None)
+
+    def _fake_execute_action(_client, action_id, dispatch, agent_ids):
+        captured["action_id"] = action_id
+        captured["dispatch"] = dispatch
+        captured["agent_ids"] = list(agent_ids)
+        return {
+            "channel": "manager_api",
+            "mode": "manager_api",
+            "command_used": "agents/restart",
+            "attempts": ["agents/restart"],
+            "result": {"ok": True, "total": 1, "success": 1, "failed": 0, "results": []},
+        }
+
+    monkeypatch.setattr(actions_api, "execute_action", _fake_execute_action)
+
+    payload = asyncio.run(actions_api.run_action(_FakeRequest(), user={"sub": "admin", "org_id": "1"}))
+
+    assert payload["status"] == "executed"
+    assert captured["action_id"] == "sca-rescan"
+    assert captured["agent_ids"] == ["001"]
     assert payload["result"]["success"] == 1
-    assert payload["result"]["failed"] == 1
+    assert payload["result"]["failed"] == 0
 
 
 def test_execute_action_batches_large_endpoint_runs(monkeypatch):

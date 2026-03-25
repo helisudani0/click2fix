@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { getAnalyticsOverview, getKillChain, getAlertSummary, getHourlyVolume } from "../api/wazuh";
+import {
+  getAnalyticsOverview,
+  getKillChain,
+  getAlertSummary,
+  getHourlyVolume,
+  getEventTimeSeriesV2,
+  getEventCorrelationV2,
+} from "../api/wazuh";
 import { formatWazuhTimestamp, parseWazuhTimestamp } from "../utils/time";
 
 const statusClass = status => {
@@ -7,6 +14,21 @@ const statusClass = status => {
   if (status === "normal") return "success";
   return "neutral";
 };
+
+const DATA_LAYER_BUCKETS = ["5m", "15m", "1h", "6h", "1d"];
+
+const buildIsoRange = (lookbackHours) => {
+  const safeHours = Math.max(1, Number(lookbackHours || 1));
+  const end = new Date();
+  const start = new Date(end.getTime() - safeHours * 60 * 60 * 1000);
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+  };
+};
+
+const errorText = (err, fallback) =>
+  err?.response?.data?.detail || err?.response?.data?.message || err?.message || fallback;
 
 export default function Analytics() {
   const [overview, setOverview] = useState(null);
@@ -17,6 +39,24 @@ export default function Analytics() {
   const [loading, setLoading] = useState(false);
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [hourlySeries, setHourlySeries] = useState([]);
+  const [tenantIdOverride, setTenantIdOverride] = useState("");
+  const [timeSeriesBucket, setTimeSeriesBucket] = useState("1h");
+  const [correlationWindow, setCorrelationWindow] = useState("15m");
+  const [loadingDataLayer, setLoadingDataLayer] = useState(false);
+  const [dataLayerError, setDataLayerError] = useState("");
+  const [eventTimeSeries, setEventTimeSeries] = useState([]);
+  const [eventTimeSeriesTotals, setEventTimeSeriesTotals] = useState([]);
+  const [eventTimeSeriesMeta, setEventTimeSeriesMeta] = useState({
+    bucket: "1h",
+    total_count: 0,
+    total_points: 0,
+  });
+  const [eventCorrelationGroups, setEventCorrelationGroups] = useState([]);
+  const [eventCorrelationMeta, setEventCorrelationMeta] = useState({
+    window: "15m",
+    total_groups: 0,
+    correlated_events: 0,
+  });
 
   const refreshOverview = () => {
     setLoading(true);
@@ -35,12 +75,93 @@ export default function Analytics() {
       .catch(() => setKillChain({ stages: {}, raw: [] }));
   };
 
+  const refreshDataLayer = () => {
+    const tenantText = String(tenantIdOverride || "").trim();
+    const tenantParsed = tenantText ? Number(tenantText) : undefined;
+    if (tenantText && (!Number.isFinite(tenantParsed) || tenantParsed <= 0)) {
+      setDataLayerError("Tenant ID must be a positive number.");
+      return;
+    }
+    const tenantParam = tenantText ? Number(tenantParsed) : undefined;
+    const seriesRange = buildIsoRange(72);
+    const correlationRange = buildIsoRange(24);
+    setLoadingDataLayer(true);
+    setDataLayerError("");
+
+    Promise.allSettled([
+      getEventTimeSeriesV2({
+        ...(tenantParam ? { tenant_id: tenantParam } : {}),
+        stream: "events",
+        bucket: timeSeriesBucket,
+        group_by: "severity",
+        start: seriesRange.start,
+        end: seriesRange.end,
+        limit: 3000,
+      }),
+      getEventCorrelationV2({
+        ...(tenantParam ? { tenant_id: tenantParam } : {}),
+        stream: "events",
+        window: correlationWindow,
+        min_group_size: 2,
+        cross_domain: true,
+        min_domains: 2,
+        include_detections: true,
+        max_groups: 20,
+        start: correlationRange.start,
+        end: correlationRange.end,
+      }),
+    ])
+      .then(([seriesResult, correlationResult]) => {
+        const errors = [];
+
+        if (seriesResult.status === "fulfilled") {
+          const data = seriesResult.value?.data || {};
+          setEventTimeSeries(Array.isArray(data.series) ? data.series : []);
+          setEventTimeSeriesTotals(Array.isArray(data.totals) ? data.totals : []);
+          setEventTimeSeriesMeta({
+            bucket: data.bucket || timeSeriesBucket,
+            total_count: Number(data.total_count || 0),
+            total_points: Number(data.total_points || 0),
+          });
+        } else {
+          setEventTimeSeries([]);
+          setEventTimeSeriesTotals([]);
+          setEventTimeSeriesMeta({
+            bucket: timeSeriesBucket,
+            total_count: 0,
+            total_points: 0,
+          });
+          errors.push(errorText(seriesResult.reason, "Failed to load event time-series."));
+        }
+
+        if (correlationResult.status === "fulfilled") {
+          const data = correlationResult.value?.data || {};
+          setEventCorrelationGroups(Array.isArray(data.groups) ? data.groups : []);
+          setEventCorrelationMeta({
+            window: data.window || correlationWindow,
+            total_groups: Number(data.total_groups || 0),
+            correlated_events: Number(data.correlated_events || 0),
+          });
+        } else {
+          setEventCorrelationGroups([]);
+          setEventCorrelationMeta({
+            window: correlationWindow,
+            total_groups: 0,
+            correlated_events: 0,
+          });
+          errors.push(errorText(correlationResult.reason, "Failed to load event correlation."));
+        }
+
+        setDataLayerError(errors.join(" "));
+      })
+      .finally(() => setLoadingDataLayer(false));
+  };
+
   useEffect(() => {
     refreshOverview();
     refreshKillChain();
-    getHourlyVolume(72)
-      .then(r => setHourlySeries(r.data?.series || []))
-      .catch(() => setHourlySeries([]));
+    refreshDataLayer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const stageRows = useMemo(() => {
@@ -105,8 +226,58 @@ export default function Analytics() {
     };
   }, [normalizedHourly]);
 
+  const normalizedEventSeries = useMemo(() => {
+    const aggregate = new Map();
+    (Array.isArray(eventTimeSeries) ? eventTimeSeries : []).forEach((row) => {
+      const key = row?.bucket_start || row?.hour || row?.bucket || "";
+      if (!key) return;
+      const count = Number(row?.count || 0);
+      aggregate.set(key, Number(aggregate.get(key) || 0) + count);
+    });
+    const items = Array.from(aggregate.entries()).map(([bucket, count]) => ({ bucket, count }));
+    items.sort((left, right) => {
+      const leftTs = parseWazuhTimestamp(left.bucket)?.getTime() ?? 0;
+      const rightTs = parseWazuhTimestamp(right.bucket)?.getTime() ?? 0;
+      return leftTs - rightTs;
+    });
+    return items;
+  }, [eventTimeSeries]);
+
+  const dataLayerChart = useMemo(() => {
+    if (!normalizedEventSeries.length) return null;
+    const series = normalizedEventSeries.slice(-120);
+    const width = 920;
+    const height = 160;
+    const values = series.map((row) => Number(row.count || 0));
+    const max = Math.max(...values, 1);
+    const step = series.length > 1 ? width / (series.length - 1) : width;
+    const points = values
+      .map((value, idx) => {
+        const x = Math.round(idx * step);
+        const y = Math.round(height - (value / max) * height);
+        return `${x},${y}`;
+      })
+      .join(" ");
+    const latest = series[series.length - 1];
+    const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+    return {
+      series,
+      max,
+      latest,
+      average: Math.round(average),
+      points,
+      from: series[0]?.bucket,
+      to: latest?.bucket,
+    };
+  }, [normalizedEventSeries]);
+
+  const topCorrelationGroups = useMemo(
+    () => (Array.isArray(eventCorrelationGroups) ? eventCorrelationGroups.slice(0, 12) : []),
+    [eventCorrelationGroups],
+  );
+
   return (
-    <div className="page">
+    <div className="page page-route-analytics">
       <div className="page-header">
         <div>
           <h2>Analytics & Correlation</h2>
@@ -115,8 +286,15 @@ export default function Analytics() {
           </p>
         </div>
         <div className="page-actions">
-          <button className="btn secondary" onClick={refreshOverview} disabled={loading}>
-            {loading ? "Refreshing..." : "Refresh Overview"}
+          <button
+            className="btn secondary"
+            onClick={() => {
+              refreshOverview();
+              refreshDataLayer();
+            }}
+            disabled={loading || loadingDataLayer}
+          >
+            {loading || loadingDataLayer ? "Refreshing..." : "Refresh Overview"}
           </button>
         </div>
       </div>
@@ -147,6 +325,176 @@ export default function Analytics() {
               ? `Last hour ${anomaly.last_hour} vs mean ${anomaly.mean.toFixed(1)}`
               : "Awaiting telemetry"}
           </div>
+        </div>
+      </div>
+
+      <div className="grid-2">
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <h3>Data Layer Time-Series (V2)</h3>
+              <p className="muted">Indexed event buckets from `/api/v2/events/timeseries`.</p>
+            </div>
+          </div>
+
+          <div className="page-actions mb-12">
+            <input
+              className="input w-240"
+              placeholder="Tenant ID (optional)"
+              value={tenantIdOverride}
+              onChange={(event) => setTenantIdOverride(event.target.value)}
+            />
+            <select
+              className="input w-240"
+              value={timeSeriesBucket}
+              onChange={(event) => setTimeSeriesBucket(event.target.value)}
+            >
+              {DATA_LAYER_BUCKETS.map((bucket) => (
+                <option key={bucket} value={bucket}>{bucket}</option>
+              ))}
+            </select>
+            <button className="btn secondary" onClick={refreshDataLayer} disabled={loadingDataLayer}>
+              {loadingDataLayer ? "Loading..." : "Refresh Data Layer"}
+            </button>
+          </div>
+
+          {dataLayerError ? <div className="empty-state mb-12">{dataLayerError}</div> : null}
+
+          <div className="list">
+            <div className="list-item split">
+              <span>Total Events (72h)</span>
+              <span className="chip">{eventTimeSeriesMeta.total_count || 0}</span>
+            </div>
+            <div className="list-item split">
+              <span>Series Points</span>
+              <span className="muted">{eventTimeSeriesMeta.total_points || 0}</span>
+            </div>
+            <div className="list-item split">
+              <span>Bucket Size</span>
+              <span className="muted">{eventTimeSeriesMeta.bucket || timeSeriesBucket}</span>
+            </div>
+          </div>
+
+          {dataLayerChart ? (
+            <>
+              <div className="list-item split mt-12">
+                <span>Latest bucket: {dataLayerChart.latest?.count || 0} events</span>
+                <span className="chip">Peak: {dataLayerChart.max}</span>
+              </div>
+              <div className="trend-wrap">
+                <svg viewBox="0 0 920 180" width="100%" height="200" role="img" aria-label="Event data-layer time-series chart">
+                  <rect x="0" y="0" width="920" height="180" fill="var(--panel-soft)" stroke="var(--border)" rx="12" />
+                  <polyline
+                    fill="none"
+                    stroke="var(--accent)"
+                    strokeWidth="3"
+                    points={dataLayerChart.points}
+                    transform="translate(0,10)"
+                  />
+                </svg>
+                <div className="trend-legend">
+                  <span>{formatWazuhTimestamp(dataLayerChart.from)}</span>
+                  <span>Avg {dataLayerChart.average}/bucket</span>
+                  <span>{formatWazuhTimestamp(dataLayerChart.to)}</span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="empty-state mt-12">No indexed time-series data yet.</div>
+          )}
+
+          <div className="table-scroll mt-12">
+            <table className="table compact">
+              <thead>
+                <tr>
+                  <th>Severity</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {eventTimeSeriesTotals.length === 0 ? (
+                  <tr>
+                    <td colSpan={2} className="muted">No grouped totals.</td>
+                  </tr>
+                ) : (
+                  eventTimeSeriesTotals.map((row, idx) => (
+                    <tr key={`${row.group || "group"}-${idx}`}>
+                      <td>{row.group || "unknown"}</td>
+                      <td>{Number(row.count || 0)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <h3>High-Speed Correlation (V2)</h3>
+              <p className="muted">Cross-domain correlated clusters from `/api/v2/events/correlate`.</p>
+            </div>
+          </div>
+
+          <div className="page-actions mb-12">
+            <select
+              className="input w-240"
+              value={correlationWindow}
+              onChange={(event) => setCorrelationWindow(event.target.value)}
+            >
+              {DATA_LAYER_BUCKETS.map((window) => (
+                <option key={window} value={window}>{window}</option>
+              ))}
+            </select>
+            <button className="btn secondary" onClick={refreshDataLayer} disabled={loadingDataLayer}>
+              {loadingDataLayer ? "Loading..." : "Refresh Correlation"}
+            </button>
+          </div>
+
+          <div className="grid-3">
+            <div className="list-item readable">
+              <div className="muted">Window</div>
+              <div className="meta-line">{eventCorrelationMeta.window || correlationWindow}</div>
+            </div>
+            <div className="list-item readable">
+              <div className="muted">Groups</div>
+              <div className="meta-line">{eventCorrelationMeta.total_groups || 0}</div>
+            </div>
+            <div className="list-item readable">
+              <div className="muted">Correlated Events</div>
+              <div className="meta-line">{eventCorrelationMeta.correlated_events || 0}</div>
+            </div>
+          </div>
+
+          {topCorrelationGroups.length === 0 ? (
+            <div className="empty-state mt-12">No correlated groups found for the current window.</div>
+          ) : (
+            <div className="table-scroll mt-12">
+              <table className="table compact">
+                <thead>
+                  <tr>
+                    <th>Window</th>
+                    <th>Correlation Key</th>
+                    <th>Events</th>
+                    <th>Agents</th>
+                    <th>Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topCorrelationGroups.map((group, idx) => (
+                    <tr key={`${group.correlation_key || "key"}-${group.window_start || idx}`}>
+                      <td>{formatWazuhTimestamp(group.window_start)}</td>
+                      <td>{group.correlation_key || "-"}</td>
+                      <td>{Number(group.event_count || 0)}</td>
+                      <td>{Number(group.unique_agents || 0)}</td>
+                      <td>{Number(group.score || 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
 
@@ -399,3 +747,4 @@ export default function Analytics() {
     </div>
   );
 }
+

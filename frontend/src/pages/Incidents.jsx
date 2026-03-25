@@ -167,10 +167,10 @@ export default function Incidents() {
     }
   };
 
-  if (loading) return <div className="page"><div className="empty-state">Loading incident queue...</div></div>;
+  if (loading) return <div className="page page-route-incidents"><div className="empty-state">Loading incident queue...</div></div>;
 
   return (
-    <div className="page">
+    <div className="page page-route-incidents">
       <div className="page-header">
         <div>
           <h2>Incident Queue</h2>
@@ -489,3 +489,4 @@ export default function Incidents() {
     </div>
   );
 }
+

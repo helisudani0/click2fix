@@ -58,7 +58,7 @@ export default function Approvals() {
       .then(load);
 
   return (
-    <div className="page">
+    <div className="page page-route-approvals">
       <div className="page-header">
         <div>
           <h2>Pending Approvals</h2>
@@ -152,3 +152,4 @@ export default function Approvals() {
     </div>
   );
 }
+

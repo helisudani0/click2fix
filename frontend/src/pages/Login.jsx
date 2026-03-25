@@ -80,7 +80,7 @@ export default function Login() {
   };
 
   return (
-    <div className="login-page">
+    <div className="login-page page-route-login">
       <div className="login-card">
         <div className="login-brand">
           <div className="brand-badge">C2F</div>
@@ -151,3 +151,4 @@ export default function Login() {
     </div>
   );
 }
+

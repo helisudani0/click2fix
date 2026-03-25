@@ -1167,7 +1167,7 @@ export default function Agents() {
   }, [actions, agentAlerts, fimEvents.length, mitreTop, summary.os, vulnSummary]);
 
   return (
-    <div className="page">
+    <div className="page page-route-agents">
       <div className="page-header">
         <div>
           <h2>Agents</h2>
@@ -2167,3 +2167,4 @@ export default function Agents() {
     </div>
   );
 }
+

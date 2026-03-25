@@ -422,11 +422,11 @@ export default function Cases() {
     );
   };
 
-  if (loading) return <div className="page"><div className="empty-state">Loading cases...</div></div>;
-  if (error) return <div className="page"><div className="empty-state">Error: {error}</div></div>;
+  if (loading) return <div className="page page-route-cases"><div className="empty-state">Loading cases...</div></div>;
+  if (error) return <div className="page page-route-cases"><div className="empty-state">Error: {error}</div></div>;
 
   return (
-    <div className="page">
+    <div className="page page-route-cases">
       <div className="page-header">
         <div>
           <h2>Cases</h2>
@@ -905,3 +905,4 @@ export default function Cases() {
     </div>
   );
 }
+

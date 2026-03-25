@@ -142,10 +142,10 @@ export default function Scheduler() {
     }
   };
 
-  if (loading) return <div className="page"><div className="empty-state">Loading scheduler jobs...</div></div>;
+  if (loading) return <div className="page page-route-scheduler"><div className="empty-state">Loading scheduler jobs...</div></div>;
 
   return (
-    <div className="page">
+    <div className="page page-route-scheduler">
       <div className="page-header">
         <div>
           <h2>Automation Jobs</h2>
@@ -306,3 +306,4 @@ export default function Scheduler() {
     </div>
   );
 }
+

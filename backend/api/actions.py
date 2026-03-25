@@ -1267,25 +1267,41 @@ async def run_action(request: Request, user=Depends(require_role("admin"))):
         body = {}
 
     agent_id = body.get("agent_id")
+    agent_ids = body.get("agent_ids") or body.get("agents")
     group = body.get("group")
+    exclude_agent_ids = body.get("exclude_agent_ids") or body.get("exclude_agents") or []
     action_id = body.get("action_id")
     args = body.get("args")
 
-    if not action_id or (not agent_id and not group):
-        raise HTTPException(status_code=400, detail="action_id and agent_id or group are required")
+    if not action_id or (not agent_id and not group and not agent_ids):
+        raise HTTPException(status_code=400, detail="action_id and agent_id, agent_ids, or group are required")
     action_id = ensure_public_action(action_id)
 
     action = get_action(action_id)
     arguments = normalize_args(action, args)
     dispatch = resolve_action_dispatch(action, arguments)
-    agent_ids = resolve_agent_ids(client, target=agent_id, group=group)
-    if action_requires_approval_handshake(action_id, target_count=len(agent_ids), context={"tenant_id": user.get("org_id")}):
+    if agent_ids:
+        resolved_agent_ids = _normalize_agent_id_list(agent_ids)
+    else:
+        resolved_agent_ids = resolve_agent_ids(client, target=agent_id, group=group)
+    if exclude_agent_ids:
+        exclude_norm = {str(a).strip() for a in exclude_agent_ids if str(a).strip()}
+        resolved_agent_ids = [
+            aid for aid in resolved_agent_ids if str(aid).strip() not in exclude_norm
+        ]
+    if not resolved_agent_ids:
+        raise HTTPException(status_code=404, detail="No agents resolved for target")
+    if action_requires_approval_handshake(
+        action_id,
+        target_count=len(resolved_agent_ids),
+        context={"tenant_id": user.get("org_id")},
+    ):
         from api.approvals import create_approval_request_record
 
         approval = create_approval_request_record(
             request=request,
             user=user,
-            agent_ids=agent_ids,
+            agent_ids=resolved_agent_ids,
             action_id=action_id,
             args=args,
             justification=body.get("justification") or body.get("reason"),
@@ -1298,14 +1314,20 @@ async def run_action(request: Request, user=Depends(require_role("admin"))):
             "approval": approval,
             "result": None,
         }
-    execution = execute_action(client, action_id, dispatch, agent_ids)
+    execution = execute_action(client, action_id, dispatch, resolved_agent_ids)
 
+    if group:
+        target_label = f"group:{group}"
+    elif agent_ids:
+        target_label = "multi:" + ",".join(resolved_agent_ids)
+    else:
+        target_label = str(agent_id or "")
     log_audit(
         "action_executed",
         actor=user.get("sub"),
         entity_type="action",
         entity_id=action_id,
-        detail=f"target={group or agent_id}; channel={execution.get('channel')}",
+        detail=f"target={target_label}; channel={execution.get('channel')}; targets={len(resolved_agent_ids)}",
         org_id=user.get("org_id"),
         ip_address=request.client.host if request.client else None,
     )
@@ -1661,10 +1683,19 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
     if assistant_plan_error:
         assistant_meta["error"] = assistant_plan_error
 
-    if action_requires_approval_handshake(
+    global_shell_high_impact = bool(
+        effective_run_as_system
+        or len(selected_ids) >= 25
+        or initial_risk_score >= 70
+    )
+    if global_shell_high_impact and action_requires_approval_handshake(
         transport_action_id,
         target_count=len(selected_ids),
-        context={"tenant_id": org_id},
+        context={
+            "tenant_id": org_id,
+            "run_as_system": bool(effective_run_as_system),
+            "high_impact": bool(initial_risk_score >= 80),
+        },
     ):
         from api.approvals import create_approval_request_record
 

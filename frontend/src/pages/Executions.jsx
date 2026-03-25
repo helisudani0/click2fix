@@ -190,11 +190,11 @@ export default function Executions() {
     return totals;
   }, [parsedRuns]);
 
-  if (loading) return <div className="page"><div className="empty-state">Loading execution workspace...</div></div>;
-  if (error) return <div className="page"><div className="empty-state">Error: {error}</div></div>;
+  if (loading) return <div className="page page-route-executions"><div className="empty-state">Loading execution workspace...</div></div>;
+  if (error) return <div className="page page-route-executions"><div className="empty-state">Error: {error}</div></div>;
 
   return (
-    <div className="page">
+    <div className="page page-route-executions">
       <div className="page-header">
         <div>
           <h2>Execution Operations Workspace</h2>
@@ -418,3 +418,4 @@ export default function Executions() {
     </div>
   );
 }
+

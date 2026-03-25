@@ -67,7 +67,7 @@ export default function Audit() {
   };
 
   return (
-    <div className="page">
+    <div className="page page-route-audit">
       <div className="page-header">
         <div>
           <h2>Audit Log</h2>
@@ -176,3 +176,4 @@ export default function Audit() {
     </div>
   );
 }
+

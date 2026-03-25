@@ -148,7 +148,7 @@ export default function Governance() {
   };
 
   return (
-    <div className="page">
+    <div className="page page-route-governance">
       <div className="page-header">
         <div>
           <h2>Automation Governance</h2>
@@ -491,3 +491,4 @@ export default function Governance() {
     </div>
   );
 }
+

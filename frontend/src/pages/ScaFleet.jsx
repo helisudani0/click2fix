@@ -48,7 +48,7 @@ export default function ScaFleet() {
   const recs = Array.isArray(payload?.fleet_recommendations) ? payload.fleet_recommendations : [];
 
   return (
-    <div className="page">
+    <div className="page page-route-sca-fleet">
       <div className="page-header">
         <div>
           <h2>Fleet SCA Hardening</h2>
@@ -231,3 +231,4 @@ export default function ScaFleet() {
     </div>
   );
 }
+

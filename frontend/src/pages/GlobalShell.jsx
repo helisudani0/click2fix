@@ -762,7 +762,7 @@ export default function GlobalShell() {
   };
 
   return (
-    <div className="page global-shell-page">
+    <div className="page global-shell-page page-route-global-shell">
       <div className="page-header">
         <div>
           <h2>Global Shell Console</h2>
@@ -1278,3 +1278,4 @@ export default function GlobalShell() {
     </div>
   );
 }
+

@@ -175,7 +175,7 @@ export default function Alerts() {
   }, [alerts, queuePage, queuePageSize]);
 
   return (
-    <div className="page">
+    <div className="page page-route-alerts">
       <div className="page-header">
         <div>
           <h2>Alert Triage Cockpit</h2>
@@ -457,3 +457,4 @@ export default function Alerts() {
     </div>
   );
 }
+

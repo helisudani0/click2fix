@@ -44,3 +44,9 @@ backend/playbooks/GeneratedPlaybook*.json
 
 # Internal documentation
 docs/
+
+# Keep the root product README, ignore supporting working docs
+!README.md
+platform/requirements/*.md
+services/*/README.md
+agents/*/README.md

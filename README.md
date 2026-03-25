@@ -5,9 +5,15 @@ It gives IT/security teams one console for triage, response, remote command exec
 
 ## Current Release
 
-- Current codebase target: `v1.1.4`
 - Latest published stable tag: `v1.1.4`
-- Deployment model: appliance installer + Docker images (GHCR)
+- Stable deployment model: appliance installer + Docker images (GHCR)
+- Active implementation track in this repo: `v2 foundation / native services MVP`
+
+## Current Product State
+
+- Stable shipped line: `v1.1.4` remains the current release baseline for the Wazuh-centric product flow.
+- Built in code today: `/api/v2/agents/*`, `/api/v2/events/*` (search, raw, ingest, queue, replay, lifecycle), extracted `agent-manager`, `event-indexer`, `alert-service`, `case-service`, `soar-service`, `ingest-gateway`, and a partial native `endpoint-agent`.
+- Still remaining before a production-ready v2 claim: full detection-service extraction, incidents extraction, zero-trust service auth, mTLS, signed command/policy envelopes, HA/DR validation, unified console depth, and deeper own-agent EDR/XDR features.
 
 ## What's New in v1.1.4 (Current Codebase)
 
@@ -114,6 +120,8 @@ It gives IT/security teams one console for triage, response, remote command exec
 
 - `frontend/`: React (Vite) SOC console UI.
 - `backend/`: FastAPI APIs, orchestration, execution engine, scheduler, integrations.
+- `services/`: extracted v2-native services (`agent-manager`, `event-indexer`, `ingest-gateway`, `alert-service`, `case-service`, `soar-service`, and detection-service scaffold).
+- `agents/`: native endpoint-agent MVP.
 - `deploy/`: Wazuh active-response artifacts and appliance packaging/install tooling.
 - `docker/`: container build files and compose stack for runtime deployment.
 
@@ -121,7 +129,7 @@ It gives IT/security teams one console for triage, response, remote command exec
 
 - Backend: Python, FastAPI, SQLAlchemy, APScheduler
 - Frontend: React, Vite
-- Database: PostgreSQL
+- Datastores: PostgreSQL, SQLite/WAL, optional OpenSearch for v2 event indexing
 - Integrations: Wazuh API, Wazuh Indexer API
 - Packaging/Runtime: Docker, Docker Compose, GitHub Releases + GHCR
 

@@ -22,46 +22,61 @@ _ABSOLUTE_BLOCK_PATTERNS = (
         r"\b(?:powershell|pwsh)(?:\.exe)?\b[^\r\n]{0,120}\b(?:-e\b|-enc\b|-encodedcommand\b)",
         "Nested encoded shell execution is not allowed",
     ),
-    (
-        r"\b(?:invoke-webrequest|iwr|invoke-restmethod|irm|curl(?:\.exe)?|wget|start-bitstransfer|bitsadmin|certutil(?:\.exe)?)\b[\s\S]{0,220}(?:https?|ftp)://",
-        "Direct network download/upload commands are not allowed from Global Shell",
-    ),
     (r"downloadstring\s*\(", "Downloaded script execution is not allowed"),
-    (
-        r"\b(?:net\s+user|net\s+localgroup|new-localuser|add-localgroupmember|useradd|usermod|passwd)\b",
-        "Identity or privilege changes are not allowed from Global Shell",
-    ),
-    (
-        r"\b(?:register-scheduledtask|new-scheduledtask|schtasks(?:\.exe)?\s+/create)\b",
-        "Scheduled task persistence is not allowed",
-    ),
-    (
-        r"\b(?:reg(?:\.exe)?\s+add|new-itemproperty|set-itemproperty)\b[\s\S]{0,160}\\(?:run|runonce)\b",
-        "Registry autorun persistence is not allowed",
-    ),
     (
         r"\b(?:set-mppreference|add-mppreference)\b[\s\S]{0,160}(?:disable|exclusion)",
         "Security-control bypass is not allowed",
     ),
     (
-        r"\b(?:sc(?:\.exe)?\s+(?:config|create)|new-service)\b",
-        "Service creation or service-start policy changes are not allowed",
-    ),
-    (
-        r"\b(?:wmic\b[\s\S]{0,160}\bprocess\b[\s\S]{0,80}\bcall\b[\s\S]{0,80}\bcreate|register-wmievent|set-wmiinstance)\b",
-        "WMI-based process launch or persistence is not allowed",
-    ),
-    (
-        r"\b(?:netsh\s+advfirewall\b[\s\S]{0,120}\boff\b|set-netfirewallprofile\b[\s\S]{0,120}\bdisabled?\b)",
-        "Disabling the firewall is not allowed",
-    ),
-    (
         r"\b(?:vssadmin|wbadmin|bcdedit|cipher(?:\.exe)?\s+/w)\b",
         "Backup or recovery tampering is not allowed",
     ),
+)
+_HIGH_RISK_SIGNAL_PATTERNS = (
+    (
+        r"\b(?:invoke-webrequest|iwr|invoke-restmethod|irm|curl(?:\.exe)?|wget|start-bitstransfer|bitsadmin|certutil(?:\.exe)?)\b[\s\S]{0,220}(?:https?|ftp)://",
+        "Direct network transfer command",
+        48,
+    ),
     (
         r"\b(?:shutdown(?:\.exe)?|restart-computer|stop-computer)\b",
-        "Forced reboot or shutdown is not allowed from Global Shell",
+        "Endpoint restart or shutdown command",
+        52,
+    ),
+    (
+        r"\b(?:net\s+user|net\s+localgroup|new-localuser|add-localgroupmember|useradd|usermod|passwd)\b",
+        "Identity or privilege mutation",
+        72,
+    ),
+    (
+        r"\b(?:register-scheduledtask|new-scheduledtask|schtasks(?:\.exe)?\s+/create)\b",
+        "Scheduled task or persistence change",
+        74,
+    ),
+    (
+        r"\b(?:reg(?:\.exe)?\s+add|new-itemproperty|set-itemproperty)\b[\s\S]{0,160}\\(?:run|runonce)\b",
+        "Registry autorun persistence change",
+        76,
+    ),
+    (
+        r"\b(?:sc(?:\.exe)?\s+(?:config|create)|new-service)\b",
+        "Service creation or startup-policy change",
+        70,
+    ),
+    (
+        r"\b(?:wmic\b[\s\S]{0,160}\bprocess\b[\s\S]{0,80}\bcall\b[\s\S]{0,80}\bcreate|register-wmievent|set-wmiinstance)\b",
+        "WMI-based process or persistence operation",
+        72,
+    ),
+    (
+        r"\b(?:netsh\s+advfirewall\b[\s\S]{0,120}\boff\b|set-netfirewallprofile\b[\s\S]{0,120}\bdisabled?\b)",
+        "Firewall disable operation",
+        78,
+    ),
+    (
+        r"\b(?:stop-service|restart-service|set-service|sc(?:\.exe)?\s+stop)\b",
+        "Service interruption operation",
+        58,
     ),
 )
 
@@ -234,6 +249,11 @@ def assess_command_safety(command: str, *, shell: str, allow_destructive: bool =
         for pattern, reason in _ABSOLUTE_BLOCK_PATTERNS
         if re.search(pattern, raw, flags=re.IGNORECASE)
     ]
+    high_risk_matches = [
+        (reason, score)
+        for pattern, reason, score in _HIGH_RISK_SIGNAL_PATTERNS
+        if re.search(pattern, raw, flags=re.IGNORECASE)
+    ]
     destructive = any(
         re.search(pat, raw, flags=re.IGNORECASE)
         for pat in (
@@ -250,6 +270,10 @@ def assess_command_safety(command: str, *, shell: str, allow_destructive: bool =
     if absolute_block_reasons:
         risk = 100
         reasons.extend(absolute_block_reasons)
+    for reason, score in high_risk_matches:
+        risk = max(risk, int(score))
+        if reason not in reasons:
+            reasons.append(reason)
     if destructive:
         risk = 96
         reasons.append("Potentially destructive operation")

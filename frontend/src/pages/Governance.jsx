@@ -48,6 +48,9 @@ export default function Governance() {
   const [lookupExecutionId, setLookupExecutionId] = useState("");
   const [lookupAutoCorrelate, setLookupAutoCorrelate] = useState(true);
   const [lookupResult, setLookupResult] = useState(null);
+  const enabledProfileCount = profiles.filter((profile) => Boolean(profile?.enabled)).length;
+  const validationAlertCount = Array.isArray(validateResult?.alerts) ? validateResult.alerts.length : 0;
+  const lookupAlertCount = Array.isArray(lookupResult?.alerts) ? lookupResult.alerts.length : 0;
 
   const loadProfiles = async () => {
     try {
@@ -155,6 +158,29 @@ export default function Governance() {
 
       {status ? <div className="empty-state">{status}</div> : null}
 
+      <div className="stat-grid">
+        <div className="stat-card">
+          <div className="stat-label">Profiles</div>
+          <div className="stat-value">{profiles.length}</div>
+          <div className="stat-sub">Automation context baselines available</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Enabled</div>
+          <div className="stat-value">{enabledProfileCount}</div>
+          <div className="stat-sub">Profiles active for live context evaluation</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Validation Alerts</div>
+          <div className="stat-value">{validationAlertCount}</div>
+          <div className="stat-sub">Correlated alerts in the latest validation run</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Lookup Alerts</div>
+          <div className="stat-value">{lookupAlertCount}</div>
+          <div className="stat-sub">Correlated alerts from execution lookup</div>
+        </div>
+      </div>
+
       <div className="card mb-18">
         <div className="card-header">
           <div>
@@ -162,7 +188,7 @@ export default function Governance() {
             <p className="muted">Classify expected automation behavior for better alert context.</p>
           </div>
           <div className="page-actions">
-            <label className="list-item" style={{ minWidth: 180 }}>
+            <label className="list-item w-180">
               <div className="muted">Enabled Only</div>
               <select
                 className="input"
@@ -424,7 +450,7 @@ export default function Governance() {
               <option value="false">false</option>
             </select>
           </label>
-          <div className="page-actions" style={{ alignSelf: "end" }}>
+          <div className="page-actions self-end">
             <button className="btn secondary" onClick={lookupCorrelatedAlerts}>Fetch Correlated Alerts</button>
           </div>
         </div>

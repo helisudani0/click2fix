@@ -932,7 +932,7 @@ export default function GlobalShell() {
                   <option value="cmd">CMD</option>
                 </select>
               </div>
-              <label className="mt-10 page-actions" style={{ alignItems: "center", gap: "8px" }}>
+              <label className="mt-10 inline-check">
                 <input
                   type="checkbox"
                   checked={runAsSystem}
@@ -977,7 +977,7 @@ export default function GlobalShell() {
                   Strategy: {String(assistantPlan.recommended.strategy)}
                 </div>
               ) : null}
-              <label className="mt-10 page-actions" style={{ alignItems: "center", gap: "8px" }}>
+              <label className="mt-10 inline-check">
                 <input
                   type="checkbox"
                   checked={autoRemediate}

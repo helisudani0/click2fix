@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getAudit } from "../api/wazuh";
 import RelativeTimestamp from "../components/RelativeTimestamp";
 
@@ -32,6 +32,17 @@ export default function Audit() {
   const [actor, setActor] = useState("");
   const [action, setAction] = useState("");
   const [entityType, setEntityType] = useState("");
+
+  const normalizedRows = useMemo(() => rows.map(auditRow), [rows]);
+  const activeFilterCount = [actor, action, entityType].filter((value) => String(value || "").trim()).length;
+  const uniqueActorCount = useMemo(
+    () => new Set(normalizedRows.map((row) => row.actor).filter(Boolean)).size,
+    [normalizedRows],
+  );
+  const uniqueEntityCount = useMemo(
+    () => new Set(normalizedRows.map((row) => row.entityType).filter(Boolean)).size,
+    [normalizedRows],
+  );
 
   const load = () => {
     getAudit({
@@ -75,6 +86,29 @@ export default function Audit() {
         </div>
       </div>
 
+      <div className="stat-grid">
+        <div className="stat-card">
+          <div className="stat-label">Visible Events</div>
+          <div className="stat-value">{normalizedRows.length}</div>
+          <div className="stat-sub">Current filtered audit trail</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Active Filters</div>
+          <div className="stat-value">{activeFilterCount}</div>
+          <div className="stat-sub">Actor, action, and entity filters applied</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Actors</div>
+          <div className="stat-value">{uniqueActorCount}</div>
+          <div className="stat-sub">Unique actors in the visible result set</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Entity Types</div>
+          <div className="stat-value">{uniqueEntityCount}</div>
+          <div className="stat-sub">Distinct governed resources touched</div>
+        </div>
+      </div>
+
       <div className="card">
         <div className="page-actions mb-12">
           <input
@@ -114,15 +148,14 @@ export default function Audit() {
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 ? (
+              {normalizedRows.length === 0 ? (
                 <tr>
                   <td colSpan="7" className="text-center">
                     No audit events
                   </td>
                 </tr>
               ) : (
-                rows.map((raw) => {
-                  const row = auditRow(raw);
+                normalizedRows.map((row) => {
                   return (
                     <tr key={row.id}>
                       <td>{row.id}</td>

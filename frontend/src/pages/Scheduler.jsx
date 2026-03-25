@@ -52,6 +52,18 @@ export default function Scheduler() {
     copy.sort((left, right) => Number(left.id || 0) - Number(right.id || 0));
     return copy;
   }, [jobs]);
+  const enabledJobCount = useMemo(
+    () => sortedJobs.filter((job) => Boolean(job.enabled)).length,
+    [sortedJobs],
+  );
+  const approvalJobCount = useMemo(
+    () => sortedJobs.filter((job) => Boolean(job.requireApproval)).length,
+    [sortedJobs],
+  );
+  const recentRunCount = useMemo(
+    () => sortedJobs.filter((job) => Boolean(job.lastRun)).length,
+    [sortedJobs],
+  );
 
   const load = async () => {
     try {
@@ -147,6 +159,29 @@ export default function Scheduler() {
 
       {status ? <div className="empty-state">{status}</div> : null}
 
+      <div className="stat-grid">
+        <div className="stat-card">
+          <div className="stat-label">Jobs</div>
+          <div className="stat-value">{sortedJobs.length}</div>
+          <div className="stat-sub">Configured scheduler entries</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Enabled</div>
+          <div className="stat-value">{enabledJobCount}</div>
+          <div className="stat-sub">Currently active recurring jobs</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Approval Gated</div>
+          <div className="stat-value">{approvalJobCount}</div>
+          <div className="stat-sub">Jobs requiring analyst approval</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Recent Runs</div>
+          <div className="stat-value">{recentRunCount}</div>
+          <div className="stat-sub">Jobs with execution history available</div>
+        </div>
+      </div>
+
       <div className="card mb-18">
         <div className="card-header">
           <div>
@@ -241,7 +276,7 @@ export default function Scheduler() {
                     <td>{job.target || "-"}</td>
                     <td>{job.cron || "-"}</td>
                     <td>
-                      <span className={`pill ${job.enabled ? "active" : "inactive"}`}>
+                      <span className={`status-pill ${job.enabled ? "active" : "inactive"}`}>
                         {job.enabled ? "enabled" : "disabled"}
                       </span>
                     </td>

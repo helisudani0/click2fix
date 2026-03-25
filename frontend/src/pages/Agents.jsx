@@ -1258,7 +1258,7 @@ export default function Agents() {
                       <td>{name}</td>
                       <td>{group}</td>
                       <td>
-                        <span className={`pill ${isActive ? "active" : "inactive"}`}>
+                        <span className={`status-pill ${isActive ? "active" : "inactive"}`}>
                           {status}
                         </span>
                       </td>
@@ -1324,7 +1324,7 @@ export default function Agents() {
                   <strong>{summary.name}</strong>
                   <div className="meta-line">Agent ID: {selectedAgentId}</div>
                 </div>
-                <span className={`pill ${summary.status === "active" ? "active" : "inactive"}`}>
+                <span className={`status-pill ${summary.status === "active" ? "active" : "inactive"}`}>
                   {summary.status}
                 </span>
               </div>

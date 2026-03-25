@@ -2260,6 +2260,18 @@ table tbody tr.selected,
   border: 1px solid rgba(148, 163, 184, 0.18);
 }
 
+.status-pill.active {
+  background: rgba(16, 185, 129, 0.11);
+  color: #d8fbf0;
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+.status-pill.inactive {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ffe2e2;
+  border-color: rgba(239, 68, 68, 0.18);
+}
+
 .status-pill::before {
   content: none !important;
   display: none !important;
@@ -2923,6 +2935,11 @@ textarea:focus-visible {
   max-width: 100%;
 }
 
+.w-180 {
+  width: 180px;
+  max-width: 100%;
+}
+
 .w-320 {
   width: 320px;
   max-width: 100%;
@@ -2975,6 +2992,10 @@ textarea:focus-visible {
 
 .justify-between {
   justify-content: space-between;
+}
+
+.self-end {
+  align-self: end;
 }
 
 .inline-check {

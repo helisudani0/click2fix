@@ -256,7 +256,7 @@ export default function Incidents() {
         </div>
         <div className="page-actions mt-8">
           <button className="btn" onClick={runCorrelation}>Run Correlation</button>
-          <label className="list-item" style={{ minWidth: 180 }}>
+          <label className="list-item w-180">
             <div className="muted">Persist Incidents</div>
             <select className="input" value={persist ? "true" : "false"} onChange={(event) => setPersist(event.target.value === "true")}>
               <option value="true">true</option>

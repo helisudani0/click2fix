@@ -191,7 +191,7 @@ export default function Executions() {
   }, [parsedRuns]);
 
   if (loading) return <div className="page"><div className="empty-state">Loading execution workspace...</div></div>;
-  if (error) return <div className="empty-state">Error: {error}</div>;
+  if (error) return <div className="page"><div className="empty-state">Error: {error}</div></div>;
 
   return (
     <div className="page">

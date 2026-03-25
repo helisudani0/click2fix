@@ -5,6 +5,7 @@ import Pager from "../components/Pager";
 import RelativeTimestamp from "../components/RelativeTimestamp";
 import SideDrawer from "../components/SideDrawer";
 import { getAgents, getExecutions, runGlobalShell, suggestGlobalShellCommand } from "../api/wazuh";
+import { formatApiError } from "../utils/httpErrors";
 import { buildHumanReadableOutput, normalizeOutputText, summarizeReadableOutput } from "../utils/output";
 
 const CONNECTED_STATUSES = new Set(["active", "connected", "online"]);
@@ -345,7 +346,7 @@ export default function GlobalShell() {
       setAgents(parsed);
     } catch (err) {
       setAgents([]);
-      setAgentsError(err.response?.data?.detail || err.message || "Failed to load agents.");
+      setAgentsError(formatApiError(err, "Failed to load agents."));
     } finally {
       setAgentsLoading(false);
     }
@@ -652,7 +653,7 @@ export default function GlobalShell() {
         setAssistantPlan(null);
         setAssistantDisabledReason(detailText || "AI assistant is currently unavailable.");
       }
-      setStatus(detailText || err.message || "Failed to generate assistant command.");
+      setStatus(formatApiError(err, detailText || "Failed to generate assistant command."));
     } finally {
       setAssistantLoading(false);
     }
@@ -754,7 +755,7 @@ export default function GlobalShell() {
       const detailText = typeof detail === "string"
         ? detail
         : (detail?.message || detail?.error || "");
-      setStatus(detailText || err.message || "Failed to queue global command.");
+      setStatus(formatApiError(err, detailText || "Failed to queue global command."));
     } finally {
       setSubmitting(false);
     }

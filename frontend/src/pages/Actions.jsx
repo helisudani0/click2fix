@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ExecutionStream from "../components/ExecutionStream";
 import { getActions, getAgents, getActionConnectorStatus, runAction } from "../api/wazuh";
+import { formatApiError } from "../utils/httpErrors";
 
 const MULTILINE_INPUT_FIELDS = new Set(["command", "custom_command", "script"]);
 const ACTIONS_SIDEBAR_WIDTH_STORAGE_KEY = "c2f-actions-sidebar-width-v3";
@@ -390,7 +391,7 @@ export default function Actions() {
       setActiveExecutionId(executionId || null);
       setActionStatus(executionId ? `Action submitted as execution #${executionId}.` : "Action submitted.");
     } catch (error) {
-      setActionStatus(error?.response?.data?.detail || error?.message || "Action execution failed.");
+      setActionStatus(formatApiError(error, "Action execution failed."));
     } finally {
       setIsActionRunning(false);
     }

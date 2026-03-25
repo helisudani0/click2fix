@@ -6,6 +6,7 @@ import {
   updateSchedulerJob,
 } from "../api/wazuh";
 import RelativeTimestamp from "../components/RelativeTimestamp";
+import { formatApiError } from "../utils/httpErrors";
 
 const toJob = (row) => {
   if (Array.isArray(row)) {
@@ -77,7 +78,7 @@ export default function Scheduler() {
       setSchedulerRunning(Boolean(payload?.running));
       setStatus("");
     } catch (err) {
-      setStatus(err.response?.data?.detail || err.message);
+      setStatus(formatApiError(err, "Failed to load scheduler jobs."));
     } finally {
       setLoading(false);
     }
@@ -102,7 +103,7 @@ export default function Scheduler() {
       setStatus("Scheduler job created.");
       await load();
     } catch (err) {
-      setStatus(err.response?.data?.detail || err.message);
+      setStatus(formatApiError(err, "Failed to create scheduler job."));
     }
   };
 
@@ -113,7 +114,7 @@ export default function Scheduler() {
       setStatus(`Job ${job.id} ${nextEnabled ? "enabled" : "disabled"}.`);
       await load();
     } catch (err) {
-      setStatus(err.response?.data?.detail || err.message);
+      setStatus(formatApiError(err, "Failed to toggle scheduler job."));
     }
   };
 
@@ -124,7 +125,7 @@ export default function Scheduler() {
       setStatus(`Run-now triggered for job ${jobId}.`);
       await load();
     } catch (err) {
-      setStatus(err.response?.data?.detail || err.message);
+      setStatus(formatApiError(err, "Failed to run scheduler job."));
     }
   };
 
@@ -137,7 +138,7 @@ export default function Scheduler() {
       setStatus(`Updated cron for job ${job.id}.`);
       await load();
     } catch (err) {
-      setStatus(err.response?.data?.detail || err.message);
+      setStatus(formatApiError(err, "Failed to update scheduler cron."));
     }
   };
 

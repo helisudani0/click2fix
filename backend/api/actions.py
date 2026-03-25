@@ -24,6 +24,7 @@ from core.global_shell_ai import (
     vulnerability_matches_record,
 )
 from core.indexer_client import IndexerClient
+from core.launch_guardrails import register_launch, should_emit_burst
 from core.security import recent_auth_window_seconds, require_recent_auth, require_role
 from core.security_monitoring import record_security_event
 from core.time_utils import utc_now_naive
@@ -1621,6 +1622,29 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
                 "auto_remediate": bool(auto_remediate),
             },
         )
+        if effective_run_as_system or len(selected_ids) >= 25 or initial_risk_score >= 80:
+            recent_high_impact = register_launch(
+                "execution.global_shell_launch",
+                actor=actor,
+                window_seconds=900,
+            )
+        else:
+            recent_high_impact = 0
+        if should_emit_burst(recent_high_impact):
+            record_security_event(
+                "execution.global_shell_burst",
+                severity="warning",
+                request=request,
+                user=user if isinstance(user, dict) else None,
+                detail="Repeated high-impact Global Shell launches detected",
+                metadata={
+                    "target_count": len(selected_ids),
+                    "run_as_system": bool(effective_run_as_system),
+                    "risk_score": initial_risk_score,
+                    "recent_count": recent_high_impact,
+                    "window_seconds": 900,
+                },
+            )
 
     assistant_meta = {
         "used": bool(assistant_plan),

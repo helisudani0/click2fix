@@ -13,6 +13,7 @@ import {
 } from "../api/wazuh";
 import ExecutionStream from "../components/ExecutionStream";
 import PlaybookEditor from "../components/PlaybookEditor";
+import { formatApiError } from "../utils/httpErrors";
 
 const normalizeAgents = (data) => {
   if (Array.isArray(data)) return data;
@@ -190,7 +191,7 @@ export default function Playbooks() {
           .filter(Boolean)
       );
     } catch (err) {
-      setStatus(err.response?.data?.detail || err.message || "Failed to refresh playbook catalogs.");
+      setStatus(formatApiError(err, "Failed to refresh playbook catalogs."));
     } finally {
       setLoading(false);
     }
@@ -273,7 +274,7 @@ export default function Playbooks() {
       setActiveExecutionId(null);
       setStatus("Playbook loaded into the editor.");
     } catch (err) {
-      setStatus(err.response?.data?.detail || err.message || "Failed to load playbook.");
+      setStatus(formatApiError(err, "Failed to load playbook."));
     }
   };
 
@@ -307,7 +308,7 @@ export default function Playbooks() {
       }
       setStatus("Generated playbook loaded into the editor.");
     } catch (err) {
-      setStatus(err.response?.data?.detail || "Failed to generate playbook.");
+      setStatus(formatApiError(err, "Failed to generate playbook."));
     }
   };
 
@@ -328,7 +329,7 @@ export default function Playbooks() {
         : `${payload?.name || "manual-playbook"}.json`);
       setStatus("Playbook saved.");
     } catch (err) {
-      setStatus(err.response?.data?.detail || err.message || "Failed to save playbook.");
+      setStatus(formatApiError(err, "Failed to save playbook."));
     }
   };
 
@@ -378,7 +379,7 @@ export default function Playbooks() {
       }
       setStatus("Approvals requested for all playbook steps.");
     } catch (err) {
-      setStatus(err.response?.data?.detail || err.message || "Failed to request approvals.");
+      setStatus(formatApiError(err, "Failed to request approvals."));
     }
   };
 
@@ -418,7 +419,7 @@ export default function Playbooks() {
           : "Playbook execution submitted."
       );
     } catch (err) {
-      setStatus(err.response?.data?.detail || err.message || "Failed to execute playbook.");
+      setStatus(formatApiError(err, "Failed to execute playbook."));
     }
   };
 

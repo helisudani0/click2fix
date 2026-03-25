@@ -14,7 +14,9 @@ except ImportError:  # Backward-compatible fallback for v1.1.x deployments.
 from core.actions import ensure_public_action, get_action, normalize_args, resolve_action_dispatch
 from core.action_execution import execute_action, resolve_agent_ids
 from core.audit import log_audit
+from core.launch_guardrails import register_launch, should_emit_burst
 from core.security import recent_auth_window_seconds, require_recent_auth, require_role
+from core.security_monitoring import record_security_event
 from core.time_utils import utc_now_naive
 from core.ws_bus import publish_event
 from core.wazuh_client import WazuhClient
@@ -615,6 +617,37 @@ async def remediate(
     actor = user.get("sub") if isinstance(user, dict) else str(user)
     org_id = user.get("org_id") if isinstance(user, dict) else None
     if len(agent_ids) >= 25:
+        record_security_event(
+            "execution.fleet_remediation_launch",
+            severity="warning",
+            request=request,
+            user=user if isinstance(user, dict) else None,
+            detail="Fleet-wide remediation requested",
+            metadata={
+                "action_id": action_id,
+                "target_count": len(agent_ids),
+                "group": str(group or ""),
+            },
+        )
+        recent_fleet = register_launch(
+            "execution.fleet_remediation_launch",
+            actor=actor,
+            window_seconds=900,
+        )
+        if should_emit_burst(recent_fleet):
+            record_security_event(
+                "execution.fleet_remediation_burst",
+                severity="warning",
+                request=request,
+                user=user if isinstance(user, dict) else None,
+                detail="Repeated fleet-wide remediation launches detected",
+                metadata={
+                    "action_id": action_id,
+                    "target_count": len(agent_ids),
+                    "recent_count": recent_fleet,
+                    "window_seconds": 900,
+                },
+            )
         require_recent_auth(
             user,
             request,

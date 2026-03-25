@@ -74,6 +74,11 @@ api.interceptors.response.use(
     if (error?.response?.status === 401) {
       // Keep UI stable: surface auth errors to the current screen instead of hard-refreshing.
       error.authExpired = true;
+      const detail = String(error?.response?.data?.detail || "").trim();
+      if (detail.toLowerCase().includes("recent login required")) {
+        error.requiresRecentLogin = true;
+        error.recentLoginMessage = detail;
+      }
     }
     return Promise.reject(error);
   }

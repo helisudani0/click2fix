@@ -24,7 +24,7 @@ from core.global_shell_ai import (
     vulnerability_matches_record,
 )
 from core.indexer_client import IndexerClient
-from core.security import require_role
+from core.security import recent_auth_window_seconds, require_recent_auth, require_role
 from core.security_monitoring import record_security_event
 from core.time_utils import utc_now_naive
 from core.wazuh_client import WazuhClient
@@ -1595,6 +1595,14 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
     actor = user.get("sub") if isinstance(user, dict) else str(user)
     org_id = user.get("org_id") if isinstance(user, dict) else None
     initial_risk_score = _to_int(initial_safety.get("risk_score"), 0)
+
+    if effective_run_as_system or len(selected_ids) >= 25:
+        require_recent_auth(
+            user,
+            request,
+            max_age_seconds=recent_auth_window_seconds("global_shell", 3600),
+            action_label="high-impact Global Shell execution",
+        )
 
     if initial_risk_score >= 60 or effective_run_as_system or len(selected_ids) >= 25:
         record_security_event(

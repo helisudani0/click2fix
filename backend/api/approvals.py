@@ -18,6 +18,20 @@ router = APIRouter(prefix="/approvals")
 client = WazuhClient()
 
 
+def _approval_run_as_system_flag(arguments: Any) -> bool:
+    if isinstance(arguments, dict):
+        value = arguments.get("run_as_system")
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+    if isinstance(arguments, list) and len(arguments) > 4:
+        value = arguments[4]
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+    return False
+
+
 def _serialize_row(row):
     return serialize_row(row) or {}
 
@@ -119,6 +133,7 @@ def create_approval_request_record(
         incident_score=incident_score,
         context={
             "fleet_wide": bool(normalized_group) or len(resolved_agent_ids) >= 25,
+            "run_as_system": _approval_run_as_system_flag(arguments),
         },
     )
     if policy.get("justification_required") and not justification:

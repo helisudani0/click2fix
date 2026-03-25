@@ -59,6 +59,7 @@ TOKEN_ISSUER = str(os.getenv("JWT_ISSUER", _SECURITY_CFG.get("jwt_issuer", "clic
 TOKEN_AUDIENCE = str(os.getenv("JWT_AUDIENCE", _SECURITY_CFG.get("jwt_audience", "click2fix-ui")) or "").strip()
 COOKIE_NAME = str(_SECURITY_CFG.get("cookie_name", "c2f_token") or "c2f_token")
 CSRF_COOKIE_NAME = str(_SECURITY_CFG.get("csrf_cookie_name", "c2f_csrf") or "c2f_csrf")
+_RECENT_AUTH_CFG = _SECURITY_CFG.get("recent_auth", {}) if isinstance(_SECURITY_CFG.get("recent_auth", {}), dict) else {}
 
 _revoked_lock = threading.Lock()
 _revoked_token_fingerprints: dict[str, int] = {}
@@ -88,6 +89,82 @@ def _token_decode_kwargs() -> dict:
     if TOKEN_ISSUER:
         kwargs["issuer"] = TOKEN_ISSUER
     return kwargs
+
+
+def _claim_timestamp(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, datetime):
+        dt = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    if isinstance(value, str):
+        text_value = value.strip()
+        if not text_value:
+            return None
+        try:
+            return int(float(text_value))
+        except Exception:
+            try:
+                parsed = datetime.fromisoformat(text_value.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return int(parsed.timestamp())
+            except Exception:
+                return None
+    return None
+
+
+def recent_auth_window_seconds(scope: str, default: int) -> int:
+    raw = _RECENT_AUTH_CFG.get(scope, _RECENT_AUTH_CFG.get("default", default))
+    try:
+        parsed = int(raw)
+    except Exception:
+        parsed = int(default)
+    return max(300, min(24 * 3600, parsed))
+
+
+def auth_age_seconds(user) -> int | None:
+    payload = user if isinstance(user, dict) else {}
+    issued_at = (
+        _claim_timestamp(payload.get("auth_time"))
+        or _claim_timestamp(payload.get("iat"))
+        or _claim_timestamp(payload.get("nbf"))
+    )
+    if not issued_at:
+        return None
+    return max(0, int(time.time()) - int(issued_at))
+
+
+def require_recent_auth(
+    user,
+    request: Request | None,
+    *,
+    max_age_seconds: int,
+    action_label: str,
+) -> int:
+    age = auth_age_seconds(user)
+    limit = max(300, int(max_age_seconds))
+    if age is None or age > limit:
+        record_security_event(
+            "auth.recent_login_required",
+            severity="warning",
+            request=request,
+            user=user if isinstance(user, dict) else None,
+            detail=f"Recent login required for {action_label}",
+            metadata={
+                "action_label": action_label,
+                "max_age_seconds": limit,
+                "auth_age_seconds": age,
+            },
+        )
+        raise HTTPException(
+            status_code=401,
+            detail=f"Recent login required for {action_label}. Sign in again and retry.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return age
 
 
 def _cleanup_revoked(now_ts: int | None = None) -> None:

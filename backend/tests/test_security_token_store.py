@@ -31,3 +31,38 @@ def test_revoked_token_store_survives_memory_reset(tmp_path, monkeypatch):
 
     security_core._revoked_token_fingerprints.clear()  # noqa: SLF001
     assert security_core.is_token_revoked(token) is True
+
+
+def test_require_recent_auth_allows_fresh_login():
+    user = {"sub": "alice", "role": "admin", "iat": security_core.time.time()}
+
+    age = security_core.require_recent_auth(
+        user,
+        None,
+        max_age_seconds=3600,
+        action_label="test action",
+    )
+
+    assert isinstance(age, int)
+    assert age >= 0
+
+
+def test_require_recent_auth_rejects_stale_login():
+    user = {
+        "sub": "alice",
+        "role": "admin",
+        "iat": security_core.time.time() - 7200,
+    }
+
+    try:
+        security_core.require_recent_auth(
+            user,
+            None,
+            max_age_seconds=900,
+            action_label="test action",
+        )
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 401
+        assert "Recent login required" in str(getattr(exc, "detail", exc))
+    else:
+        raise AssertionError("Expected require_recent_auth to reject stale login")

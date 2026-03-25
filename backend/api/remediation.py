@@ -14,7 +14,7 @@ except ImportError:  # Backward-compatible fallback for v1.1.x deployments.
 from core.actions import ensure_public_action, get_action, normalize_args, resolve_action_dispatch
 from core.action_execution import execute_action, resolve_agent_ids
 from core.audit import log_audit
-from core.security import require_role
+from core.security import recent_auth_window_seconds, require_recent_auth, require_role
 from core.time_utils import utc_now_naive
 from core.ws_bus import publish_event
 from core.wazuh_client import WazuhClient
@@ -614,6 +614,13 @@ async def remediate(
         raise HTTPException(status_code=404, detail="No agents resolved for target")
     actor = user.get("sub") if isinstance(user, dict) else str(user)
     org_id = user.get("org_id") if isinstance(user, dict) else None
+    if len(agent_ids) >= 25:
+        require_recent_auth(
+            user,
+            request,
+            max_age_seconds=recent_auth_window_seconds("fleet_remediation", 3600),
+            action_label="fleet-wide remediation",
+        )
     if action_requires_approval_handshake(action_id, target_count=len(agent_ids), context={"tenant_id": org_id}):
         from api.approvals import create_approval_request_record
 

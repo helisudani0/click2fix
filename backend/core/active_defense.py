@@ -175,9 +175,14 @@ def build_contextual_approval_policy(
         context=context,
     )
     fleet_wide = bool((context or {}).get("fleet_wide")) or int(target_count or 0) >= 25
+    run_as_system = bool((context or {}).get("run_as_system"))
+    high_impact = bool((context or {}).get("high_impact"))
     critical_incident = _as_text(incident_priority).lower() == "critical" or _safe_int(incident_score, 0) >= 80
     dual_authorization = handshake_required and (
-        critical_incident or (fleet_wide and _action_metadata(action_id)["id"] in _DUAL_AUTH_ACTION_IDS)
+        critical_incident
+        or high_impact
+        or (fleet_wide and _action_metadata(action_id)["id"] in _DUAL_AUTH_ACTION_IDS)
+        or (run_as_system and _action_metadata(action_id)["id"] in _DUAL_AUTH_ACTION_IDS)
     )
 
     policy = {

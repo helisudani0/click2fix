@@ -14,7 +14,7 @@ from core.playbook_generator import (
     generate_playbook,
     save_playbook,
 )
-from core.security import require_role
+from core.security import recent_auth_window_seconds, require_recent_auth, require_role
 from core.settings import SETTINGS
 from core.time_utils import utc_now_naive
 from core.ws_bus import publish_event
@@ -35,6 +35,19 @@ PLAYBOOK_DIR = (
 )
 _BLOCKED_PLAYBOOK_ACTION_IDS = {"custom-os-command", "global-shell"}
 _MAX_PLAYBOOK_STEPS = 25
+_PLAYBOOK_STEP_UP_ACTION_IDS = {
+    "collect-forensics",
+    "collect-memory",
+    "disable-account",
+    "firewall-drop",
+    "hash-blocklist",
+    "host-deny",
+    "kill-process",
+    "netsh",
+    "quarantine-file",
+    "route-null",
+    "win-route-null",
+}
 
 DEFAULT_PLAYBOOKS: dict[str, dict[str, Any]] = {
     "soc_windows_malware_containment.json": {
@@ -655,6 +668,28 @@ def _validated_playbook_steps(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     return validated
 
 
+def _playbook_requires_recent_auth(steps: List[Dict[str, Any]], *, target_count: int) -> bool:
+    if int(target_count or 0) >= 25:
+        return True
+    for step in steps or []:
+        if not isinstance(step, dict):
+            continue
+        step_action = str(step.get("action") or "").strip().lower()
+        if not step_action:
+            continue
+        if step_action in _PLAYBOOK_STEP_UP_ACTION_IDS:
+            return True
+        try:
+            action = get_action(step_action)
+        except Exception:
+            continue
+        category = str(action.get("category") or "").strip().lower()
+        risk = str(action.get("risk") or "").strip().lower()
+        if category == "containment" and risk in {"high", "critical"}:
+            return True
+    return False
+
+
 def _to_text(value) -> str:
     if value is None:
         return ""
@@ -836,6 +871,14 @@ async def execute_playbook(request: Request, user=Depends(require_role("admin"))
 
     actor = user.get("sub") if isinstance(user, dict) else str(user)
     org_id = user.get("org_id") if isinstance(user, dict) else None
+
+    if _playbook_requires_recent_auth(steps, target_count=len(resolved_agent_ids)):
+        require_recent_auth(
+            user,
+            request,
+            max_age_seconds=recent_auth_window_seconds("playbook_execute", 3600),
+            action_label="sensitive playbook execution",
+        )
 
     playbook_label = payload.get("name") or (str(name) if name else "Playbook")
     playbook_file = str(name) if name else playbook_label

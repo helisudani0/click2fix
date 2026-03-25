@@ -16,7 +16,7 @@ from core.scheduler import (
     upsert_healthcheck_policy,
     upsert_integrity_sweep_policy,
 )
-from core.security import require_role
+from core.security import recent_auth_window_seconds, require_recent_auth, require_role
 
 router = APIRouter(prefix="/scheduler")
 
@@ -29,6 +29,20 @@ def _to_bool(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
     return bool(value)
+
+
+def _require_scheduler_recent_auth(
+    user,
+    request: Request | None,
+    *,
+    action_label: str,
+) -> None:
+    require_recent_auth(
+        user,
+        request,
+        max_age_seconds=recent_auth_window_seconds("scheduler_write", 7200),
+        action_label=action_label,
+    )
 
 
 @router.get("")
@@ -48,6 +62,7 @@ def get_scheduled_jobs_alias(user: dict = Depends(require_role("admin"))):
 
 @router.post("")
 async def create_scheduled_job(request: Request, user: dict = Depends(require_role("admin"))):
+    _require_scheduler_recent_auth(user, request, action_label="scheduler changes")
     body: Dict[str, Any] = {}
     try:
         body = await request.json()
@@ -105,6 +120,7 @@ async def create_scheduled_job_alias(request: Request, user: dict = Depends(requ
 
 @router.post("/{job_id}/toggle")
 async def toggle_job(job_id: int, request: Request, user: dict = Depends(require_role("admin"))):
+    _require_scheduler_recent_auth(user, request, action_label="scheduler changes")
     body: Dict[str, Any] = {}
     try:
         body = await request.json()
@@ -135,6 +151,7 @@ async def toggle_job(job_id: int, request: Request, user: dict = Depends(require
 
 @router.patch("/jobs/{job_id}")
 async def update_scheduler_job(job_id: int, request: Request, user: dict = Depends(require_role("admin"))):
+    _require_scheduler_recent_auth(user, request, action_label="scheduler changes")
     body: Dict[str, Any] = {}
     try:
         body = await request.json()
@@ -190,7 +207,8 @@ async def update_scheduler_job(job_id: int, request: Request, user: dict = Depen
 
 
 @router.post("/{job_id}/run")
-def run_job_now(job_id: int, user: dict = Depends(require_role("admin"))):
+def run_job_now(job_id: int, request: Request, user: dict = Depends(require_role("admin"))):
+    _require_scheduler_recent_auth(user, request, action_label="scheduler execution")
     result = run_scheduled_job(job_id)
     actor = user.get("sub") if isinstance(user, dict) else "system"
     org_id = user.get("org_id") if isinstance(user, dict) else None
@@ -207,12 +225,13 @@ def run_job_now(job_id: int, user: dict = Depends(require_role("admin"))):
 
 
 @router.post("/jobs/{job_id}/run-now")
-def run_job_now_alias(job_id: int, user: dict = Depends(require_role("admin"))):
-    return run_job_now(job_id=job_id, user=user)
+def run_job_now_alias(job_id: int, request: Request, user: dict = Depends(require_role("admin"))):
+    return run_job_now(job_id=job_id, request=request, user=user)
 
 
 @router.post("/policies/healthcheck")
 async def upsert_healthcheck(request: Request, user: dict = Depends(require_role("admin"))):
+    _require_scheduler_recent_auth(user, request, action_label="scheduler changes")
     body: Dict[str, Any] = {}
     try:
         body = await request.json()
@@ -234,6 +253,7 @@ async def upsert_healthcheck(request: Request, user: dict = Depends(require_role
 
 @router.post("/policies/integrity-sweep")
 async def upsert_integrity_sweep(request: Request, user: dict = Depends(require_role("admin"))):
+    _require_scheduler_recent_auth(user, request, action_label="scheduler changes")
     body: Dict[str, Any] = {}
     try:
         body = await request.json()
@@ -255,7 +275,8 @@ async def upsert_integrity_sweep(request: Request, user: dict = Depends(require_
 
 
 @router.post("/sync")
-def sync_jobs(user: dict = Depends(require_role("admin"))):
+def sync_jobs(request: Request, user: dict = Depends(require_role("admin"))):
+    _require_scheduler_recent_auth(user, request, action_label="scheduler changes")
     sync_policy_jobs()
     org_id = user.get("org_id") if isinstance(user, dict) else None
     return {

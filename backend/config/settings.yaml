@@ -1017,6 +1017,13 @@ security:
   return_access_token_in_body: false
   cookie_samesite: "strict"
   cookie_httponly: true
+  revoked_token_store: "./data/revoked_tokens.json"
+  recent_auth:
+    default: 3600
+    global_shell: 3600
+    playbook_execute: 3600
+    fleet_remediation: 3600
+    scheduler_write: 7200
   trusted_hosts:
     - "localhost"
     - "127.0.0.1"

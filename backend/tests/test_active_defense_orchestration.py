@@ -35,6 +35,18 @@ def test_build_contextual_approval_policy_requires_dual_authorization_for_critic
     assert policy.get("requirements") == [{"role": "admin", "count": 2}]
 
 
+def test_build_contextual_approval_policy_requires_dual_authorization_for_run_as_system_shell():
+    policy = build_contextual_approval_policy(
+        "custom-os-command",
+        target_count=1,
+        context={"run_as_system": True},
+    )
+
+    assert policy.get("handshake_required") is True
+    assert policy.get("dual_authorization_required") is True
+    assert policy.get("requirements") == [{"role": "admin", "count": 2}]
+
+
 def test_build_incident_score_emphasizes_blast_radius_and_tactical_depth():
     score = build_incident_score(
         agents=["TSPLLP129", "LAPTOP-9GQ8LUGU"],

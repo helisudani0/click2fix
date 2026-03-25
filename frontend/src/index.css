@@ -3778,3 +3778,415 @@ table thead {
     grid-template-columns: 1fr;
   }
 }
+
+/* ===== SOC Console Overhaul (Final) ===== */
+.app-layout {
+  grid-template-columns: minmax(248px, var(--sidebar-width, 288px)) 6px minmax(0, 1fr);
+}
+
+.app-layout.sidebar-collapsed {
+  grid-template-columns: 74px 0 minmax(0, 1fr);
+}
+
+.sidebar {
+  padding: 12px 10px;
+  gap: 10px;
+}
+
+.sidebar-workspace {
+  gap: 8px;
+}
+
+.priority-panel,
+.sidebar-module-shell,
+.ops-panel {
+  border-radius: 10px;
+}
+
+.topbar {
+  padding: 12px 16px;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(420px, 1.1fr);
+  gap: 10px;
+  box-shadow: 0 4px 10px rgba(2, 8, 16, 0.2);
+}
+
+.topbar-subtitle {
+  opacity: 0.76;
+}
+
+.topbar-right {
+  align-items: center;
+}
+
+.topbar-actions .btn {
+  min-height: 32px;
+}
+
+.content {
+  width: 100%;
+  max-width: 1680px;
+  margin: 0 auto;
+}
+
+.page-header h2 {
+  font-size: 1.72rem;
+}
+
+.card {
+  padding: 12px;
+}
+
+.card-header {
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+}
+
+.mission-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.mission-card {
+  min-height: 100px;
+}
+
+.table-scroll {
+  max-height: none !important;
+  min-height: 0;
+  overflow-x: auto !important;
+  overflow-y: visible !important;
+}
+
+.execution-queue-scroll,
+.actions-catalog-scroll,
+.actions-target-scroll {
+  max-height: none !important;
+  min-height: 0 !important;
+}
+
+.list-scroll,
+.list-scroll.tall {
+  max-height: none;
+  overflow: visible;
+}
+
+.topbar-health-inline {
+  min-height: 26px;
+  font-size: 0.7rem;
+  padding: 0 8px;
+}
+
+@media (max-width: 1280px) {
+  .mission-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ===== Enterprise Console Hard Reset ===== */
+:root {
+  --bg-0: #0a101b;
+  --bg-1: #0f1726;
+  --panel: #111b2c;
+  --panel-soft: #162235;
+  --card: #111d2f;
+  --border: rgba(122, 143, 169, 0.22);
+  --text: #e6eef8;
+  --muted: #94a7bc;
+  --accent: #3f7dd9;
+  --accent-2: #2fbb9a;
+  --success: #27b985;
+  --danger: #e06565;
+  --warning: #d8a14a;
+}
+
+body::before {
+  background:
+    radial-gradient(760px 460px at 102% -12%, rgba(63, 125, 217, 0.11), transparent 62%),
+    radial-gradient(860px 500px at -12% 104%, rgba(47, 187, 154, 0.09), transparent 60%),
+    linear-gradient(180deg, #090f18 0%, #0b1321 55%, #0c1523 100%);
+}
+
+.app-layout {
+  grid-template-columns: minmax(220px, var(--sidebar-width, 252px)) 0 minmax(0, 1fr);
+}
+
+.app-layout-divider {
+  display: none;
+}
+
+.sidebar {
+  padding: 10px 9px;
+  gap: 8px;
+  border-right: 1px solid rgba(122, 143, 169, 0.2);
+  background: linear-gradient(180deg, rgba(13, 23, 36, 0.98), rgba(12, 20, 33, 0.99));
+}
+
+.sidebar-top {
+  align-items: center;
+}
+
+.brand-title {
+  font-size: 0.98rem;
+}
+
+.brand-subtitle,
+.brand-version {
+  font-size: 0.62rem;
+}
+
+.priority-panel,
+.sidebar-divider,
+.ops-panel {
+  display: none;
+}
+
+.sidebar-workspace {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.sidebar-module-shell {
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(19, 31, 48, 0.86);
+  box-shadow: none;
+}
+
+.nav-groups {
+  gap: 10px;
+}
+
+.nav-group {
+  gap: 6px;
+}
+
+.nav-group-title {
+  font-size: 0.64rem;
+  letter-spacing: 0.14em;
+}
+
+.nav-link {
+  min-height: 34px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border-color: rgba(122, 143, 169, 0.18);
+  font-size: 0.8rem;
+}
+
+.nav-link-badge {
+  width: 20px;
+  height: 20px;
+  flex-basis: 20px;
+  border-radius: 6px;
+  font-size: 0.52rem;
+}
+
+.nav-link::before {
+  display: none;
+}
+
+.sidebar-footer {
+  padding-top: 8px;
+  font-size: 0.72rem;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.main-content {
+  background: linear-gradient(180deg, rgba(10, 17, 28, 0.96), rgba(11, 20, 32, 0.98));
+}
+
+.topbar {
+  grid-template-columns: minmax(220px, 1fr) minmax(400px, 1fr);
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(122, 143, 169, 0.18);
+  background: rgba(13, 23, 36, 0.94);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
+}
+
+.topbar-title {
+  font-size: 1.28rem;
+}
+
+.topbar-subtitle,
+.topbar-breadcrumbs {
+  display: none;
+}
+
+.topbar-right {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.search {
+  min-height: 34px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.search input {
+  padding: 7px 8px;
+  font-size: 0.84rem;
+}
+
+.topbar-actions {
+  gap: 6px;
+  align-items: center;
+}
+
+.topbar-health-dot {
+  width: 7px;
+  height: 7px;
+}
+
+.topbar-health-primary {
+  min-height: 24px;
+  font-size: 0.66rem;
+  padding: 0 7px;
+}
+
+.topbar-health-secondary {
+  display: none;
+}
+
+.btn {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 0.76rem;
+}
+
+.btn.secondary {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.content {
+  max-width: 1600px;
+  padding: 14px;
+}
+
+.page {
+  gap: 12px;
+}
+
+.page-header {
+  gap: 8px 12px;
+}
+
+.page-header h2 {
+  font-size: 1.46rem;
+}
+
+.page-header .muted {
+  font-size: 0.82rem;
+}
+
+.page-actions {
+  gap: 6px;
+}
+
+.mission-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mission-card {
+  min-height: 92px;
+  padding: 10px;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.mission-label {
+  font-size: 0.62rem;
+}
+
+.mission-value {
+  font-size: 1.24rem;
+}
+
+.mission-meta {
+  font-size: 0.7rem;
+}
+
+.card {
+  border-radius: 10px;
+  padding: 10px;
+  box-shadow: none;
+}
+
+.card-header {
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+}
+
+.card-header h3 {
+  font-size: 0.92rem;
+}
+
+table,
+.table {
+  font-size: 0.76rem;
+}
+
+.table th,
+.table td {
+  padding: 8px 10px;
+}
+
+.table thead,
+table thead {
+  font-size: 0.63rem;
+}
+
+.table-scroll {
+  border-radius: 8px;
+  border-color: rgba(122, 143, 169, 0.2);
+}
+
+.list-item {
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.status-pill {
+  font-size: 0.62rem;
+  padding: 4px 8px;
+}
+
+@media (max-width: 1240px) {
+  .app-layout {
+    grid-template-columns: minmax(70px, 92px) minmax(0, 1fr);
+  }
+
+  .sidebar {
+    padding: 9px 7px;
+  }
+
+  .brand-copy,
+  .nav-group-title,
+  .nav-link-label,
+  .sidebar-footer span,
+  .footer-version {
+    display: none;
+  }
+
+  .topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar-right {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar-actions {
+    justify-content: flex-start;
+  }
+
+  .mission-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

@@ -7,7 +7,6 @@ import api, {
 } from "../api/client";
 import { alertSocket } from "../api/socket";
 import { getExecutionHealth } from "../api/wazuh";
-import MissionBriefing from "./MissionBriefing";
 import { APP_TIMEZONE_LABEL } from "../utils/time";
 import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
@@ -17,11 +16,10 @@ const PRIORITY_PANEL_HEIGHT_STORAGE_KEY = "c2f-priority-panel-height-v4";
 const SIDEBAR_WIDTH_STORAGE_KEY = "c2f-sidebar-width-v4";
 const OPS_PANEL_COMPACT_STORAGE_KEY = "c2f-ops-panel-compact-v4";
 const PRIORITY_QUEUE_STORAGE_KEY = "c2f-priority-queue-v2";
-const MISSION_BRIEFING_STORAGE_KEY = "c2f-mission-briefing-v1";
-const DEFAULT_PRIORITY_PANEL_HEIGHT = 288;
-const MIN_PRIORITY_PANEL_HEIGHT = 170;
-const MAX_PRIORITY_PANEL_HEIGHT = 520;
-const DEFAULT_SIDEBAR_WIDTH = 336;
+const DEFAULT_PRIORITY_PANEL_HEIGHT = 224;
+const MIN_PRIORITY_PANEL_HEIGHT = 140;
+const MAX_PRIORITY_PANEL_HEIGHT = 420;
+const DEFAULT_SIDEBAR_WIDTH = 304;
 const MIN_SIDEBAR_WIDTH = 260;
 const MAX_SIDEBAR_WIDTH = 560;
 
@@ -174,33 +172,6 @@ const clampSidebarWidth = (value) => {
   return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, Math.round(numeric)));
 };
 
-const MISSION_BRIEFING_STEPS = [
-  {
-    route: null,
-    selector: '[data-tour-id="priority-queue"]',
-    title: "Priority Queue",
-    body: "This queue stays available across the console so we can filter alert noise without leaving the active workspace.",
-  },
-  {
-    route: "/actions",
-    selector: '[data-tour-id="action-catalog"]',
-    title: "Action Hover",
-    body: "Use the action catalog to lock onto the exact remediation ID, validate it, and launch response runs without leaving the table workflow.",
-  },
-  {
-    route: "/global-shell",
-    selector: '[data-tour-id="global-shell-drawer"]',
-    title: "Global Shell Drawer",
-    body: "Global Shell is the pivot point for live debugging. Failed runs can jump here with the command context already prefilled.",
-  },
-  {
-    route: "/executions",
-    selector: '[data-tour-id="execution-hud"]',
-    title: "Execution HUD",
-    body: "The HUD shows fractional fleet progress, lagging targets, and retry-delta actions so we can recover outliers without rerunning the whole fleet.",
-  },
-];
-
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -216,7 +187,8 @@ export default function AppLayout() {
   });
   const [priorityPanelCollapsed, setPriorityPanelCollapsed] = useState(() => {
     if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(PRIORITY_PANEL_STORAGE_KEY) === "1";
+    const persisted = window.localStorage.getItem(PRIORITY_PANEL_STORAGE_KEY);
+    return persisted === null ? true : persisted === "1";
   });
   const [priorityPanelHeight, setPriorityPanelHeight] = useState(() => {
     if (typeof window === "undefined") return DEFAULT_PRIORITY_PANEL_HEIGHT;
@@ -232,7 +204,8 @@ export default function AppLayout() {
   });
   const [opsCompact, setOpsCompact] = useState(() => {
     if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(OPS_PANEL_COMPACT_STORAGE_KEY) === "1";
+    const persisted = window.localStorage.getItem(OPS_PANEL_COMPACT_STORAGE_KEY);
+    return persisted === null ? true : persisted === "1";
   });
   const [openOpsSections, setOpenOpsSections] = useState(() => ({
     organizations: true,
@@ -245,7 +218,6 @@ export default function AppLayout() {
     socketLatencyMs: null,
     socketLive: false,
   });
-  const [missionBriefingOpen, setMissionBriefingOpen] = useState(false);
   const [priorityConfigOpen, setPriorityConfigOpen] = useState(false);
   const isGlobalShellRoute = location.pathname.startsWith("/global-shell");
 
@@ -508,15 +480,6 @@ export default function AppLayout() {
     };
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    if (window.localStorage.getItem(MISSION_BRIEFING_STORAGE_KEY) === "1") return undefined;
-    const timer = window.setTimeout(() => {
-      setMissionBriefingOpen(true);
-    }, 900);
-    return () => window.clearTimeout(timer);
-  }, []);
-
   const logout = async () => {
     try {
       await api.post("/auth/logout");
@@ -564,13 +527,6 @@ export default function AppLayout() {
     }
     const opsUrl = `${opsOrigin}/ops`;
     window.open(opsUrl, "_blank", "noopener,noreferrer");
-  };
-
-  const completeMissionBriefing = () => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(MISSION_BRIEFING_STORAGE_KEY, "1");
-    }
-    setMissionBriefingOpen(false);
   };
 
   const healthTone = backendHealth.socketLive ? "success" : "pending";
@@ -895,19 +851,16 @@ export default function AppLayout() {
             </form>
             <div className="topbar-actions">
               <span className={`topbar-health-dot ${healthTone}`} aria-hidden="true" />
-              <span className="topbar-health-inline">
+              <span className="topbar-health-inline topbar-health-primary">
                 {backendHealth.socketLive ? "Socket live" : "Reconnecting"}
               </span>
-              <span className="topbar-health-inline">{backendHealth.activeExecutions} active</span>
-              <span className="topbar-health-inline">
+              <span className="topbar-health-inline topbar-health-secondary">{backendHealth.activeExecutions} active</span>
+              <span className="topbar-health-inline topbar-health-secondary">
                 {backendHealth.socketLatencyMs !== null ? `${backendHealth.socketLatencyMs} ms` : "Latency --"}
               </span>
               {backendHealth.queuedExecutions > 0 ? (
-                <span className="topbar-health-inline">{backendHealth.queuedExecutions} queued</span>
+                <span className="topbar-health-inline topbar-health-secondary">{backendHealth.queuedExecutions} queued</span>
               ) : null}
-              <button type="button" className="btn secondary" onClick={() => setMissionBriefingOpen(true)} aria-label="Open mission briefing">
-                Guide
-              </button>
               <button
                 type="button"
                 className="btn secondary sidebar-toggle-mobile"
@@ -925,13 +878,6 @@ export default function AppLayout() {
           <Outlet />
         </div>
       </main>
-
-      <MissionBriefing
-        open={missionBriefingOpen}
-        steps={MISSION_BRIEFING_STEPS}
-        onClose={completeMissionBriefing}
-        onComplete={completeMissionBriefing}
-      />
     </div>
   );
 }

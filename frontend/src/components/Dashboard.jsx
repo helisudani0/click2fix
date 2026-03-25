@@ -332,7 +332,7 @@ export default function Dashboard() {
   const integrationsOnline = Number(Boolean(integration.wazuh_manager.ok)) + Number(Boolean(integration.indexer.ok));
 
   return (
-    <div className="page dashboard-page">
+    <div className="page dashboard-page page-route-dashboard">
       <div className="page-header">
         <div>
           <h2>Operations Command Board</h2>

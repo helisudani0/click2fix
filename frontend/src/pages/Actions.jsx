@@ -8,6 +8,7 @@ const ACTIONS_SIDEBAR_WIDTH_STORAGE_KEY = "c2f-actions-sidebar-width-v3";
 const DEFAULT_ACTIONS_SIDEBAR_WIDTH = 360;
 const MIN_ACTIONS_SIDEBAR_WIDTH = 300;
 const MAX_ACTIONS_SIDEBAR_WIDTH = 520;
+const DEFAULT_ACTION_JUSTIFICATION = "Action execution requested from Actions workspace.";
 
 const normalizeAgents = (data) => {
   if (Array.isArray(data)) return data;
@@ -214,6 +215,10 @@ export default function Actions() {
 
   const actionHints = useMemo(() => buildActionHints(selectedAction), [selectedAction]);
   const connectedAgentCount = useMemo(() => agents.filter((agent) => isAgentConnected(agent.status)).length, [agents]);
+  const effectiveJustification = useMemo(
+    () => (justification.trim() ? justification.trim() : DEFAULT_ACTION_JUSTIFICATION),
+    [justification]
+  );
 
   const payloadPreview = useMemo(() => {
     if (!selectedAction) return "";
@@ -222,18 +227,19 @@ export default function Actions() {
         agent_ids: targetAgentIds,
         action_id: actionId,
         args: compactArgs(actionInputs),
-        justification: justification.trim(),
+        justification: effectiveJustification,
+        async: true,
       },
       null,
       2
     );
-  }, [selectedAction, targetAgentIds, actionId, actionInputs, justification]);
+  }, [selectedAction, targetAgentIds, actionId, actionInputs, effectiveJustification]);
 
   const connectorLabel = connectorSummary(connectorStatus, connectorError);
   const connectorTone = statusToneFromText(connectorStatus?.status || connectorError || connectorLabel);
   const actionStatusTone = statusToneFromText(actionStatus);
   const missingRequiredInput = actionInputsList.some((field) => field.required && !String(actionInputs?.[field.name] ?? "").trim());
-  const canExecute = Boolean(selectedAction) && targetAgentIds.length > 0 && Boolean(justification.trim()) && !missingRequiredInput && !isActionRunning;
+  const canExecute = Boolean(selectedAction) && targetAgentIds.length > 0 && !missingRequiredInput && !isActionRunning;
 
   const loadActions = useCallback(async () => {
     try {
@@ -366,10 +372,6 @@ export default function Actions() {
       setActionStatus("Select an action and at least one target agent.");
       return;
     }
-    if (!justification.trim()) {
-      setActionStatus("Provide justification before running the action.");
-      return;
-    }
     if (missingRequiredInput) {
       setActionStatus("Fill every required input before dispatch.");
       return;
@@ -385,7 +387,8 @@ export default function Actions() {
         agent_ids: targetAgentIds,
         action_id: actionId,
         args: compactArgs(actionInputs),
-        justification: justification.trim(),
+        justification: effectiveJustification,
+        async: true,
       });
       const executionId = response?.data?.execution_id;
       setActiveExecutionId(executionId || null);
@@ -395,7 +398,7 @@ export default function Actions() {
     } finally {
       setIsActionRunning(false);
     }
-  }, [selectedAction, targetAgentIds, justification, missingRequiredInput, isActionRunning, actionId, actionInputs]);
+  }, [selectedAction, targetAgentIds, missingRequiredInput, isActionRunning, actionId, actionInputs, effectiveJustification]);
 
   const selectVisibleAgents = useCallback(() => {
     setTargetAgentIds((current) => {
@@ -634,9 +637,9 @@ export default function Actions() {
                   </div>
 
                   <div className="actions-field-block">
-                    <label className="actions-field-label">Justification *</label>
+                    <label className="actions-field-label">Justification</label>
                     <textarea className="input" placeholder="State why this action is being executed." value={justification} onChange={(event) => setJustification(event.target.value)} disabled={isActionRunning} />
-                    <div className="meta-line">Sidebar and panel resizing do not clear this field. Raw text is preserved until you change the action or refresh the page.</div>
+                    <div className="meta-line">Optional. If left blank, a default justification is attached automatically. Sidebar and panel resizing do not clear this field.</div>
                   </div>
 
                   {actionStatus ? <div className={`actions-inline-status ${actionStatusTone}`}>{actionStatus}</div> : null}

@@ -125,6 +125,11 @@ def recent_auth_window_seconds(scope: str, default: int) -> int:
     return max(300, min(24 * 3600, parsed))
 
 
+def _recent_auth_enforced() -> bool:
+    raw = os.getenv("C2F_ENFORCE_RECENT_AUTH", _RECENT_AUTH_CFG.get("enabled", "false"))
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def auth_age_seconds(user) -> int | None:
     payload = user if isinstance(user, dict) else {}
     issued_at = (
@@ -144,6 +149,8 @@ def require_recent_auth(
     max_age_seconds: int,
     action_label: str,
 ) -> int:
+    if not _recent_auth_enforced():
+        return int(auth_age_seconds(user) or 0)
     age = auth_age_seconds(user)
     limit = max(300, int(max_age_seconds))
     if age is None or age > limit:

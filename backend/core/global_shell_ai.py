@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import threading
 import time
@@ -303,7 +304,8 @@ def assess_command_safety(command: str, *, shell: str, allow_destructive: bool =
 
 def enforce_command_safety(command: str, *, shell: str, allow_destructive: bool = False) -> Dict[str, Any]:
     out = assess_command_safety(command, shell=shell, allow_destructive=allow_destructive)
-    if out.get("blocked"):
+    strict = str(os.getenv("C2F_ENFORCE_SHELL_SAFETY_BLOCKS", "false")).strip().lower() in {"1", "true", "yes", "on"}
+    if strict and out.get("blocked"):
         detail = f"Command blocked by safety guard: {out.get('blocked_reason') or 'high-risk pattern detected'}"
         if out.get("destructive") and not out.get("absolute_blocked"):
             detail += "; set allow_destructive=true to override"

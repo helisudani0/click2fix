@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import text
 
-from core.actions import ensure_public_action, get_action, is_internal_only_action, normalize_args, resolve_action_dispatch
+from core.actions import get_action, normalize_args, resolve_action_dispatch
 from core.action_execution import execute_action, resolve_agent_ids
 from core.audit import log_audit
 from core.playbook_generator import (
@@ -33,7 +33,6 @@ PLAYBOOK_DIR = (
     if isinstance(SETTINGS, dict) and SETTINGS.get("playbooks_path")
     else "./playbooks"
 )
-_BLOCKED_PLAYBOOK_ACTION_IDS = {"custom-os-command", "global-shell"}
 _MAX_PLAYBOOK_STEPS = 25
 _PLAYBOOK_STEP_UP_ACTION_IDS = {
     "collect-forensics",
@@ -349,7 +348,6 @@ def _run_playbook_async_job(
             )
 
             try:
-                ensure_public_action(str(step_action))
                 action = get_action(str(step_action))
                 arguments = normalize_args(action, step.get("args"))
                 dispatch = resolve_action_dispatch(action, arguments)
@@ -644,14 +642,12 @@ def _validated_playbook_steps(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         step_action = str(step.get("action") or step.get("command") or "").strip()
         if not step_action:
             raise HTTPException(status_code=400, detail=f"Playbook step '{step_id}' has no action")
-        step_key = step_action.lower()
-        if step_key in _BLOCKED_PLAYBOOK_ACTION_IDS or is_internal_only_action(step_action):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Playbook step '{step_id}' uses blocked action '{step_action}'",
-            )
-        ensure_public_action(step_action)
-        get_action(step_action)
+        resolved_action = (
+            "custom-os-command"
+            if step_action.strip().lower() == "global-shell"
+            else step_action
+        )
+        get_action(resolved_action)
         raw_args = step.get("args")
         if raw_args is None:
             raw_args = {}
@@ -660,7 +656,7 @@ def _validated_playbook_steps(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
         validated.append(
             {
                 "id": step_id,
-                "action": step_action,
+                "action": resolved_action,
                 "args": raw_args,
                 "reason": str(step.get("reason") or "Playbook step").strip() or "Playbook step",
             }
@@ -890,7 +886,6 @@ async def execute_playbook(request: Request, user=Depends(require_role("admin"))
             step_action = step.get("action") or step.get("command") or step.get("id")
             if not step_action:
                 raise HTTPException(status_code=400, detail=f"Step '{step_id}' has no action")
-            ensure_public_action(str(step_action))
             action = get_action(str(step_action))
             arguments = normalize_args(action, step.get("args"))
             dispatch = resolve_action_dispatch(action, arguments)

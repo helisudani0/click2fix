@@ -14,6 +14,7 @@ os.environ.setdefault(
     "security-store-test-secret-0123456789abcdef0123456789abcdef",
 )
 os.environ.setdefault("SECURITY_ENFORCE_STRONG_JWT", "false")
+os.environ.setdefault("C2F_ENFORCE_RECENT_AUTH", "true")
 
 from core import security as security_core  # noqa: E402
 

@@ -14,6 +14,7 @@ os.environ.setdefault(
     "active-defense-test-secret-0123456789abcdef0123456789abcdef",
 )
 os.environ.setdefault("SECURITY_ENFORCE_STRONG_JWT", "false")
+os.environ.setdefault("C2F_ENFORCE_APPROVAL_HANDSHAKE", "true")
 
 from core.active_defense import (  # noqa: E402
     build_contextual_approval_policy,

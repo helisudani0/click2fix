@@ -477,18 +477,17 @@ Resolve-PortConflicts -EnvPath $envPath
 
 $backendImage = Get-EnvValue -Path $envPath -Key "C2F_BACKEND_IMAGE"
 $frontendImage = Get-EnvValue -Path $envPath -Key "C2F_FRONTEND_IMAGE"
-$agentManagerImage = Get-EnvValue -Path $envPath -Key "C2F_AGENT_MANAGER_IMAGE"
-$eventIndexerImage = Get-EnvValue -Path $envPath -Key "C2F_EVENT_INDEXER_IMAGE"
+$postgresImageTag = Get-EnvValue -Path $envPath -Key "POSTGRES_IMAGE_TAG"
 $imageTag = Get-EnvValue -Path $envPath -Key "C2F_IMAGE_TAG"
 $skipPull = To-Bool -RawValue (Get-EnvValue -Path $envPath -Key "C2F_SKIP_PULL") -Default $false
+if ([string]::IsNullOrWhiteSpace($postgresImageTag)) { $postgresImageTag = "16" }
 
 if ($skipPull) {
   Write-Host "C2F_SKIP_PULL=true, using local images only."
   foreach ($image in @(
+    "postgres:$postgresImageTag",
     "$backendImage`:$imageTag",
-    "$frontendImage`:$imageTag",
-    "$agentManagerImage`:$imageTag",
-    "$eventIndexerImage`:$imageTag"
+    "$frontendImage`:$imageTag"
   )) {
     Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", $image) -FailureMessage "Required local image not found: $image."
   }
@@ -500,7 +499,7 @@ if ($skipPull) {
 Write-Host "Applying upgrade..."
 $composeArgs = @("up", "-d", "--remove-orphans")
 if ($skipPull) {
-  $composeArgs += @("--force-recreate", "agent-manager", "event-indexer", "backend", "frontend")
+  $composeArgs += @("--force-recreate", "backend", "frontend")
 }
 Prepare-ComposeProjectForUp -ProjectName $script:composeProjectName
 Invoke-ComposeChecked -Arguments $composeArgs -FailureMessage "Failed to apply upgrade."

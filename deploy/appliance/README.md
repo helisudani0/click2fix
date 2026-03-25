@@ -21,6 +21,12 @@ Download asset:
 
 - `click2fix-appliance-installer-v1.2.0.zip` (name varies by release tag)
 
+Current `v1.1.4` appliance scope:
+
+- runtime services: `postgres`, `backend`, `frontend`
+- published Click2Fix images: backend + frontend only
+- `agent-manager`, `event-indexer`, and other v2 bounded services are not part of the current appliance release
+
 ## Files
 
 - `docker-compose.appliance.yml`
@@ -112,6 +118,23 @@ Get-ChildItem -Path C:\click2fix -Recurse -File | Unblock-File
 If an enterprise policy enforces script restrictions, use a signed installer or request an allowlist
 for the Click2Fix installer hash and `C:\click2fix` (or your chosen install path).
 
+If ZIP download is blocked, bootstrap directly from GitHub raw files instead of downloading the archive:
+
+```powershell
+$version = "v1.1.4"
+Invoke-WebRequest "https://raw.githubusercontent.com/helisudani0/click2fix/$version/deploy/appliance/bootstrap-from-github.ps1" -OutFile .\bootstrap-from-github.ps1
+powershell -ExecutionPolicy Bypass -File .\bootstrap-from-github.ps1 -Owner helisudani0 -Repo click2fix -Version $version -InstallDir C:\Click2Fix -PullImages
+```
+
+Linux:
+
+```bash
+VERSION=v1.1.4
+curl -fsSL "https://raw.githubusercontent.com/helisudani0/click2fix/${VERSION}/deploy/appliance/bootstrap-from-github.sh" -o ./bootstrap-from-github.sh
+chmod +x ./bootstrap-from-github.sh
+OWNER=helisudani0 REPO=click2fix VERSION=${VERSION} INSTALL_DIR=/opt/click2fix PULL_IMAGES=true ./bootstrap-from-github.sh
+```
+
 No backend/frontend repo workflow is needed on the customer side.
 
 What the script does:
@@ -139,9 +162,13 @@ Use a token with `read:packages`.
 
 ### Option A: Online install from registry images
 
-1. Set image repo/tag values in `.env.appliance`.
-2. Run `install.sh` or `install.ps1`.
-3. Script pulls images and starts stack.
+1. Use the release bundle or `bootstrap-from-github` script to obtain the appliance files.
+2. Ensure `.env.appliance.template` or `.env.appliance` points at:
+   `ghcr.io/<owner>/click2fix-backend:<version>`,
+   `ghcr.io/<owner>/click2fix-frontend:<version>`,
+   and `postgres:16`.
+3. Run `install.sh` or `install.ps1`.
+4. Script pulls images and starts stack.
 
 ### Option B: Offline/local image transfer
 
@@ -178,6 +205,12 @@ For later hotfixes on the same installed appliance:
 - keep `C2F_SKIP_PULL=true`
 - run `upgrade.ps1` / `upgrade.sh` or Control Center option `7`
 - the upgrade path will reuse local images and force-recreate app services instead of pulling from the registry
+
+The offline/local image bundle for the current appliance includes only:
+
+- postgres
+- backend
+- frontend
 
 ## Upgrade
 
@@ -230,6 +263,11 @@ Then customer flow becomes:
 3. First-boot wizard starts automatically on console
 4. Enter values once
 5. Appliance starts and remains persistent
+
+Note:
+
+- OVA/VM packaging remains a separate delivery track.
+- The current `v1.1.4` supported customer path is still the Docker-based appliance scaffold above.
 
 ## GitHub Automation
 

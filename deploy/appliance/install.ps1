@@ -463,12 +463,14 @@ $appBrand = Get-EnvValue $envPath "APP_BRAND"
 if ([string]::IsNullOrWhiteSpace($appBrand)) { $appBrand = "Click2Fix" }
 $backendImage = Get-EnvValue $envPath "C2F_BACKEND_IMAGE"
 $frontendImage = Get-EnvValue $envPath "C2F_FRONTEND_IMAGE"
+$postgresImageTag = Get-EnvValue $envPath "POSTGRES_IMAGE_TAG"
 $imageTag = Get-EnvValue $envPath "C2F_IMAGE_TAG"
 $skipPull = Get-EnvValue $envPath "C2F_SKIP_PULL"
 if ([string]::IsNullOrWhiteSpace($backendImage) -or [string]::IsNullOrWhiteSpace($frontendImage) -or [string]::IsNullOrWhiteSpace($imageTag)) {
   throw "Image configuration is missing in .env.appliance. Expected C2F_BACKEND_IMAGE, C2F_FRONTEND_IMAGE, C2F_IMAGE_TAG."
 }
 if ([string]::IsNullOrWhiteSpace($skipPull)) { $skipPull = "false" }
+if ([string]::IsNullOrWhiteSpace($postgresImageTag)) { $postgresImageTag = "16" }
 $jwtSecret = Get-EnvValue $envPath "JWT_SECRET"
 if ([string]::IsNullOrWhiteSpace($jwtSecret) -or $jwtSecret -match "^CHANGE_ME" -or $jwtSecret.Length -lt 32) {
   $jwtSecret = New-StrongSecret
@@ -513,6 +515,7 @@ Set-EnvValue -Path $envPath -Key "C2F_BOOTSTRAP_ADMIN_USERNAME" -Value $adminUse
 Set-EnvValue -Path $envPath -Key "C2F_BOOTSTRAP_ADMIN_PASSWORD" -Value $adminPassword
 
 if (To-Bool $skipPull) {
+  Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", "postgres:$postgresImageTag") -FailureMessage "Postgres image not found locally: postgres:$postgresImageTag."
   Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", "$backendImage`:$imageTag") -FailureMessage "Backend image not found locally: $backendImage`:$imageTag."
   Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", "$frontendImage`:$imageTag") -FailureMessage "Frontend image not found locally: $frontendImage`:$imageTag."
   } else {

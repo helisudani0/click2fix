@@ -22,17 +22,34 @@ function Get-EnvValue {
   return $value
 }
 
+function Invoke-NativeChecked {
+  param(
+    [string]$FilePath,
+    [string[]]$Arguments = @(),
+    [string]$FailureMessage = "Command failed."
+  )
+  & $FilePath @Arguments
+  $exitCode = $LASTEXITCODE
+  if ($exitCode -ne 0) {
+    throw "$FailureMessage Exit code: $exitCode"
+  }
+}
+
 $backendImage = Get-EnvValue -Path $envPath -Key "C2F_BACKEND_IMAGE" -Default "click2fix-backend"
 $frontendImage = Get-EnvValue -Path $envPath -Key "C2F_FRONTEND_IMAGE" -Default "click2fix-frontend"
-$agentManagerImage = Get-EnvValue -Path $envPath -Key "C2F_AGENT_MANAGER_IMAGE" -Default "click2fix-agent-manager"
-$eventIndexerImage = Get-EnvValue -Path $envPath -Key "C2F_EVENT_INDEXER_IMAGE" -Default "click2fix-event-indexer"
+$postgresImageTag = Get-EnvValue -Path $envPath -Key "POSTGRES_IMAGE_TAG" -Default "16"
 $imageTag = Get-EnvValue -Path $envPath -Key "C2F_IMAGE_TAG" -Default "local"
+$postgresImage = "postgres:$postgresImageTag"
 
-docker image inspect "$backendImage`:$imageTag" | Out-Null
-docker image inspect "$frontendImage`:$imageTag" | Out-Null
-docker image inspect "$agentManagerImage`:$imageTag" | Out-Null
-docker image inspect "$eventIndexerImage`:$imageTag" | Out-Null
+try {
+  Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", $postgresImage) -FailureMessage "Postgres image not found locally."
+} catch {
+  Write-Host "Pulling $postgresImage ..." -ForegroundColor Yellow
+  Invoke-NativeChecked -FilePath "docker" -Arguments @("pull", $postgresImage) -FailureMessage "Failed to pull $postgresImage."
+}
+Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", "$backendImage`:$imageTag") -FailureMessage "Backend image not found locally."
+Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", "$frontendImage`:$imageTag") -FailureMessage "Frontend image not found locally."
 
 Write-Host "Exporting images to $outputPath ..."
-docker save -o $outputPath "$backendImage`:$imageTag" "$frontendImage`:$imageTag" "$agentManagerImage`:$imageTag" "$eventIndexerImage`:$imageTag"
+docker save -o $outputPath $postgresImage "$backendImage`:$imageTag" "$frontendImage`:$imageTag"
 Write-Host "Export complete."

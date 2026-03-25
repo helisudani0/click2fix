@@ -2,6 +2,12 @@
 
 Use these scripts to generate a customer-downloadable installer bundle from this repo.
 
+Current `v1.1.4` release scope:
+
+- appliance runtime: `postgres`, `backend`, `frontend`
+- published Click2Fix images: backend + frontend only
+- v2 bounded services are not part of the current appliance release bundle
+
 ## Local Packaging
 
 Linux:
@@ -30,3 +36,8 @@ The generated template is pre-filled with:
 - `C2F_FRONTEND_IMAGE=ghcr.io/<owner>/click2fix-frontend`
 - `C2F_IMAGE_TAG=<version without v>`
 - `C2F_SKIP_PULL=false`
+
+If ZIP delivery is blocked on the target environment, use the raw-file bootstrap path documented in:
+
+- `deploy/appliance/bootstrap-from-github.ps1`
+- `deploy/appliance/bootstrap-from-github.sh`

@@ -373,17 +373,16 @@ resolve_port_conflicts
 
 BACKEND_IMAGE="$(env_get C2F_BACKEND_IMAGE "${ENV_FILE}")"
 FRONTEND_IMAGE="$(env_get C2F_FRONTEND_IMAGE "${ENV_FILE}")"
-AGENT_MANAGER_IMAGE="$(env_get C2F_AGENT_MANAGER_IMAGE "${ENV_FILE}")"
-EVENT_INDEXER_IMAGE="$(env_get C2F_EVENT_INDEXER_IMAGE "${ENV_FILE}")"
+POSTGRES_IMAGE_TAG="$(env_get POSTGRES_IMAGE_TAG "${ENV_FILE}")"
 IMAGE_TAG="$(env_get C2F_IMAGE_TAG "${ENV_FILE}")"
 SKIP_PULL="$(to_bool "$(env_get C2F_SKIP_PULL "${ENV_FILE}")" false)"
+POSTGRES_IMAGE_TAG="${POSTGRES_IMAGE_TAG:-16}"
 
 if [[ "${SKIP_PULL}" == "true" ]]; then
   echo "C2F_SKIP_PULL=true, using local images only."
+  docker image inspect "postgres:${POSTGRES_IMAGE_TAG}" >/dev/null 2>&1
   docker image inspect "${BACKEND_IMAGE}:${IMAGE_TAG}" >/dev/null 2>&1
   docker image inspect "${FRONTEND_IMAGE}:${IMAGE_TAG}" >/dev/null 2>&1
-  docker image inspect "${AGENT_MANAGER_IMAGE}:${IMAGE_TAG}" >/dev/null 2>&1
-  docker image inspect "${EVENT_INDEXER_IMAGE}:${IMAGE_TAG}" >/dev/null 2>&1
 else
   echo "Pulling latest configured image tags..."
   assert_no_dead_project_containers
@@ -394,7 +393,7 @@ echo "Applying upgrade..."
 assert_no_dead_project_containers
 prepare_compose_project_for_up
 if [[ "${SKIP_PULL}" == "true" ]]; then
-  compose_cmd up -d --remove-orphans --force-recreate agent-manager event-indexer backend frontend
+  compose_cmd up -d --remove-orphans --force-recreate backend frontend
 else
   compose_cmd up -d --remove-orphans
 fi

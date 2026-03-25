@@ -387,6 +387,7 @@ current_admin_user="$(get_env C2F_BOOTSTRAP_ADMIN_USERNAME "${ENV_FILE}")"
 current_admin_password="$(get_env C2F_BOOTSTRAP_ADMIN_PASSWORD "${ENV_FILE}")"
 current_backend_image="$(get_env C2F_BACKEND_IMAGE "${ENV_FILE}")"
 current_frontend_image="$(get_env C2F_FRONTEND_IMAGE "${ENV_FILE}")"
+current_postgres_image_tag="$(get_env POSTGRES_IMAGE_TAG "${ENV_FILE}")"
 current_image_tag="$(get_env C2F_IMAGE_TAG "${ENV_FILE}")"
 current_skip_pull="$(get_env C2F_SKIP_PULL "${ENV_FILE}")"
 current_jwt_secret="$(get_env JWT_SECRET "${ENV_FILE}")"
@@ -414,6 +415,7 @@ prompt_secret "Initial Click2Fix admin password" "${current_admin_password:-}" a
 app_brand="${current_brand:-Click2Fix}"
 backend_image="${current_backend_image:-click2fix-backend}"
 frontend_image="${current_frontend_image:-click2fix-frontend}"
+postgres_image_tag="${current_postgres_image_tag:-16}"
 image_tag="${current_image_tag:-local}"
 skip_pull="${current_skip_pull:-false}"
 jwt_secret="${current_jwt_secret:-}"
@@ -481,8 +483,13 @@ echo
 echo "Pulling and starting appliance services..."
 if bool_env "${skip_pull}"; then
   echo "Skipping docker pull (C2F_SKIP_PULL=${skip_pull}). Expecting local images:"
+  echo "  postgres:${postgres_image_tag}"
   echo "  ${backend_image}:${image_tag}"
   echo "  ${frontend_image}:${image_tag}"
+  if ! docker image inspect "postgres:${postgres_image_tag}" >/dev/null 2>&1; then
+    echo "ERROR: postgres image not found locally: postgres:${postgres_image_tag}" >&2
+    exit 1
+  fi
   if ! docker image inspect "${backend_image}:${image_tag}" >/dev/null 2>&1; then
     echo "ERROR: backend image not found locally: ${backend_image}:${image_tag}" >&2
     exit 1

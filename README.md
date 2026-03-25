@@ -151,6 +151,31 @@ Customer flow:
 
 After first setup, running `setup.cmd` / `setup.sh` opens the Control Center for lifecycle operations.
 
+No-ZIP bootstrap path:
+
+- Windows:
+
+```powershell
+$version = "v1.1.4"
+Invoke-WebRequest "https://raw.githubusercontent.com/helisudani0/click2fix/$version/deploy/appliance/bootstrap-from-github.ps1" -OutFile .\bootstrap-from-github.ps1
+powershell -ExecutionPolicy Bypass -File .\bootstrap-from-github.ps1 -Owner helisudani0 -Repo click2fix -Version $version -InstallDir C:\Click2Fix -PullImages
+```
+
+- Linux:
+
+```bash
+VERSION=v1.1.4
+curl -fsSL "https://raw.githubusercontent.com/helisudani0/click2fix/${VERSION}/deploy/appliance/bootstrap-from-github.sh" -o ./bootstrap-from-github.sh
+chmod +x ./bootstrap-from-github.sh
+OWNER=helisudani0 REPO=click2fix VERSION=${VERSION} INSTALL_DIR=/opt/click2fix PULL_IMAGES=true ./bootstrap-from-github.sh
+```
+
+Current `v1.1.4` appliance image set:
+
+- `ghcr.io/helisudani0/click2fix-backend:<version>`
+- `ghcr.io/helisudani0/click2fix-frontend:<version>`
+- `postgres:16`
+
 ### 2. Developer/Local Stack
 
 From `docker/`:
@@ -190,3 +215,4 @@ Required configuration (environment-driven):
 - Published images:
   - `ghcr.io/helisudani0/click2fix-backend:<version>`
   - `ghcr.io/helisudani0/click2fix-frontend:<version>`
+  - `postgres:16`

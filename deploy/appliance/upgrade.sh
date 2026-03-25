@@ -13,6 +13,10 @@ if ! docker compose version >/dev/null 2>&1; then
   echo "ERROR: docker compose plugin is required." >&2
   exit 1
 fi
+if ! docker info >/dev/null 2>&1; then
+  echo "ERROR: Docker engine is not running. Start Docker Desktop/daemon and retry." >&2
+  exit 1
+fi
 if [[ ! -f "${ENV_FILE}" ]]; then
   echo "ERROR: missing ${ENV_FILE}. Run install.sh first." >&2
   exit 1
@@ -54,6 +58,101 @@ set_env() {
   mv "$tmp" "$file"
 }
 
+compose_project_default_name() {
+  local leaf
+  leaf="$(basename "${SCRIPT_DIR}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
+  leaf="$(printf '%s' "${leaf}" | sed 's/^[^a-z0-9]*//')"
+  if [[ -z "${leaf}" ]]; then
+    leaf="click2fix"
+  fi
+  printf '%s' "${leaf}"
+}
+
+ensure_compose_project_name() {
+  local existing
+  existing="$(env_get COMPOSE_PROJECT_NAME "${ENV_FILE}")"
+  if [[ -z "${existing}" ]]; then
+    existing="$(compose_project_default_name)"
+    set_env COMPOSE_PROJECT_NAME "${existing}" "${ENV_FILE}"
+  fi
+  printf '%s' "${existing}"
+}
+
+compose_cmd() {
+  docker compose -p "${COMPOSE_PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "$@"
+}
+
+service_ports() {
+  local service
+  for service in "$@"; do
+    [[ -n "${service}" ]] || continue
+    local ports
+    ports="$(docker ps \
+      --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+      --filter "label=com.docker.compose.service=${service}" \
+      --format '{{.Ports}}' 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${ports}" ]]; then
+      printf '%s' "${ports}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+project_container_ids() {
+  local args=(ps --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" --format '{{.ID}}')
+  if [[ "${1:-}" == "--all" ]]; then
+    args=(ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" --format '{{.ID}}')
+  fi
+  docker "${args[@]}" 2>/dev/null | sed '/^[[:space:]]*$/d' || true
+}
+
+dead_project_containers() {
+  docker ps -a \
+    --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+    --format '{{.ID}}|{{.Names}}|{{.Status}}|{{.Label "com.docker.compose.service"}}|{{.Label "com.docker.compose.replace"}}' 2>/dev/null |
+    awk -F'|' '$3 ~ /^Dead/ { print }'
+}
+
+assert_no_dead_project_containers() {
+  local dead
+  dead="$(dead_project_containers || true)"
+  if [[ -z "${dead}" ]]; then
+    return 0
+  fi
+  local affected
+  affected="$(printf '%s\n' "${dead}" |
+    awk -F'|' '{ if ($4 != "") print $4; else if ($5 != "") print $5; else print $1 }' |
+    awk '!seen[$0]++' |
+    paste -sd ', ' -)"
+  echo "ERROR: Docker has stale Click2Fix containers in the Dead state for project '${COMPOSE_PROJECT_NAME}' (${affected:-unknown services}). Restart Docker Desktop/daemon to clear the orphaned container metadata, then rerun the upgrade. Named volumes such as the Click2Fix database volume are preserved by a Docker restart." >&2
+  return 1
+}
+
+remove_project_containers() {
+  local ids
+  ids="$(project_container_ids --all)"
+  if [[ -n "${ids}" ]]; then
+    while IFS= read -r id; do
+      [[ -n "${id}" ]] || continue
+      docker rm -f "${id}" >/dev/null 2>&1 || true
+    done <<< "${ids}"
+  fi
+  docker network rm "${COMPOSE_PROJECT_NAME}_default" >/dev/null 2>&1 || true
+}
+
+prepare_compose_project_for_up() {
+  local all_ids running_ids
+  all_ids="$(project_container_ids --all)"
+  [[ -n "${all_ids}" ]] || return 0
+  running_ids="$(project_container_ids)"
+  if [[ -n "${running_ids}" ]]; then
+    return 0
+  fi
+  echo "No Click2Fix services are currently running. Recreating project containers to avoid stale Docker restart state."
+  remove_project_containers
+}
+
 port_in_use() {
   local port="$1"
   if command -v ss >/dev/null 2>&1; then
@@ -71,11 +170,11 @@ port_in_use() {
   return 1
 }
 
-port_owned_by_container() {
+port_owned_by_service() {
   local port="$1"
-  local container="$2"
+  shift
   local ports
-  ports="$(docker ps --filter "name=^${container}$" --format '{{.Ports}}' 2>/dev/null | head -n 1 || true)"
+  ports="$(service_ports "$@" || true)"
   [[ -n "${ports}" ]] && grep -Eq "[:.]${port}->" <<< "${ports}"
 }
 
@@ -210,7 +309,7 @@ resolve_port_conflicts() {
     set_env C2F_PUBLIC_HOST "${public_host}" "${ENV_FILE}"
   fi
 
-  if port_in_use "${backend_port}" && ! port_owned_by_container "${backend_port}" "c2f-backend"; then
+  if port_in_use "${backend_port}" && ! port_owned_by_service "${backend_port}" c2f-lb backend; then
     backend_port="$(find_free_port $((backend_port + 1)))" || {
       echo "ERROR: backend port conflict and no free fallback found." >&2
       exit 1
@@ -219,7 +318,7 @@ resolve_port_conflicts() {
     set_env C2F_BACKEND_PORT "${backend_port}" "${ENV_FILE}"
   fi
 
-  if port_in_use "${frontend_port}" && ! port_owned_by_container "${frontend_port}" "c2f-frontend"; then
+  if port_in_use "${frontend_port}" && ! port_owned_by_service "${frontend_port}" frontend; then
     frontend_port="$(find_free_port $((frontend_port + 1)))" || {
       echo "ERROR: frontend port conflict and no free fallback found." >&2
       exit 1
@@ -228,7 +327,7 @@ resolve_port_conflicts() {
     set_env C2F_FRONTEND_PORT "${frontend_port}" "${ENV_FILE}"
   fi
 
-  if port_in_use "${db_port}" && ! port_owned_by_container "${db_port}" "c2f-db"; then
+  if port_in_use "${db_port}" && ! port_owned_by_service "${db_port}" db; then
     db_port="$(find_free_port $((db_port + 1)))" || {
       echo "ERROR: db port conflict and no free fallback found." >&2
       exit 1
@@ -251,6 +350,8 @@ resolve_port_conflicts() {
   fi
 }
 
+COMPOSE_PROJECT_NAME="$(ensure_compose_project_name)"
+
 resolve_port_conflicts
 
 BACKEND_IMAGE="$(env_get C2F_BACKEND_IMAGE "${ENV_FILE}")"
@@ -268,16 +369,19 @@ if [[ "${SKIP_PULL}" == "true" ]]; then
   docker image inspect "${EVENT_INDEXER_IMAGE}:${IMAGE_TAG}" >/dev/null 2>&1
 else
   echo "Pulling latest configured image tags..."
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" pull
+  assert_no_dead_project_containers
+  compose_cmd pull
 fi
 
 echo "Applying upgrade..."
+assert_no_dead_project_containers
+prepare_compose_project_for_up
 if [[ "${SKIP_PULL}" == "true" ]]; then
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d --force-recreate agent-manager event-indexer backend frontend
+  compose_cmd up -d --remove-orphans --force-recreate agent-manager event-indexer backend frontend
 else
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d
+  compose_cmd up -d --remove-orphans
 fi
 
 echo "Upgrade complete."
 echo "Check service status with:"
-echo "  docker compose --env-file ${ENV_FILE} -f ${COMPOSE_FILE} ps"
+echo "  docker compose -p ${COMPOSE_PROJECT_NAME} --env-file ${ENV_FILE} -f ${COMPOSE_FILE} ps"

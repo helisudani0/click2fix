@@ -43,6 +43,120 @@ set_env() {
   mv "$tmp" "$file"
 }
 
+compose_project_default_name() {
+  local leaf
+  leaf="$(basename "${SCRIPT_DIR}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')"
+  leaf="$(printf '%s' "${leaf}" | sed 's/^[^a-z0-9]*//')"
+  if [[ -z "${leaf}" ]]; then
+    leaf="click2fix"
+  fi
+  printf '%s' "${leaf}"
+}
+
+ensure_compose_project_name() {
+  local existing
+  existing="$(get_env COMPOSE_PROJECT_NAME "${ENV_FILE}")"
+  if [[ -z "${existing}" ]]; then
+    existing="$(compose_project_default_name)"
+    set_env COMPOSE_PROJECT_NAME "${existing}" "${ENV_FILE}"
+  fi
+  printf '%s' "${existing}"
+}
+
+compose_cmd() {
+  docker compose -p "${COMPOSE_PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "$@"
+}
+
+service_container_id() {
+  local service="$1"
+  docker ps -a \
+    --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+    --filter "label=com.docker.compose.service=${service}" \
+    --format '{{.ID}}' 2>/dev/null | head -n 1 || true
+}
+
+project_container_ids() {
+  local args=(ps --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" --format '{{.ID}}')
+  if [[ "${1:-}" == "--all" ]]; then
+    args=(ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" --format '{{.ID}}')
+  fi
+  docker "${args[@]}" 2>/dev/null | sed '/^[[:space:]]*$/d' || true
+}
+
+service_ports() {
+  local service
+  for service in "$@"; do
+    [[ -n "${service}" ]] || continue
+    local ports
+    ports="$(docker ps \
+      --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+      --filter "label=com.docker.compose.service=${service}" \
+      --format '{{.Ports}}' 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${ports}" ]]; then
+      printf '%s' "${ports}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+dead_project_containers() {
+  docker ps -a \
+    --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+    --format '{{.ID}}|{{.Names}}|{{.Status}}|{{.Label "com.docker.compose.service"}}|{{.Label "com.docker.compose.replace"}}' 2>/dev/null |
+    awk -F'|' '$3 ~ /^Dead/ { print }'
+}
+
+assert_no_dead_project_containers() {
+  local dead
+  dead="$(dead_project_containers || true)"
+  if [[ -z "${dead}" ]]; then
+    return 0
+  fi
+  local affected
+  affected="$(printf '%s\n' "${dead}" |
+    awk -F'|' '{ if ($4 != "") print $4; else if ($5 != "") print $5; else print $1 }' |
+    awk '!seen[$0]++' |
+    paste -sd ', ' -)"
+  echo "ERROR: Docker has stale Click2Fix containers in the Dead state for project '${COMPOSE_PROJECT_NAME}' (${affected:-unknown services}). Restart Docker Desktop/daemon to clear the orphaned container metadata, then rerun this command. Named volumes such as the Click2Fix database volume are preserved by a Docker restart." >&2
+  return 1
+}
+
+remove_project_containers() {
+  local ids
+  ids="$(project_container_ids --all)"
+  if [[ -n "${ids}" ]]; then
+    while IFS= read -r id; do
+      [[ -n "${id}" ]] || continue
+      docker rm -f "${id}" >/dev/null 2>&1 || true
+    done <<< "${ids}"
+  fi
+  docker network rm "${COMPOSE_PROJECT_NAME}_default" >/dev/null 2>&1 || true
+}
+
+prepare_compose_project_for_up() {
+  local all_ids running_ids
+  all_ids="$(project_container_ids --all)"
+  [[ -n "${all_ids}" ]] || return 0
+  running_ids="$(project_container_ids)"
+  if [[ -n "${running_ids}" ]]; then
+    return 0
+  fi
+  echo "No Click2Fix services are currently running. Recreating project containers to avoid stale Docker restart state."
+  remove_project_containers
+}
+
+service_status() {
+  local service="$1"
+  local container_id
+  container_id="$(service_container_id "${service}")"
+  if [[ -z "${container_id}" ]]; then
+    echo ""
+    return 0
+  fi
+  docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container_id}" 2>/dev/null || true
+}
+
 port_in_use() {
   local port="$1"
   if command -v ss >/dev/null 2>&1; then
@@ -60,11 +174,11 @@ port_in_use() {
   return 1
 }
 
-port_owned_by_container() {
+port_owned_by_service() {
   local port="$1"
-  local container="$2"
+  shift
   local ports
-  ports="$(docker ps --filter "name=^${container}$" --format '{{.Ports}}' 2>/dev/null | head -n 1 || true)"
+  ports="$(service_ports "$@" || true)"
   [[ -n "${ports}" ]] && grep -Eq "[:.]${port}->" <<< "${ports}"
 }
 
@@ -94,15 +208,16 @@ normalize_port() {
 }
 
 resolve_port_conflict() {
-  local requested_port
+  local requested_port label
   requested_port="$(normalize_port "$1" "0")"
-  local container_name="$2"
-  local label="$3"
+  label="$2"
+  shift 2
+  local service_names=("$@")
   if [[ "${requested_port}" == "0" ]]; then
     echo "ERROR: invalid ${label} port value." >&2
     exit 1
   fi
-  if ! port_in_use "${requested_port}" || port_owned_by_container "${requested_port}" "${container_name}"; then
+  if ! port_in_use "${requested_port}" || port_owned_by_service "${requested_port}" "${service_names[@]}"; then
     echo "${requested_port}"
     return 0
   fi
@@ -117,14 +232,25 @@ resolve_port_conflict() {
 
 show_diagnostics() {
   echo
+  echo "---- project containers ----" >&2
+  docker ps -a \
+    --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+    --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Label "com.docker.compose.service"}}' >&2 || true
+  if dead_project_containers >/dev/null 2>&1 && [[ -n "$(dead_project_containers || true)" ]]; then
+    echo >&2
+    echo "Docker still reports dead Click2Fix containers for project '${COMPOSE_PROJECT_NAME}'." >&2
+    echo "Restart Docker Desktop/daemon to clear the stale container metadata, then rerun setup." >&2
+    return
+  fi
+  echo >&2
   echo "---- docker compose ps ----" >&2
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps >&2 || true
+  compose_cmd ps >&2 || true
   echo >&2
   echo "---- backend logs (tail 160) ----" >&2
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs --tail 160 backend >&2 || true
+  compose_cmd logs --tail 160 backend >&2 || true
   echo >&2
   echo "---- db logs (tail 80) ----" >&2
-  docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" logs --tail 80 db >&2 || true
+  compose_cmd logs --tail 80 db >&2 || true
 }
 
 detect_public_host() {
@@ -222,6 +348,8 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   chmod 600 "${ENV_FILE}"
 fi
 
+COMPOSE_PROJECT_NAME="$(ensure_compose_project_name)"
+
 echo "== Click2Fix Appliance First-Boot Setup =="
 echo "Environment file: ${ENV_FILE}"
 echo
@@ -306,9 +434,9 @@ if [[ ${#admin_password} -lt 8 ]]; then
   exit 1
 fi
 
-backend_port="$(resolve_port_conflict "$(normalize_port "${backend_port}" "8000")" "c2f-backend" "backend")"
-frontend_port="$(resolve_port_conflict "$(normalize_port "${frontend_port}" "5173")" "c2f-frontend" "frontend")"
-db_port="$(resolve_port_conflict "$(normalize_port "${current_db_port}" "5432")" "c2f-db" "db host")"
+backend_port="$(resolve_port_conflict "$(normalize_port "${backend_port}" "8000")" "backend" c2f-lb backend)"
+frontend_port="$(resolve_port_conflict "$(normalize_port "${frontend_port}" "5173")" "frontend" frontend)"
+db_port="$(resolve_port_conflict "$(normalize_port "${current_db_port}" "5432")" "db host" db)"
 
 trusted_hosts="localhost,127.0.0.1,*.localhost,backend,frontend,c2f-backend,c2f-frontend,${public_host}"
 cors_origins="http://${public_host}:${frontend_port}"
@@ -347,7 +475,7 @@ if bool_env "${skip_pull}"; then
     exit 1
   fi
 else
-  if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" pull; then
+  if ! assert_no_dead_project_containers || ! compose_cmd pull; then
     echo "ERROR: image pull failed." >&2
     echo "Common causes:" >&2
     echo "  1) Docker engine unavailable" >&2
@@ -355,7 +483,8 @@ else
     exit 1
   fi
 fi
-if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d db backend; then
+prepare_compose_project_for_up
+if ! assert_no_dead_project_containers || ! compose_cmd up -d --remove-orphans db backend; then
   echo "ERROR: failed to start backend stack." >&2
   show_diagnostics
   exit 1
@@ -363,22 +492,22 @@ fi
 
 echo "Waiting for backend health..."
 for _ in $(seq 1 60); do
-  status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' c2f-backend 2>/dev/null || true)"
+  status="$(service_status backend)"
   if [[ "${status}" == "healthy" ]]; then
     break
   fi
   sleep 2
 done
 
-status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' c2f-backend 2>/dev/null || true)"
+status="$(service_status backend)"
 if [[ "${status}" != "healthy" ]]; then
   echo "ERROR: backend is not healthy. Check logs:" >&2
-  echo "  docker compose --env-file ${ENV_FILE} -f ${COMPOSE_FILE} logs backend" >&2
+  echo "  docker compose -p ${COMPOSE_PROJECT_NAME} --env-file ${ENV_FILE} -f ${COMPOSE_FILE} logs backend" >&2
   show_diagnostics
   exit 1
 fi
 
-if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d frontend; then
+if ! assert_no_dead_project_containers || ! compose_cmd up -d --remove-orphans frontend; then
   echo "ERROR: failed to start frontend." >&2
   show_diagnostics
   exit 1
@@ -390,7 +519,7 @@ bootstrap_args=()
 if [[ "${bootstrap_force,,}" == "true" || "${bootstrap_force}" == "1" ]]; then
   bootstrap_args+=(--force-reset)
 fi
-if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T -w /app backend \
+if ! assert_no_dead_project_containers || ! compose_cmd exec -T -w /app backend \
   python -m tools.bootstrap_admin \
   --username "${admin_user}" \
   --password "${admin_password}" \

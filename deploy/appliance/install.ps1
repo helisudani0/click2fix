@@ -125,6 +125,155 @@ function New-StrongSecret {
   return ([Convert]::ToBase64String($buffer)).TrimEnd("=")
 }
 
+function Get-DefaultComposeProjectName {
+  param([string]$ProjectRoot)
+  $leaf = Split-Path -Leaf $ProjectRoot
+  if ([string]::IsNullOrWhiteSpace($leaf)) { $leaf = "click2fix" }
+  $normalized = $leaf.ToLowerInvariant() -replace '[^a-z0-9_-]', ''
+  $normalized = $normalized -replace '^[^a-z0-9]+', ''
+  if ([string]::IsNullOrWhiteSpace($normalized)) { return "click2fix" }
+  return $normalized
+}
+
+function Ensure-ComposeProjectName {
+  param(
+    [string]$EnvPath,
+    [string]$ProjectRoot
+  )
+  $projectName = Get-EnvValue -Path $EnvPath -Key "COMPOSE_PROJECT_NAME"
+  if ([string]::IsNullOrWhiteSpace($projectName)) {
+    $projectName = Get-DefaultComposeProjectName -ProjectRoot $ProjectRoot
+    Set-EnvValue -Path $EnvPath -Key "COMPOSE_PROJECT_NAME" -Value $projectName
+  }
+  return $projectName
+}
+
+function Get-ComposeBaseArguments {
+  return @("compose", "-p", $script:composeProjectName, "--env-file", $script:composeEnvPath, "-f", $script:composeFilePath)
+}
+
+function Get-ServiceContainerId {
+  param(
+    [string]$ProjectName,
+    [string]$ServiceName,
+    [switch]$IncludeAll
+  )
+  $args = @("ps")
+  if ($IncludeAll) { $args += "-a" }
+  $args += @(
+    "--filter", "label=com.docker.compose.project=$ProjectName",
+    "--filter", "label=com.docker.compose.service=$ServiceName",
+    "--format", "{{.ID}}"
+  )
+  $containerIds = & docker @args 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $containerIds) { return "" }
+  $first = $containerIds | Select-Object -First 1
+  if ([string]::IsNullOrWhiteSpace($first)) { return "" }
+  return $first.Trim()
+}
+
+function Get-ProjectContainerIds {
+  param(
+    [string]$ProjectName,
+    [switch]$IncludeAll
+  )
+  $args = @("ps")
+  if ($IncludeAll) { $args += "-a" }
+  $args += @(
+    "--filter", "label=com.docker.compose.project=$ProjectName",
+    "--format", "{{.ID}}"
+  )
+  $containerIds = & docker @args 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $containerIds) { return @() }
+  return @(
+    $containerIds |
+      ForEach-Object { $_.Trim() } |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  )
+}
+
+function Get-ServicePorts {
+  param(
+    [string]$ProjectName,
+    [string[]]$ServiceNames
+  )
+  foreach ($serviceName in @($ServiceNames)) {
+    if ([string]::IsNullOrWhiteSpace($serviceName)) { continue }
+    $ports = & docker ps `
+      --filter "label=com.docker.compose.project=$ProjectName" `
+      --filter "label=com.docker.compose.service=$serviceName" `
+      --format "{{.Ports}}" 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $ports) { continue }
+    $first = $ports | Select-Object -First 1
+    if (-not [string]::IsNullOrWhiteSpace($first)) { return $first.Trim() }
+  }
+  return ""
+}
+
+function Get-DeadProjectContainers {
+  param([string]$ProjectName)
+  $rows = & docker ps -a `
+    --filter "label=com.docker.compose.project=$ProjectName" `
+    --format '{{.ID}}|{{.Names}}|{{.Status}}|{{.Label "com.docker.compose.service"}}|{{.Label "com.docker.compose.replace"}}' 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $rows) { return @() }
+
+  $dead = @()
+  foreach ($row in @($rows)) {
+    if ([string]::IsNullOrWhiteSpace($row)) { continue }
+    $parts = $row -split '\|', 5
+    if ($parts.Count -lt 5) { continue }
+    if ($parts[2] -notmatch '^Dead\b') { continue }
+    $dead += [PSCustomObject]@{
+      Id      = $parts[0].Trim()
+      Name    = $parts[1].Trim()
+      Status  = $parts[2].Trim()
+      Service = $parts[3].Trim()
+      Replace = $parts[4].Trim()
+    }
+  }
+  return @($dead)
+}
+
+function Assert-NoDeadProjectContainers {
+  param([string]$ProjectName)
+  $deadContainers = @(Get-DeadProjectContainers -ProjectName $ProjectName)
+  if ($deadContainers.Count -eq 0) { return }
+
+  $affected = @(
+    $deadContainers |
+      ForEach-Object {
+        if (-not [string]::IsNullOrWhiteSpace($_.Service)) { return $_.Service }
+        if (-not [string]::IsNullOrWhiteSpace($_.Replace)) { return $_.Replace }
+        return $_.Id
+      } |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+      Sort-Object -Unique
+  )
+  $affectedText = if ($affected.Count -gt 0) { $affected -join ", " } else { "unknown services" }
+  throw "Docker has stale Click2Fix containers in the 'Dead' state for project '$ProjectName' ($affectedText). Restart Docker Desktop to clear the orphaned container metadata, then rerun setup. Named volumes such as the Click2Fix database volume are preserved by a Docker restart."
+}
+
+function Remove-ProjectContainers {
+  param([string]$ProjectName)
+  $containerIds = @(Get-ProjectContainerIds -ProjectName $ProjectName -IncludeAll)
+  foreach ($containerId in $containerIds) {
+    & docker rm -f $containerId 1>$null 2>$null
+  }
+  & docker network rm "$ProjectName`_default" 1>$null 2>$null
+}
+
+function Prepare-ComposeProjectForUp {
+  param([string]$ProjectName)
+  $allContainers = @(Get-ProjectContainerIds -ProjectName $ProjectName -IncludeAll)
+  if ($allContainers.Count -eq 0) { return }
+
+  $runningContainers = @(Get-ProjectContainerIds -ProjectName $ProjectName)
+  if ($runningContainers.Count -gt 0) { return }
+
+  Write-Host "No Click2Fix services are currently running. Recreating project containers to avoid stale Docker restart state." -ForegroundColor Yellow
+  Remove-ProjectContainers -ProjectName $ProjectName
+}
+
 function Parse-PortOrDefault {
   param(
     [string]$RawValue,
@@ -147,15 +296,14 @@ function Test-PortInUse {
   }
 }
 
-function Test-PortOwnedByContainer {
+function Test-PortOwnedByService {
   param(
     [int]$Port,
-    [string]$ContainerName
+    [string[]]$ServiceNames
   )
-  $ports = & docker ps --filter "name=^$ContainerName$" --format "{{.Ports}}" 2>$null
-  if ($LASTEXITCODE -ne 0 -or -not $ports) { return $false }
-  $joined = ($ports | Select-Object -First 1)
-  return [regex]::IsMatch($joined, "[:.]$Port->")
+  $ports = Get-ServicePorts -ProjectName $script:composeProjectName -ServiceNames $ServiceNames
+  if ([string]::IsNullOrWhiteSpace($ports)) { return $false }
+  return [regex]::IsMatch($ports, "[:.]$Port->")
 }
 
 function Find-FreePort {
@@ -176,10 +324,10 @@ function Find-FreePort {
 function Resolve-PortConflict {
   param(
     [int]$RequestedPort,
-    [string]$ContainerName,
+    [string[]]$ServiceNames,
     [string]$Label
   )
-  if (-not (Test-PortInUse -Port $RequestedPort) -or (Test-PortOwnedByContainer -Port $RequestedPort -ContainerName $ContainerName)) {
+  if (-not (Test-PortInUse -Port $RequestedPort) -or (Test-PortOwnedByService -Port $RequestedPort -ServiceNames $ServiceNames)) {
     return $RequestedPort
   }
   $newPort = Find-FreePort -StartPort ($RequestedPort + 1)
@@ -208,31 +356,48 @@ function Ensure-DockerEngine {
   }
 }
 
-function Get-ContainerStatus {
-  param([string]$ContainerName)
-  $exists = & docker ps -a --filter "name=^$ContainerName$" --format "{{.Names}}" 2>$null
-  if ($LASTEXITCODE -ne 0) { return "" }
-  $first = $exists | Select-Object -First 1
-  if ([string]::IsNullOrWhiteSpace($first)) { return "" }
-  $status = & docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' $ContainerName 2>$null
+function Invoke-ComposeChecked {
+  param(
+    [string[]]$Arguments = @(),
+    [string]$FailureMessage = "Compose command failed."
+  )
+  Assert-NoDeadProjectContainers -ProjectName $script:composeProjectName
+  Invoke-NativeChecked -FilePath "docker" -Arguments ((Get-ComposeBaseArguments) + $Arguments) -FailureMessage $FailureMessage
+}
+
+function Get-ServiceStatus {
+  param([string]$ServiceName)
+  $containerId = Get-ServiceContainerId -ProjectName $script:composeProjectName -ServiceName $ServiceName -IncludeAll
+  if ([string]::IsNullOrWhiteSpace($containerId)) { return "" }
+  $status = & docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' $containerId 2>$null
   if ($LASTEXITCODE -ne 0) { return "" }
   return ($status | Select-Object -First 1).Trim()
 }
 
 function Show-ComposeDiagnostics {
-  param(
-    [string]$EnvPath,
-    [string]$ComposePath
-  )
+  Write-Host ""
+  Write-Host "---- project containers ----" -ForegroundColor Yellow
+  & docker ps -a `
+    --filter "label=com.docker.compose.project=$script:composeProjectName" `
+    --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Label "com.docker.compose.service"}}'
+
+  $deadContainers = @(Get-DeadProjectContainers -ProjectName $script:composeProjectName)
+  if ($deadContainers.Count -gt 0) {
+    Write-Host ""
+    Write-Host "Docker still reports dead Click2Fix containers for project '$script:composeProjectName'." -ForegroundColor Yellow
+    Write-Host "Restart Docker Desktop to clear the stale container metadata, then rerun setup." -ForegroundColor Yellow
+    return
+  }
+
   Write-Host ""
   Write-Host "---- docker compose ps ----" -ForegroundColor Yellow
-  & docker compose --env-file $EnvPath -f $ComposePath ps
+  & docker @((Get-ComposeBaseArguments) + @("ps"))
   Write-Host ""
   Write-Host "---- backend logs (tail 160) ----" -ForegroundColor Yellow
-  & docker compose --env-file $EnvPath -f $ComposePath logs --tail 160 backend
+  & docker @((Get-ComposeBaseArguments) + @("logs", "--tail", "160", "backend"))
   Write-Host ""
   Write-Host "---- db logs (tail 80) ----" -ForegroundColor Yellow
-  & docker compose --env-file $EnvPath -f $ComposePath logs --tail 80 db
+  & docker @((Get-ComposeBaseArguments) + @("logs", "--tail", "80", "db"))
 }
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -249,6 +414,10 @@ Ensure-DockerEngine
 if (-not (Test-Path $envPath)) {
   Copy-Item -Path $envTemplate -Destination $envPath -Force
 }
+
+$script:composeEnvPath = $envPath
+$script:composeFilePath = $composePath
+$script:composeProjectName = Ensure-ComposeProjectName -EnvPath $envPath -ProjectRoot $scriptDir
 
 Write-Host "== Click2Fix Appliance First-Boot Setup (Windows) ==" -ForegroundColor Cyan
 
@@ -302,9 +471,9 @@ if ($adminPassword.Length -lt 8) {
   throw "Initial admin password must be at least 8 characters."
 }
 
-$frontendPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $frontendPort -DefaultPort 5173) -ContainerName "c2f-frontend" -Label "frontend"
-$backendPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $backendPort -DefaultPort 8000) -ContainerName "c2f-backend" -Label "backend"
-$dbPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $dbPort -DefaultPort 5432) -ContainerName "c2f-db" -Label "db host"
+$frontendPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $frontendPort -DefaultPort 5173) -ServiceNames @("frontend") -Label "frontend"
+$backendPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $backendPort -DefaultPort 8000) -ServiceNames @("c2f-lb", "backend") -Label "backend"
+$dbPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $dbPort -DefaultPort 5432) -ServiceNames @("db") -Label "db host"
 
 $trustedHosts = "localhost,127.0.0.1,*.localhost,backend,frontend,c2f-backend,c2f-frontend,$publicHost"
 $corsOrigins = "http://$publicHost`:$frontendPort"
@@ -331,9 +500,9 @@ Set-EnvValue -Path $envPath -Key "C2F_BOOTSTRAP_ADMIN_PASSWORD" -Value $adminPas
 if (To-Bool $skipPull) {
   Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", "$backendImage`:$imageTag") -FailureMessage "Backend image not found locally: $backendImage`:$imageTag."
   Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", "$frontendImage`:$imageTag") -FailureMessage "Frontend image not found locally: $frontendImage`:$imageTag."
-} else {
+  } else {
   try {
-    Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "pull") -FailureMessage "Image pull failed."
+    Invoke-ComposeChecked -Arguments @("pull") -FailureMessage "Image pull failed."
   } catch {
     $detail = $_.Exception.Message
     if ($detail -match "unauthorized|denied|authentication") {
@@ -348,41 +517,43 @@ if (To-Bool $skipPull) {
 
 try {
   # Bring up DB + backend first so backend health is evaluated before frontend dependency kicks in.
-  Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "up", "-d", "db", "backend") -FailureMessage "Failed to start backend stack."
+  Prepare-ComposeProjectForUp -ProjectName $script:composeProjectName
+  Invoke-ComposeChecked -Arguments @("up", "-d", "--remove-orphans", "db", "backend") -FailureMessage "Failed to start backend stack."
 } catch {
-  Show-ComposeDiagnostics -EnvPath $envPath -ComposePath $composePath
+  Show-ComposeDiagnostics
   throw
 }
 
 for ($i = 0; $i -lt 60; $i++) {
-  $status = Get-ContainerStatus -ContainerName "c2f-backend"
+  $status = Get-ServiceStatus -ServiceName "backend"
   if ($status -eq "healthy") { break }
   Start-Sleep -Seconds 2
 }
-$status = Get-ContainerStatus -ContainerName "c2f-backend"
+$status = Get-ServiceStatus -ServiceName "backend"
 if ($status -ne "healthy") {
-  Show-ComposeDiagnostics -EnvPath $envPath -ComposePath $composePath
-  throw "Backend is not healthy. Check logs: docker compose --env-file $envPath -f $composePath logs backend"
+  Show-ComposeDiagnostics
+  throw "Backend is not healthy. Check logs: docker compose -p $script:composeProjectName --env-file $envPath -f $composePath logs backend"
 }
 
 try {
-  Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "up", "-d", "frontend") -FailureMessage "Failed to start frontend."
+  Invoke-ComposeChecked -Arguments @("up", "-d", "--remove-orphans", "frontend") -FailureMessage "Failed to start frontend."
 } catch {
-  Show-ComposeDiagnostics -EnvPath $envPath -ComposePath $composePath
+  Show-ComposeDiagnostics
   throw
 }
 
 $forceReset = Get-EnvValue $envPath "C2F_BOOTSTRAP_ADMIN_FORCE_RESET"
 $resetArg = @()
 if (To-Bool $forceReset) { $resetArg += "--force-reset" }
-$bootstrapArgs = @(
-  "compose", "--env-file", $envPath, "-f", $composePath, "exec", "-T", "-w", "/app", "backend",
+$bootstrapArgs = (Get-ComposeBaseArguments) + @(
+  "exec", "-T", "-w", "/app", "backend",
   "python", "-m", "tools.bootstrap_admin",
   "--username", $adminUser,
   "--password", $adminPassword,
   "--role", "admin"
 ) + $resetArg
 try {
+  Assert-NoDeadProjectContainers -ProjectName $script:composeProjectName
   $bootstrapOutput = & docker @bootstrapArgs 2>&1
   $bootstrapExit = $LASTEXITCODE
   if ($bootstrapOutput) { $bootstrapOutput | ForEach-Object { Write-Host $_ } }
@@ -390,7 +561,7 @@ try {
     throw "Bootstrap command failed with exit code $bootstrapExit."
   }
 } catch {
-  Show-ComposeDiagnostics -EnvPath $envPath -ComposePath $composePath
+  Show-ComposeDiagnostics
   throw "Failed to bootstrap admin user. $($_.Exception.Message)"
 }
 

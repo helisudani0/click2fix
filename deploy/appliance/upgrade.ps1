@@ -78,6 +78,135 @@ function Set-EnvValue {
   Set-Content -Path $Path -Value $updated
 }
 
+function Get-DefaultComposeProjectName {
+  param([string]$ProjectRoot)
+  $leaf = Split-Path -Leaf $ProjectRoot
+  if ([string]::IsNullOrWhiteSpace($leaf)) { $leaf = "click2fix" }
+  $normalized = $leaf.ToLowerInvariant() -replace '[^a-z0-9_-]', ''
+  $normalized = $normalized -replace '^[^a-z0-9]+', ''
+  if ([string]::IsNullOrWhiteSpace($normalized)) { return "click2fix" }
+  return $normalized
+}
+
+function Ensure-ComposeProjectName {
+  param(
+    [string]$EnvPath,
+    [string]$ProjectRoot
+  )
+  $projectName = Get-EnvValue -Path $EnvPath -Key "COMPOSE_PROJECT_NAME"
+  if ([string]::IsNullOrWhiteSpace($projectName)) {
+    $projectName = Get-DefaultComposeProjectName -ProjectRoot $ProjectRoot
+    Set-EnvValue -Path $EnvPath -Key "COMPOSE_PROJECT_NAME" -Value $projectName
+  }
+  return $projectName
+}
+
+function Get-ComposeBaseArguments {
+  return @("compose", "-p", $script:composeProjectName, "--env-file", $script:composeEnvPath, "-f", $script:composeFilePath)
+}
+
+function Get-ServicePorts {
+  param(
+    [string]$ProjectName,
+    [string[]]$ServiceNames
+  )
+  foreach ($serviceName in @($ServiceNames)) {
+    if ([string]::IsNullOrWhiteSpace($serviceName)) { continue }
+    $ports = & docker ps `
+      --filter "label=com.docker.compose.project=$ProjectName" `
+      --filter "label=com.docker.compose.service=$serviceName" `
+      --format "{{.Ports}}" 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $ports) { continue }
+    $first = $ports | Select-Object -First 1
+    if (-not [string]::IsNullOrWhiteSpace($first)) { return $first.Trim() }
+  }
+  return ""
+}
+
+function Get-ProjectContainerIds {
+  param(
+    [string]$ProjectName,
+    [switch]$IncludeAll
+  )
+  $args = @("ps")
+  if ($IncludeAll) { $args += "-a" }
+  $args += @(
+    "--filter", "label=com.docker.compose.project=$ProjectName",
+    "--format", "{{.ID}}"
+  )
+  $containerIds = & docker @args 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $containerIds) { return @() }
+  return @(
+    $containerIds |
+      ForEach-Object { $_.Trim() } |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  )
+}
+
+function Get-DeadProjectContainers {
+  param([string]$ProjectName)
+  $rows = & docker ps -a `
+    --filter "label=com.docker.compose.project=$ProjectName" `
+    --format '{{.ID}}|{{.Names}}|{{.Status}}|{{.Label "com.docker.compose.service"}}|{{.Label "com.docker.compose.replace"}}' 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $rows) { return @() }
+
+  $dead = @()
+  foreach ($row in @($rows)) {
+    if ([string]::IsNullOrWhiteSpace($row)) { continue }
+    $parts = $row -split '\|', 5
+    if ($parts.Count -lt 5) { continue }
+    if ($parts[2] -notmatch '^Dead\b') { continue }
+    $dead += [PSCustomObject]@{
+      Id      = $parts[0].Trim()
+      Name    = $parts[1].Trim()
+      Status  = $parts[2].Trim()
+      Service = $parts[3].Trim()
+      Replace = $parts[4].Trim()
+    }
+  }
+  return @($dead)
+}
+
+function Assert-NoDeadProjectContainers {
+  param([string]$ProjectName)
+  $deadContainers = @(Get-DeadProjectContainers -ProjectName $ProjectName)
+  if ($deadContainers.Count -eq 0) { return }
+
+  $affected = @(
+    $deadContainers |
+      ForEach-Object {
+        if (-not [string]::IsNullOrWhiteSpace($_.Service)) { return $_.Service }
+        if (-not [string]::IsNullOrWhiteSpace($_.Replace)) { return $_.Replace }
+        return $_.Id
+      } |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+      Sort-Object -Unique
+  )
+  $affectedText = if ($affected.Count -gt 0) { $affected -join ", " } else { "unknown services" }
+  throw "Docker has stale Click2Fix containers in the 'Dead' state for project '$ProjectName' ($affectedText). Restart Docker Desktop to clear the orphaned container metadata, then rerun the upgrade. Named volumes such as the Click2Fix database volume are preserved by a Docker restart."
+}
+
+function Remove-ProjectContainers {
+  param([string]$ProjectName)
+  $containerIds = @(Get-ProjectContainerIds -ProjectName $ProjectName -IncludeAll)
+  foreach ($containerId in $containerIds) {
+    & docker rm -f $containerId 1>$null 2>$null
+  }
+  & docker network rm "$ProjectName`_default" 1>$null 2>$null
+}
+
+function Prepare-ComposeProjectForUp {
+  param([string]$ProjectName)
+  $allContainers = @(Get-ProjectContainerIds -ProjectName $ProjectName -IncludeAll)
+  if ($allContainers.Count -eq 0) { return }
+
+  $runningContainers = @(Get-ProjectContainerIds -ProjectName $ProjectName)
+  if ($runningContainers.Count -gt 0) { return }
+
+  Write-Host "No Click2Fix services are currently running. Recreating project containers to avoid stale Docker restart state." -ForegroundColor Yellow
+  Remove-ProjectContainers -ProjectName $ProjectName
+}
+
 function Parse-PortOrDefault {
   param(
     [string]$RawValue,
@@ -100,15 +229,14 @@ function Test-PortInUse {
   }
 }
 
-function Test-PortOwnedByContainer {
+function Test-PortOwnedByService {
   param(
     [int]$Port,
-    [string]$ContainerName
+    [string[]]$ServiceNames
   )
-  $ports = & docker ps --filter "name=^$ContainerName$" --format "{{.Ports}}" 2>$null
-  if ($LASTEXITCODE -ne 0 -or -not $ports) { return $false }
-  $joined = ($ports | Select-Object -First 1)
-  return [regex]::IsMatch($joined, "[:.]$Port->")
+  $ports = Get-ServicePorts -ProjectName $script:composeProjectName -ServiceNames $ServiceNames
+  if ([string]::IsNullOrWhiteSpace($ports)) { return $false }
+  return [regex]::IsMatch($ports, "[:.]$Port->")
 }
 
 function Find-FreePort {
@@ -124,6 +252,23 @@ function Find-FreePort {
     $candidate++
   }
   throw "No free port found starting at $StartPort after $MaxTries attempts."
+}
+
+function Ensure-DockerEngine {
+  try {
+    Invoke-NativeChecked -FilePath "docker" -Arguments @("info") -FailureMessage "Docker engine check failed."
+  } catch {
+    throw "Docker engine is not running. Start Docker Desktop (Linux containers mode), wait until it is Running, then retry."
+  }
+}
+
+function Invoke-ComposeChecked {
+  param(
+    [string[]]$Arguments = @(),
+    [string]$FailureMessage = "Compose command failed."
+  )
+  Assert-NoDeadProjectContainers -ProjectName $script:composeProjectName
+  Invoke-NativeChecked -FilePath "docker" -Arguments ((Get-ComposeBaseArguments) + $Arguments) -FailureMessage $FailureMessage
 }
 
 function Get-CurrentAdvertiseHost {
@@ -268,19 +413,19 @@ function Resolve-PortConflicts {
     Set-EnvValue -Path $EnvPath -Key "C2F_PUBLIC_HOST" -Value $publicHost
   }
 
-  if ((Test-PortInUse -Port $backendPort) -and -not (Test-PortOwnedByContainer -Port $backendPort -ContainerName "c2f-backend")) {
+  if ((Test-PortInUse -Port $backendPort) -and -not (Test-PortOwnedByService -Port $backendPort -ServiceNames @("c2f-lb", "backend"))) {
     $backendPort = Find-FreePort -StartPort ($backendPort + 1)
     Write-Host "Port conflict detected. Reassigned backend to $backendPort." -ForegroundColor Yellow
     Set-EnvValue -Path $EnvPath -Key "C2F_BACKEND_PORT" -Value "$backendPort"
   }
 
-  if ((Test-PortInUse -Port $frontendPort) -and -not (Test-PortOwnedByContainer -Port $frontendPort -ContainerName "c2f-frontend")) {
+  if ((Test-PortInUse -Port $frontendPort) -and -not (Test-PortOwnedByService -Port $frontendPort -ServiceNames @("frontend"))) {
     $frontendPort = Find-FreePort -StartPort ($frontendPort + 1)
     Write-Host "Port conflict detected. Reassigned frontend to $frontendPort." -ForegroundColor Yellow
     Set-EnvValue -Path $EnvPath -Key "C2F_FRONTEND_PORT" -Value "$frontendPort"
   }
 
-  if ((Test-PortInUse -Port $dbPort) -and -not (Test-PortOwnedByContainer -Port $dbPort -ContainerName "c2f-db")) {
+  if ((Test-PortInUse -Port $dbPort) -and -not (Test-PortOwnedByService -Port $dbPort -ServiceNames @("db"))) {
     $dbPort = Find-FreePort -StartPort ($dbPort + 1)
     Write-Host "Port conflict detected. Reassigned db host port to $dbPort." -ForegroundColor Yellow
     Set-EnvValue -Path $EnvPath -Key "C2F_DB_PORT" -Value "$dbPort"
@@ -303,10 +448,15 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   throw "Docker is not installed."
 }
 Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "version") -FailureMessage "Docker Compose plugin is required."
+Ensure-DockerEngine
 
 if (-not (Test-Path $envPath)) {
   throw "Missing $envPath. Run install.ps1 first."
 }
+
+$script:composeEnvPath = $envPath
+$script:composeFilePath = $composePath
+$script:composeProjectName = Ensure-ComposeProjectName -EnvPath $envPath -ProjectRoot $scriptDir
 
 Resolve-PortConflicts -EnvPath $envPath
 
@@ -329,16 +479,17 @@ if ($skipPull) {
   }
 } else {
   Write-Host "Pulling configured images..."
-  Invoke-NativeChecked -FilePath "docker" -Arguments @("compose", "--env-file", $envPath, "-f", $composePath, "pull") -FailureMessage "Failed to pull images."
+  Invoke-ComposeChecked -Arguments @("pull") -FailureMessage "Failed to pull images."
 }
 
 Write-Host "Applying upgrade..."
-$composeArgs = @("compose", "--env-file", $envPath, "-f", $composePath, "up", "-d")
+$composeArgs = @("up", "-d", "--remove-orphans")
 if ($skipPull) {
   $composeArgs += @("--force-recreate", "agent-manager", "event-indexer", "backend", "frontend")
 }
-Invoke-NativeChecked -FilePath "docker" -Arguments $composeArgs -FailureMessage "Failed to apply upgrade."
+Prepare-ComposeProjectForUp -ProjectName $script:composeProjectName
+Invoke-ComposeChecked -Arguments $composeArgs -FailureMessage "Failed to apply upgrade."
 
 Write-Host "Upgrade complete."
 Write-Host "Check status:"
-Write-Host "  docker compose --env-file $envPath -f $composePath ps"
+Write-Host "  docker compose -p $script:composeProjectName --env-file $envPath -f $composePath ps"

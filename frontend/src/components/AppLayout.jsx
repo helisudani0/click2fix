@@ -11,12 +11,12 @@ import MissionBriefing from "./MissionBriefing";
 import { APP_TIMEZONE_LABEL } from "../utils/time";
 import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
-const SIDEBAR_STORAGE_KEY = "c2f-sidebar-collapsed-v3";
-const PRIORITY_PANEL_STORAGE_KEY = "c2f-priority-panel-collapsed-v3";
-const PRIORITY_PANEL_HEIGHT_STORAGE_KEY = "c2f-priority-panel-height-v3";
-const SIDEBAR_WIDTH_STORAGE_KEY = "c2f-sidebar-width-v3";
-const OPS_PANEL_COMPACT_STORAGE_KEY = "c2f-ops-panel-compact-v3";
-const PRIORITY_QUEUE_STORAGE_KEY = "c2f-priority-queue-v1";
+const SIDEBAR_STORAGE_KEY = "c2f-sidebar-collapsed-v4";
+const PRIORITY_PANEL_STORAGE_KEY = "c2f-priority-panel-collapsed-v4";
+const PRIORITY_PANEL_HEIGHT_STORAGE_KEY = "c2f-priority-panel-height-v4";
+const SIDEBAR_WIDTH_STORAGE_KEY = "c2f-sidebar-width-v4";
+const OPS_PANEL_COMPACT_STORAGE_KEY = "c2f-ops-panel-compact-v4";
+const PRIORITY_QUEUE_STORAGE_KEY = "c2f-priority-queue-v2";
 const MISSION_BRIEFING_STORAGE_KEY = "c2f-mission-briefing-v1";
 const DEFAULT_PRIORITY_PANEL_HEIGHT = 288;
 const MIN_PRIORITY_PANEL_HEIGHT = 170;
@@ -882,7 +882,9 @@ export default function AppLayout() {
                 | Timezone: {APP_TIMEZONE_LABEL}
               </div>
             </div>
-            <div className="topbar-meta-row">
+          </div>
+          <div className="topbar-right">
+            <div className="topbar-control-row">
               <div className="topbar-shortcuts" aria-label="Quick navigation">
                 <NavLink to="/alerts" className={({ isActive }) => `topbar-shortcut${isActive ? " active" : ""}`}>
                   Alerts
@@ -910,30 +912,30 @@ export default function AppLayout() {
                 </div>
               </div>
             </div>
-          </div>
-          <div className="topbar-right">
-            <form className="search" onSubmit={submitSearch}>
-              <input
-                aria-label="Search alerts, agents, actions"
-                placeholder="Search by alert ID, CVE, host, IP, IOC..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-              <button className="btn secondary" type="submit">Search</button>
-            </form>
-            <div className="topbar-actions">
-              <button type="button" className="btn secondary" onClick={() => setMissionBriefingOpen(true)} aria-label="Open mission briefing">
-                Guide
-              </button>
-              <button
-                type="button"
-                className="btn secondary sidebar-toggle-mobile"
-                onClick={() => setSidebarCollapsed((prev) => !prev)}
-                aria-pressed={sidebarCollapsed}
-              >
-                {sidebarCollapsed ? "Expand Nav" : "Collapse Nav"}
-              </button>
-              <button className="btn secondary" onClick={logout}>Logout</button>
+            <div className="topbar-command-row">
+              <form className="search" onSubmit={submitSearch}>
+                <input
+                  aria-label="Search alerts, agents, actions"
+                  placeholder="Search by alert ID, CVE, host, IP, IOC..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+                <button className="btn secondary" type="submit">Search</button>
+              </form>
+              <div className="topbar-actions">
+                <button type="button" className="btn secondary" onClick={() => setMissionBriefingOpen(true)} aria-label="Open mission briefing">
+                  Guide
+                </button>
+                <button
+                  type="button"
+                  className="btn secondary sidebar-toggle-mobile"
+                  onClick={() => setSidebarCollapsed((prev) => !prev)}
+                  aria-pressed={sidebarCollapsed}
+                >
+                  {sidebarCollapsed ? "Expand Nav" : "Collapse Nav"}
+                </button>
+                <button className="btn secondary" onClick={logout}>Logout</button>
+              </div>
             </div>
           </div>
         </div>

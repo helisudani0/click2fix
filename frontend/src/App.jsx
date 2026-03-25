@@ -1,8 +1,9 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Routes, Route } from "react-router-dom";
 import AppLayout from "./components/AppLayout";
 import RequireAuth from "./components/RequireAuth";
 import "./index.css";
+import "./styles/console-redesign-v4.css";
 
 const Dashboard = lazy(() => import("./components/Dashboard"));
 const Agents = lazy(() => import("./pages/Agents"));
@@ -25,6 +26,12 @@ const GlobalShell = lazy(() => import("./pages/GlobalShell"));
 const Login = lazy(() => import("./pages/Login"));
 
 export default function App() {
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    document.body.classList.add("console-redesign-v4");
+    return () => document.body.classList.remove("console-redesign-v4");
+  }, []);
+
   return (
     <Suspense fallback={<div className="empty-state">Loading workspace...</div>}>
       <Routes>

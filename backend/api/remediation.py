@@ -100,6 +100,11 @@ def _result_execution_status(payload) -> str:
     return "FAILED"
 
 
+def _skip_post_action_verification(action_id: str) -> bool:
+    aid = str(action_id or "").strip().lower()
+    return aid in {"sca-rescan", "sca_rescan", "sca"}
+
+
 def _result_counts(rows, *, fallback_total: int = 0) -> dict:
     valid_rows = [row for row in (rows or []) if isinstance(row, dict)]
     success = sum(1 for row in valid_rows if row.get("ok"))
@@ -365,12 +370,44 @@ def _run_async_remediation_job(
             step_status = execution_status if execution_status != "FAILED" else "FAILED"
             if isinstance(result_payload.get("results"), list):
                 target_rows = result_payload.get("results")
-                verification_result = run_post_action_verification(
-                    client,
-                    action_id,
-                    execution_id,
-                    target_rows or [],
-                )
+                if _skip_post_action_verification(action_id):
+                    verification_result = {
+                        "skipped": True,
+                        "reason": "direct_sca_rescan_action",
+                    }
+                else:
+                    publish_event(
+                        execution_id,
+                        {
+                            "type": "step_start",
+                            "step": "post_action_verification",
+                            "status": "RUNNING",
+                            "stdout": "Awaiting fresh Wazuh/SCA scan data...",
+                            "stderr": "",
+                        },
+                    )
+                    verification_result = run_post_action_verification(
+                        client,
+                        action_id,
+                        execution_id,
+                        target_rows or [],
+                    )
+                    verification_state_live = derive_verification_state(verification_result)
+                    publish_event(
+                        execution_id,
+                        {
+                            "type": "step_done" if verification_state_live.get("ok") else "step_failed",
+                            "step": "post_action_verification",
+                            "status": str(verification_state_live.get("step_status") or "SUCCESS"),
+                            "stdout": json.dumps(
+                                (verification_result or {}).get("summary")
+                                if isinstance(verification_result, dict)
+                                else {},
+                                default=str,
+                            ),
+                            "stderr": str(verification_state_live.get("step_error") or ""),
+                        },
+                    )
         except HTTPException as exc:
             execution_status = "FAILED"
             step_status = "FAILED"
@@ -834,14 +871,46 @@ async def remediate(
                 target_rows = result_payload.get("results")
                 execution_status = _result_execution_status(result_payload)
                 step_status = execution_status if execution_status != "FAILED" else "FAILED"
-                verification_result = await run_in_threadpool(
-                    lambda: run_post_action_verification(
-                        client,
-                        action_id,
-                        int(execution_id) if execution_id is not None else None,
-                        target_rows or [],
+                if _skip_post_action_verification(action_id):
+                    verification_result = {
+                        "skipped": True,
+                        "reason": "direct_sca_rescan_action",
+                    }
+                else:
+                    publish_event(
+                        int(execution_id),
+                        {
+                            "type": "step_start",
+                            "step": "post_action_verification",
+                            "status": "RUNNING",
+                            "stdout": "Awaiting fresh Wazuh/SCA scan data...",
+                            "stderr": "",
+                        },
                     )
-                )
+                    verification_result = await run_in_threadpool(
+                        lambda: run_post_action_verification(
+                            client,
+                            action_id,
+                            int(execution_id) if execution_id is not None else None,
+                            target_rows or [],
+                        )
+                    )
+                    verification_state_live = derive_verification_state(verification_result)
+                    publish_event(
+                        int(execution_id),
+                        {
+                            "type": "step_done" if verification_state_live.get("ok") else "step_failed",
+                            "step": "post_action_verification",
+                            "status": str(verification_state_live.get("step_status") or "SUCCESS"),
+                            "stdout": json.dumps(
+                                (verification_result or {}).get("summary")
+                                if isinstance(verification_result, dict)
+                                else {},
+                                default=str,
+                            ),
+                            "stderr": str(verification_state_live.get("step_error") or ""),
+                        },
+                    )
         except HTTPException as exc:
             execution_status = "FAILED"
             step_status = "FAILED"

@@ -104,18 +104,111 @@ normalize_port() {
   fi
 }
 
+current_advertise_host() {
+  local fallback="${1:-localhost}"
+  local candidate=""
+  if command -v ip >/dev/null 2>&1; then
+    candidate="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i=="src") { print $(i+1); exit }}')"
+  fi
+  if [[ -z "${candidate}" ]] && command -v hostname >/dev/null 2>&1; then
+    candidate="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -Ev '^(127\.|169\.254\.|$)' | head -n 1 || true)"
+  fi
+  if [[ -n "${candidate}" ]]; then
+    echo "${candidate}"
+  elif [[ -n "${fallback}" ]]; then
+    echo "${fallback}"
+  else
+    echo "localhost"
+  fi
+}
+
+is_ipv4_literal() {
+  local value="${1:-}"
+  [[ "${value}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  local IFS='.'
+  local octet
+  for octet in ${value}; do
+    [[ "${octet}" =~ ^[0-9]+$ ]] || return 1
+    ((octet >= 0 && octet <= 255)) || return 1
+  done
+  return 0
+}
+
+resolve_runtime_public_host() {
+  local configured="${1:-}"
+  if [[ -z "${configured}" ]]; then
+    current_advertise_host "localhost"
+    return
+  fi
+  local lower
+  lower="$(printf '%s' "${configured}" | tr '[:upper:]' '[:lower:]')"
+  if [[ "${lower}" == "localhost" ]] || is_ipv4_literal "${configured}"; then
+    current_advertise_host "${configured}"
+    return
+  fi
+  echo "${configured}"
+}
+
+join_unique_csv() {
+  awk '
+    {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if ($0 == "") next
+      key=tolower($0)
+      if (!seen[key]++) {
+        out = out (out ? "," : "") $0
+      }
+    }
+    END { print out }
+  '
+}
+
+build_cors_origins() {
+  local public_host="$1"
+  local frontend_port="$2"
+  local existing="$3"
+  local primary="http://${public_host}:${frontend_port}"
+  {
+    echo "${primary}"
+    tr ',' '\n' <<< "${existing}"
+  } | join_unique_csv
+}
+
+build_trusted_hosts() {
+  local public_host="$1"
+  local existing="$2"
+  {
+    echo "localhost"
+    echo "127.0.0.1"
+    echo "*.localhost"
+    echo "backend"
+    echo "frontend"
+    echo "c2f-backend"
+    echo "c2f-frontend"
+    if [[ -n "${public_host}" ]]; then
+      echo "${public_host}"
+    fi
+    tr ',' '\n' <<< "${existing}"
+  } | join_unique_csv
+}
+
 resolve_port_conflicts() {
-  local public_host frontend_port backend_port db_port old_frontend_port
+  local public_host configured_host frontend_port backend_port db_port
   public_host="$(env_get C2F_PUBLIC_HOST "${ENV_FILE}")"
+  configured_host="${public_host}"
   frontend_port="$(env_get C2F_FRONTEND_PORT "${ENV_FILE}")"
   backend_port="$(env_get C2F_BACKEND_PORT "${ENV_FILE}")"
   db_port="$(env_get C2F_DB_PORT "${ENV_FILE}")"
 
+  public_host="$(resolve_runtime_public_host "${configured_host}")"
   [[ -n "${public_host}" ]] || public_host="localhost"
   frontend_port="$(normalize_port "${frontend_port:-}" "5173")"
   backend_port="$(normalize_port "${backend_port:-}" "8000")"
   db_port="$(normalize_port "${db_port:-}" "5432")"
-  old_frontend_port="${frontend_port}"
+
+  if [[ "${public_host}" != "${configured_host}" ]]; then
+    set_env C2F_PUBLIC_HOST "${public_host}" "${ENV_FILE}"
+  fi
 
   if port_in_use "${backend_port}" && ! port_owned_by_container "${backend_port}" "c2f-backend"; then
     backend_port="$(find_free_port $((backend_port + 1)))" || {
@@ -144,8 +237,17 @@ resolve_port_conflicts() {
     set_env C2F_DB_PORT "${db_port}" "${ENV_FILE}"
   fi
 
-  if [[ "${frontend_port}" != "${old_frontend_port}" ]]; then
-    set_env C2F_CORS_ORIGINS "http://${public_host}:${frontend_port}" "${ENV_FILE}"
+  local existing_cors desired_cors existing_trusted desired_trusted
+  existing_cors="$(env_get C2F_CORS_ORIGINS "${ENV_FILE}")"
+  desired_cors="$(build_cors_origins "${public_host}" "${frontend_port}" "${existing_cors}")"
+  if [[ "${desired_cors}" != "${existing_cors}" ]]; then
+    set_env C2F_CORS_ORIGINS "${desired_cors}" "${ENV_FILE}"
+  fi
+
+  existing_trusted="$(env_get C2F_TRUSTED_HOSTS "${ENV_FILE}")"
+  desired_trusted="$(build_trusted_hosts "${public_host}" "${existing_trusted}")"
+  if [[ "${desired_trusted}" != "${existing_trusted}" ]]; then
+    set_env C2F_TRUSTED_HOSTS "${desired_trusted}" "${ENV_FILE}"
   fi
 }
 

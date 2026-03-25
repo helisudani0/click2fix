@@ -150,11 +150,100 @@ function Get-CurrentAdvertiseHost {
   return "localhost"
 }
 
+function Test-IPv4Literal {
+  param([string]$Value)
+  $text = [string]$Value
+  if ([string]::IsNullOrWhiteSpace($text)) { return $false }
+  if ($text -notmatch '^(?:\d{1,3}\.){3}\d{1,3}$') { return $false }
+  foreach ($part in $text.Split(".")) {
+    $num = 0
+    if (-not [int]::TryParse($part, [ref]$num)) { return $false }
+    if ($num -lt 0 -or $num -gt 255) { return $false }
+  }
+  return $true
+}
+
+function Resolve-RuntimePublicHost {
+  param([string]$ConfiguredHost)
+  $configured = [string]$ConfiguredHost
+  if ([string]::IsNullOrWhiteSpace($configured)) {
+    return Get-CurrentAdvertiseHost -FallbackHost "localhost"
+  }
+  $normalized = $configured.Trim()
+  if ($normalized.ToLowerInvariant() -eq "localhost" -or (Test-IPv4Literal -Value $normalized)) {
+    return Get-CurrentAdvertiseHost -FallbackHost $normalized
+  }
+  return $normalized
+}
+
+function Split-EnvList {
+  param([string]$RawValue)
+  if ([string]::IsNullOrWhiteSpace($RawValue)) { return @() }
+  return @(
+    $RawValue.Split(",") |
+      ForEach-Object { $_.Trim() } |
+      Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  )
+}
+
+function Join-UniqueList {
+  param([string[]]$Values)
+  $seen = @{}
+  $out = @()
+  foreach ($value in @($Values)) {
+    $text = [string]$value
+    if ([string]::IsNullOrWhiteSpace($text)) { continue }
+    $key = $text.ToLowerInvariant()
+    if ($seen.ContainsKey($key)) { continue }
+    $seen[$key] = $true
+    $out += $text
+  }
+  return ($out -join ",")
+}
+
+function Build-CorsOriginsValue {
+  param(
+    [string]$PublicHost,
+    [int]$FrontendPort,
+    [string]$ExistingValue
+  )
+  $primary = "http://$PublicHost`:$FrontendPort"
+  $merged = @($primary)
+  foreach ($candidate in (Split-EnvList -RawValue $ExistingValue)) {
+    if ($candidate -eq $primary) { continue }
+    $merged += $candidate
+  }
+  return Join-UniqueList -Values $merged
+}
+
+function Build-TrustedHostsValue {
+  param(
+    [string]$PublicHost,
+    [string]$ExistingValue
+  )
+  $base = @(
+    "localhost",
+    "127.0.0.1",
+    "*.localhost",
+    "backend",
+    "frontend",
+    "c2f-backend",
+    "c2f-frontend"
+  )
+  $merged = @($base)
+  $merged += Split-EnvList -RawValue $ExistingValue
+  if (-not [string]::IsNullOrWhiteSpace($PublicHost)) {
+    $merged += $PublicHost
+  }
+  return Join-UniqueList -Values $merged
+}
+
 function Resolve-PortConflicts {
   param([string]$EnvPath)
   if (-not (Test-Path $EnvPath)) { return }
 
-  $publicHost = Get-EnvValue -Path $EnvPath -Key "C2F_PUBLIC_HOST"
+  $configuredHost = Get-EnvValue -Path $EnvPath -Key "C2F_PUBLIC_HOST"
+  $publicHost = Resolve-RuntimePublicHost -ConfiguredHost $configuredHost
   if ([string]::IsNullOrWhiteSpace($publicHost)) { $publicHost = "localhost" }
   $frontendRaw = Get-EnvValue -Path $EnvPath -Key "C2F_FRONTEND_PORT"
   $backendRaw = Get-EnvValue -Path $EnvPath -Key "C2F_BACKEND_PORT"
@@ -162,8 +251,12 @@ function Resolve-PortConflicts {
   $frontendPort = Parse-PortOrDefault -RawValue $frontendRaw -DefaultPort 5173
   $backendPort = Parse-PortOrDefault -RawValue $backendRaw -DefaultPort 8000
   $dbPort = Parse-PortOrDefault -RawValue $dbRaw -DefaultPort 5432
-  $oldFrontendPort = $frontendPort
   $changed = $false
+
+  if ($publicHost -ne $configuredHost) {
+    Set-EnvValue -Path $EnvPath -Key "C2F_PUBLIC_HOST" -Value $publicHost
+    $changed = $true
+  }
 
   if ((Test-PortInUse -Port $backendPort) -and -not (Test-PortOwnedByContainer -Port $backendPort -ContainerName "c2f-backend")) {
     $newBackend = Find-FreePort -StartPort ($backendPort + 1)
@@ -189,8 +282,17 @@ function Resolve-PortConflicts {
     $changed = $true
   }
 
-  if ($frontendPort -ne $oldFrontendPort) {
-    Set-EnvValue -Path $EnvPath -Key "C2F_CORS_ORIGINS" -Value "http://$publicHost`:$frontendPort"
+  $existingCors = Get-EnvValue -Path $EnvPath -Key "C2F_CORS_ORIGINS"
+  $desiredCors = Build-CorsOriginsValue -PublicHost $publicHost -FrontendPort $frontendPort -ExistingValue $existingCors
+  if ($desiredCors -ne $existingCors) {
+    Set-EnvValue -Path $EnvPath -Key "C2F_CORS_ORIGINS" -Value $desiredCors
+    $changed = $true
+  }
+
+  $existingTrustedHosts = Get-EnvValue -Path $EnvPath -Key "C2F_TRUSTED_HOSTS"
+  $desiredTrustedHosts = Build-TrustedHostsValue -PublicHost $publicHost -ExistingValue $existingTrustedHosts
+  if ($desiredTrustedHosts -ne $existingTrustedHosts) {
+    Set-EnvValue -Path $EnvPath -Key "C2F_TRUSTED_HOSTS" -Value $desiredTrustedHosts
     $changed = $true
   }
 

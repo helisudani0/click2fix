@@ -103,8 +103,25 @@ service_ports() {
 dead_project_containers() {
   docker ps -a \
     --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
-    --format '{{.ID}}|{{.Names}}|{{.Status}}|{{.Label "com.docker.compose.service"}}|{{.Label "com.docker.compose.replace"}}' 2>/dev/null |
-    awk -F'|' '$3 ~ /^Dead/ { print }'
+    --format '{{.ID}}|{{.Names}}|{{.Status}}|{{.Labels}}' 2>/dev/null |
+    awk -F'|' '
+      function label_value(labels, key,    n, i, item, pos, name, value) {
+        n = split(labels, parts, ",")
+        for (i = 1; i <= n; i++) {
+          item = parts[i]
+          sub(/^[[:space:]]+/, "", item)
+          sub(/[[:space:]]+$/, "", item)
+          pos = index(item, "=")
+          if (pos < 1) continue
+          name = substr(item, 1, pos - 1)
+          value = substr(item, pos + 1)
+          if (name == key) return value
+        }
+        return ""
+      }
+      $3 ~ /^Dead/ {
+        printf "%s|%s|%s|%s|%s\n", $1, $2, $3, label_value($4, "com.docker.compose.service"), label_value($4, "com.docker.compose.replace")
+      }'
 }
 
 assert_no_dead_project_containers() {

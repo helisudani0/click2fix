@@ -210,25 +210,40 @@ function Get-ServicePorts {
   return ""
 }
 
+function Get-ComposeLabelValue {
+  param(
+    [string]$Labels,
+    [string]$Key
+  )
+  foreach ($entry in (($Labels -split ',') | ForEach-Object { $_.Trim() })) {
+    if ([string]::IsNullOrWhiteSpace($entry)) { continue }
+    $parts = $entry -split '=', 2
+    if ($parts.Count -ne 2) { continue }
+    if ($parts[0] -eq $Key) { return $parts[1] }
+  }
+  return ""
+}
+
 function Get-DeadProjectContainers {
   param([string]$ProjectName)
   $rows = & docker ps -a `
     --filter "label=com.docker.compose.project=$ProjectName" `
-    --format '{{.ID}}|{{.Names}}|{{.Status}}|{{.Label "com.docker.compose.service"}}|{{.Label "com.docker.compose.replace"}}' 2>$null
+    --format '{{.ID}}|{{.Names}}|{{.Status}}|{{.Labels}}' 2>$null
   if ($LASTEXITCODE -ne 0 -or -not $rows) { return @() }
 
   $dead = @()
   foreach ($row in @($rows)) {
     if ([string]::IsNullOrWhiteSpace($row)) { continue }
-    $parts = $row -split '\|', 5
-    if ($parts.Count -lt 5) { continue }
+    $parts = $row -split '\|', 4
+    if ($parts.Count -lt 4) { continue }
     if ($parts[2] -notmatch '^Dead\b') { continue }
+    $labels = $parts[3].Trim()
     $dead += [PSCustomObject]@{
       Id      = $parts[0].Trim()
       Name    = $parts[1].Trim()
       Status  = $parts[2].Trim()
-      Service = $parts[3].Trim()
-      Replace = $parts[4].Trim()
+      Service = Get-ComposeLabelValue -Labels $labels -Key "com.docker.compose.service"
+      Replace = Get-ComposeLabelValue -Labels $labels -Key "com.docker.compose.replace"
     }
   }
   return @($dead)

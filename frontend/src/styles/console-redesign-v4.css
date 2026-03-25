@@ -728,6 +728,9 @@ body.console-redesign-v4 .topbar-actions {
 body.console-redesign-v4 .content-stage {
   padding: 22px 24px 30px;
   gap: 22px;
+  width: 100%;
+  max-width: 1840px;
+  margin: 0 auto;
 }
 
 body.console-redesign-v4 .page {
@@ -898,5 +901,285 @@ body.console-redesign-v4 .empty-state {
 
   body.console-redesign-v4 .topbar-context {
     display: none;
+  }
+}
+
+body.console-redesign-v4 .page-route-dashboard .page-header,
+body.console-redesign-v4 .page-route-alerts .page-header,
+body.console-redesign-v4 .page-route-executions .page-header,
+body.console-redesign-v4 .page-route-actions .page-header,
+body.console-redesign-v4 .page-route-global-shell .page-header,
+body.console-redesign-v4 .page-route-agents .page-header,
+body.console-redesign-v4 .page-route-approvals .page-header,
+body.console-redesign-v4 .page-route-governance .page-header,
+body.console-redesign-v4 .page-route-org-admin .page-header {
+  padding: 0 0 18px;
+  margin-bottom: 2px;
+}
+
+body.console-redesign-v4 .page-route-dashboard .page-header,
+body.console-redesign-v4 .page-route-alerts .page-header,
+body.console-redesign-v4 .page-route-executions .page-header,
+body.console-redesign-v4 .page-route-actions .page-header,
+body.console-redesign-v4 .page-route-global-shell .page-header {
+  position: relative;
+}
+
+body.console-redesign-v4 .page-route-dashboard .page-header::after,
+body.console-redesign-v4 .page-route-alerts .page-header::after,
+body.console-redesign-v4 .page-route-executions .page-header::after,
+body.console-redesign-v4 .page-route-actions .page-header::after,
+body.console-redesign-v4 .page-route-global-shell .page-header::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px 0;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(74, 133, 214, 0.82), rgba(30, 154, 120, 0.45), transparent 82%);
+}
+
+body.console-redesign-v4 .page-route-dashboard .page-header h2,
+body.console-redesign-v4 .page-route-alerts .page-header h2,
+body.console-redesign-v4 .page-route-executions .page-header h2,
+body.console-redesign-v4 .page-route-actions .page-header h2,
+body.console-redesign-v4 .page-route-global-shell .page-header h2 {
+  font-size: clamp(1.72rem, 2vw, 2.3rem);
+}
+
+body.console-redesign-v4 .page-route-dashboard .mission-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+body.console-redesign-v4 .page-route-dashboard .dashboard-masonry {
+  gap: 20px;
+}
+
+body.console-redesign-v4 .page-route-dashboard .panel-stack {
+  gap: 20px;
+}
+
+body.console-redesign-v4 .page-route-dashboard .list-scroll.tall,
+body.console-redesign-v4 .page-route-dashboard .table-scroll {
+  max-height: min(56vh, 720px);
+}
+
+body.console-redesign-v4 .page-route-dashboard .bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(111, 133, 158, 0.12);
+}
+
+body.console-redesign-v4 .page-route-dashboard .bar-fill {
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(74, 133, 214, 0.92), rgba(30, 154, 120, 0.82));
+}
+
+body.console-redesign-v4 .page-route-dashboard .bar-fill.failed {
+  background: linear-gradient(90deg, rgba(196, 86, 86, 0.95), rgba(207, 148, 70, 0.7));
+}
+
+body.console-redesign-v4 .page-route-alerts > .card:first-of-type,
+body.console-redesign-v4 .page-route-executions > .card:first-of-type {
+  padding: 22px;
+  background:
+    linear-gradient(180deg, rgba(14, 26, 42, 0.96), rgba(10, 19, 32, 0.98)),
+    radial-gradient(420px 200px at 0% 0%, rgba(74, 133, 214, 0.08), transparent 72%);
+}
+
+body.console-redesign-v4 .page-route-alerts > .card:first-of-type .page-actions,
+body.console-redesign-v4 .page-route-executions .page-header .page-actions,
+body.console-redesign-v4 .page-route-actions .page-header .page-actions,
+body.console-redesign-v4 .page-route-global-shell .page-header .page-actions,
+body.console-redesign-v4 .page-route-agents .page-header .page-actions {
+  gap: 10px;
+}
+
+body.console-redesign-v4 .page-route-alerts .table-scroll,
+body.console-redesign-v4 .page-route-executions .table-scroll {
+  max-height: min(64vh, 780px);
+}
+
+body.console-redesign-v4 .page-route-alerts .column-guide {
+  position: relative;
+  cursor: help;
+}
+
+body.console-redesign-v4 .page-route-alerts .column-guide-popover {
+  width: 220px;
+  border-radius: 12px;
+  border: 1px solid rgba(121, 145, 175, 0.18);
+  background: rgba(10, 19, 31, 0.98);
+  box-shadow: 0 18px 32px rgba(2, 7, 14, 0.24);
+}
+
+body.console-redesign-v4 .page-route-alerts .drawer-grid,
+body.console-redesign-v4 .page-route-executions .drawer-grid {
+  gap: 18px;
+}
+
+body.console-redesign-v4 .page-route-executions .execution-status-stack {
+  gap: 8px;
+}
+
+body.console-redesign-v4 .page-route-executions .fraction-progress {
+  display: grid;
+  gap: 6px;
+}
+
+body.console-redesign-v4 .page-route-executions .fraction-progress-meta {
+  color: #90a6c0;
+  font-size: 0.78rem;
+}
+
+body.console-redesign-v4 .page-route-executions .lag-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #dcb572;
+  font-size: 0.76rem;
+}
+
+body.console-redesign-v4 .actions-page .actions-workspace {
+  border: 1px solid rgba(121, 145, 175, 0.14);
+  border-radius: 20px;
+  overflow: hidden;
+  background: rgba(7, 14, 23, 0.3);
+}
+
+body.console-redesign-v4 .actions-page .actions-sidebar-pane,
+body.console-redesign-v4 .actions-page .actions-main-pane {
+  padding: 18px;
+}
+
+body.console-redesign-v4 .actions-page .actions-sidebar-pane {
+  background: linear-gradient(180deg, rgba(11, 21, 35, 0.96), rgba(9, 18, 30, 0.985));
+  border-right: 1px solid rgba(121, 145, 175, 0.14);
+}
+
+body.console-redesign-v4 .actions-page .actions-console-grid,
+body.console-redesign-v4 .actions-page .actions-docs-grid {
+  gap: 20px;
+}
+
+body.console-redesign-v4 .actions-page .actions-field-block,
+body.console-redesign-v4 .actions-page .actions-help-item,
+body.console-redesign-v4 .actions-page .list-item.readable,
+body.console-redesign-v4 .global-shell-page .list-item.readable {
+  border-radius: 14px;
+  border: 1px solid rgba(121, 145, 175, 0.12);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+body.console-redesign-v4 .actions-page .selection-chip {
+  border-color: rgba(74, 133, 214, 0.22);
+  background: rgba(74, 133, 214, 0.08);
+}
+
+body.console-redesign-v4 .actions-page .actions-inline-status {
+  border-radius: 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(121, 145, 175, 0.16);
+}
+
+body.console-redesign-v4 .actions-page .code-block,
+body.console-redesign-v4 .global-shell-page .code-block {
+  border-radius: 16px;
+  border: 1px solid rgba(121, 145, 175, 0.16);
+  background: rgba(7, 14, 24, 0.98);
+}
+
+body.console-redesign-v4 .global-shell-page .split-view {
+  grid-template-columns: minmax(400px, 500px) minmax(0, 1fr);
+  gap: 20px;
+}
+
+body.console-redesign-v4 .global-shell-page .split-view > .card:first-child {
+  background:
+    linear-gradient(180deg, rgba(13, 24, 39, 0.97), rgba(10, 19, 31, 0.985)),
+    radial-gradient(360px 160px at 0% 0%, rgba(74, 133, 214, 0.08), transparent 76%);
+}
+
+body.console-redesign-v4 .global-shell-page .table-scroll.h-36vh {
+  max-height: min(42vh, 520px);
+}
+
+body.console-redesign-v4 .global-shell-page .list-scroll.h-240 {
+  max-height: min(34vh, 360px);
+}
+
+body.console-redesign-v4 .page-route-agents .grid-2,
+body.console-redesign-v4 .page-route-governance .grid-2,
+body.console-redesign-v4 .page-route-org-admin .grid-2,
+body.console-redesign-v4 .page-route-cases .grid-2 {
+  gap: 20px;
+  align-items: start;
+}
+
+body.console-redesign-v4 .page-route-agents .grid-4,
+body.console-redesign-v4 .page-route-analytics .grid-4 {
+  gap: 14px;
+}
+
+body.console-redesign-v4 .page-route-agents .table-scroll,
+body.console-redesign-v4 .page-route-cases .table-scroll,
+body.console-redesign-v4 .page-route-approvals .table-scroll,
+body.console-redesign-v4 .page-route-analytics .table-scroll,
+body.console-redesign-v4 .page-route-playbooks .table-scroll,
+body.console-redesign-v4 .page-route-governance .table-scroll,
+body.console-redesign-v4 .page-route-org-admin .table-scroll {
+  max-height: min(58vh, 720px);
+}
+
+body.console-redesign-v4 .page-route-approvals .stat-card,
+body.console-redesign-v4 .page-route-governance .stat-card,
+body.console-redesign-v4 .page-route-org-admin .stat-card,
+body.console-redesign-v4 .page-route-analytics .stat-card {
+  min-height: 128px;
+}
+
+body.console-redesign-v4 .table tbody tr.selected,
+body.console-redesign-v4 table tbody tr.selected {
+  background: rgba(74, 133, 214, 0.12);
+}
+
+body.console-redesign-v4 .list-item.split,
+body.console-redesign-v4 .kv-row,
+body.console-redesign-v4 .meta-line {
+  color: #9ab0c9;
+}
+
+body.console-redesign-v4 .kv-value,
+body.console-redesign-v4 .list-item strong,
+body.console-redesign-v4 .actions-row-name {
+  color: #edf4ff;
+}
+
+body.console-redesign-v4 .empty-state {
+  color: #a5b9d0;
+}
+
+@media (max-width: 1380px) {
+  body.console-redesign-v4 .page-route-dashboard .mission-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  body.console-redesign-v4 .global-shell-page .split-view,
+  body.console-redesign-v4 .actions-page .actions-console-grid,
+  body.console-redesign-v4 .actions-page .actions-docs-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 920px) {
+  body.console-redesign-v4 .page-route-dashboard .mission-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  body.console-redesign-v4 .actions-page .actions-workspace {
+    border-radius: 18px;
+  }
+
+  body.console-redesign-v4 .actions-page .actions-sidebar-pane,
+  body.console-redesign-v4 .actions-page .actions-main-pane {
+    padding: 14px;
   }
 }

@@ -1183,3 +1183,219 @@ body.console-redesign-v4 .empty-state {
     padding: 14px;
   }
 }
+
+body.console-redesign-v4 .stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+body.console-redesign-v4 .stat-card {
+  min-height: 132px;
+  justify-content: flex-start;
+  border-radius: 18px;
+  border: 1px solid rgba(121, 145, 175, 0.16);
+  background:
+    linear-gradient(180deg, rgba(15, 27, 44, 0.96), rgba(11, 20, 33, 0.985)),
+    radial-gradient(220px 100px at 0% 0%, rgba(74, 133, 214, 0.06), transparent 72%);
+  box-shadow: 0 14px 28px rgba(2, 8, 16, 0.16);
+}
+
+body.console-redesign-v4 .stat-card::after {
+  left: 16px;
+  right: 16px;
+  height: 1px;
+  opacity: 0.8;
+  background: linear-gradient(90deg, rgba(74, 133, 214, 0.72), rgba(30, 154, 120, 0.42), transparent 76%);
+}
+
+body.console-redesign-v4 .stat-sub {
+  color: #94a9c3;
+}
+
+body.console-redesign-v4 .chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(121, 145, 175, 0.16);
+  background: rgba(255, 255, 255, 0.025);
+  color: #c5d5e7;
+  font-weight: 600;
+}
+
+body.console-redesign-v4 .btn.success,
+body.console-redesign-v4 .btn.danger {
+  min-height: 38px;
+  border-radius: 14px;
+  font-weight: 700;
+}
+
+body.console-redesign-v4 .btn.success {
+  background: rgba(25, 122, 95, 0.18);
+  border-color: rgba(33, 162, 126, 0.26);
+  color: #dff9f0;
+}
+
+body.console-redesign-v4 .btn.danger {
+  background: rgba(138, 54, 54, 0.18);
+  border-color: rgba(198, 86, 86, 0.26);
+  color: #ffe7e7;
+}
+
+body.console-redesign-v4 .list-item {
+  border-radius: 14px;
+  border: 1px solid rgba(121, 145, 175, 0.12);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+body.console-redesign-v4 .list-item.clickable:hover,
+body.console-redesign-v4 button.list-item:hover {
+  background: rgba(74, 133, 214, 0.08);
+  border-color: rgba(74, 133, 214, 0.22);
+}
+
+body.console-redesign-v4 .trend-wrap {
+  border-radius: 18px;
+  border-color: rgba(121, 145, 175, 0.14);
+  background: linear-gradient(180deg, rgba(15, 27, 44, 0.94), rgba(10, 19, 31, 0.98));
+}
+
+body.console-redesign-v4 .table.readable th,
+body.console-redesign-v4 .table.readable td {
+  font-size: 0.88rem;
+}
+
+body.console-redesign-v4 .table.compact th,
+body.console-redesign-v4 .table.compact td,
+body.console-redesign-v4 .table.readable.compact th,
+body.console-redesign-v4 .table.readable.compact td {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+body.console-redesign-v4 .table-scroll {
+  border-radius: 16px;
+  border: 1px solid rgba(121, 145, 175, 0.1);
+  background: rgba(7, 14, 24, 0.18);
+}
+
+body.console-redesign-v4 .table-scroll .table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+body.console-redesign-v4 .page-route-approvals .page-actions,
+body.console-redesign-v4 .page-route-scheduler .page-actions,
+body.console-redesign-v4 .page-route-audit .page-actions,
+body.console-redesign-v4 .page-route-analytics .page-actions {
+  gap: 10px;
+}
+
+body.console-redesign-v4 .page-route-approvals .table td:last-child .page-actions,
+body.console-redesign-v4 .page-route-scheduler .table td:last-child .page-actions {
+  flex-wrap: nowrap;
+}
+
+body.console-redesign-v4 .page-route-approvals .table td:last-child .btn,
+body.console-redesign-v4 .page-route-scheduler .table td:last-child .btn {
+  min-width: 96px;
+}
+
+body.console-redesign-v4 .page-route-approvals .card,
+body.console-redesign-v4 .page-route-scheduler .card,
+body.console-redesign-v4 .page-route-audit .card,
+body.console-redesign-v4 .page-route-analytics .card,
+body.console-redesign-v4 .page-route-governance .card,
+body.console-redesign-v4 .page-route-org-admin .card,
+body.console-redesign-v4 .page-route-playbooks .card,
+body.console-redesign-v4 .page-route-cases .card,
+body.console-redesign-v4 .page-route-agents .card {
+  padding: 18px;
+}
+
+body.console-redesign-v4 .page-route-audit > .card:first-of-type .page-actions,
+body.console-redesign-v4 .page-route-analytics .card .page-actions.mb-12,
+body.console-redesign-v4 .page-route-scheduler .card .page-actions,
+body.console-redesign-v4 .page-route-governance .card .page-actions,
+body.console-redesign-v4 .page-route-org-admin .card .page-actions {
+  align-items: center;
+}
+
+body.console-redesign-v4 .page-route-audit > .card:first-of-type,
+body.console-redesign-v4 .page-route-scheduler > .card:first-of-type,
+body.console-redesign-v4 .page-route-analytics .grid-2 > .card:first-child,
+body.console-redesign-v4 .page-route-governance > .card:first-of-type,
+body.console-redesign-v4 .page-route-org-admin > .card:first-of-type {
+  background:
+    linear-gradient(180deg, rgba(14, 26, 42, 0.96), rgba(10, 19, 32, 0.98)),
+    radial-gradient(420px 200px at 0% 0%, rgba(74, 133, 214, 0.07), transparent 72%);
+}
+
+body.console-redesign-v4 .page-route-analytics .trend-wrap svg rect {
+  fill: rgba(18, 31, 48, 0.94);
+  stroke: rgba(121, 145, 175, 0.16);
+}
+
+body.console-redesign-v4 .page-route-analytics .trend-wrap svg polyline {
+  filter: drop-shadow(0 0 8px rgba(74, 133, 214, 0.18));
+}
+
+body.console-redesign-v4 .page-route-analytics .grid-2,
+body.console-redesign-v4 .page-route-analytics .grid-3,
+body.console-redesign-v4 .page-route-approvals .stat-grid,
+body.console-redesign-v4 .page-route-audit .stat-grid,
+body.console-redesign-v4 .page-route-scheduler .stat-grid {
+  gap: 16px;
+}
+
+body.console-redesign-v4 .page-route-audit .table td:nth-child(5),
+body.console-redesign-v4 .page-route-approvals .table td:nth-child(7) {
+  max-width: 320px;
+}
+
+body.console-redesign-v4 .page-route-audit .table td:nth-child(5),
+body.console-redesign-v4 .page-route-approvals .table td:nth-child(7),
+body.console-redesign-v4 .page-route-scheduler .table td:nth-child(5),
+body.console-redesign-v4 .page-route-cases .table td,
+body.console-redesign-v4 .page-route-playbooks .table td,
+body.console-redesign-v4 .page-route-org-admin .table td {
+  overflow-wrap: anywhere;
+}
+
+body.console-redesign-v4 .page-route-scheduler .grid-3 > label.list-item,
+body.console-redesign-v4 .page-route-governance .list-item,
+body.console-redesign-v4 .page-route-org-admin .list-item {
+  padding: 14px;
+}
+
+body.console-redesign-v4 .page-route-governance textarea.input,
+body.console-redesign-v4 .page-route-org-admin textarea.input,
+body.console-redesign-v4 .page-route-playbooks textarea.input {
+  min-height: 120px;
+}
+
+body.console-redesign-v4 .page-route-analytics .empty-state,
+body.console-redesign-v4 .page-route-approvals .empty-state,
+body.console-redesign-v4 .page-route-audit .empty-state,
+body.console-redesign-v4 .page-route-scheduler .empty-state {
+  padding: 20px;
+}
+
+@media (max-width: 1380px) {
+  body.console-redesign-v4 .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 920px) {
+  body.console-redesign-v4 .stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  body.console-redesign-v4 .page-route-approvals .table td:last-child .page-actions,
+  body.console-redesign-v4 .page-route-scheduler .table td:last-child .page-actions {
+    flex-wrap: wrap;
+  }
+}

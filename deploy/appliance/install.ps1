@@ -281,9 +281,23 @@ function Remove-ProjectContainers {
   param([string]$ProjectName)
   $containerIds = @(Get-ProjectContainerIds -ProjectName $ProjectName -IncludeAll)
   foreach ($containerId in $containerIds) {
-    & docker rm -f $containerId 1>$null 2>$null
+    try {
+      & docker rm -f $containerId 1>$null 2>$null
+    } catch {
+      $msg = $_.Exception.Message
+      if ($msg -notmatch '(?i)No such container') {
+        throw
+      }
+    }
   }
-  & docker network rm "$ProjectName`_default" 1>$null 2>$null
+  try {
+    & docker network rm "$ProjectName`_default" 1>$null 2>$null
+  } catch {
+    $msg = $_.Exception.Message
+    if ($msg -notmatch '(?i)No such network') {
+      throw
+    }
+  }
 }
 
 function Prepare-ComposeProjectForUp {
@@ -403,7 +417,7 @@ function Show-ComposeDiagnostics {
   Write-Host "---- project containers ----" -ForegroundColor Yellow
   & docker ps -a `
     --filter "label=com.docker.compose.project=$script:composeProjectName" `
-    --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Label "com.docker.compose.service"}}'
+    --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}'
 
   $deadContainers = @(Get-DeadProjectContainers -ProjectName $script:composeProjectName)
   if ($deadContainers.Count -gt 0) {

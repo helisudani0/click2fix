@@ -188,7 +188,13 @@ $content = $content -replace '^C2F_IMAGE_TAG=.*$', "C2F_IMAGE_TAG=$ImageTag"
 $content = $content -replace '^C2F_SKIP_PULL=.*$', "C2F_SKIP_PULL=false"
 Set-Content -Path $envFile -Value $content
 
-Compress-Archive -Path "$bundleDir/*" -DestinationPath $zipFile -CompressionLevel Optimal -Force
+$zipItems = Get-ChildItem -LiteralPath $bundleDir -Force | ForEach-Object { $_.Name }
+Push-Location $bundleDir
+try {
+  Compress-Archive -Path $zipItems -DestinationPath $zipFile -CompressionLevel Optimal -Force
+} finally {
+  Pop-Location
+}
 
 $hash = Get-FileHash -Path $zipFile -Algorithm SHA256
 "$($hash.Hash.ToLower())  $(Split-Path $zipFile -Leaf)" | Set-Content -Path $shaFile

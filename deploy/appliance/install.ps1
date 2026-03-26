@@ -254,6 +254,15 @@ function Assert-NoDeadProjectContainers {
   $deadContainers = @(Get-DeadProjectContainers -ProjectName $ProjectName)
   if ($deadContainers.Count -eq 0) { return }
 
+  Write-Host "Detected stale Click2Fix containers in Docker 'Dead' state. Attempting automatic project cleanup..." -ForegroundColor Yellow
+  Remove-ProjectContainers -ProjectName $ProjectName
+  Start-Sleep -Seconds 2
+  $deadContainers = @(Get-DeadProjectContainers -ProjectName $ProjectName)
+  if ($deadContainers.Count -eq 0) {
+    Write-Host "Recovered stale project container state." -ForegroundColor Yellow
+    return
+  }
+
   $affected = @(
     $deadContainers |
       ForEach-Object {
@@ -265,7 +274,7 @@ function Assert-NoDeadProjectContainers {
       Sort-Object -Unique
   )
   $affectedText = if ($affected.Count -gt 0) { $affected -join ", " } else { "unknown services" }
-  throw "Docker has stale Click2Fix containers in the 'Dead' state for project '$ProjectName' ($affectedText). Restart Docker Desktop to clear the orphaned container metadata, then rerun setup. Named volumes such as the Click2Fix database volume are preserved by a Docker restart."
+  throw "Docker has stale Click2Fix containers in the 'Dead' state for project '$ProjectName' ($affectedText). Automatic cleanup was attempted but Docker still reports orphaned container metadata. Restart Docker Desktop to clear it, then rerun setup. Named volumes such as the Click2Fix database volume are preserved by a Docker restart."
 }
 
 function Remove-ProjectContainers {

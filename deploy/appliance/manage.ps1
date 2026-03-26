@@ -207,22 +207,26 @@ function Get-ProjectContainerIds {
 function Remove-ProjectContainers {
   param([string]$ProjectName)
   $containerIds = @(Get-ProjectContainerIds -ProjectName $ProjectName -IncludeAll)
-  foreach ($containerId in $containerIds) {
-    try {
-      & docker rm -f $containerId 1>$null 2>$null
-    } catch {
-      $msg = $_.Exception.Message
-      if ($msg -notmatch '(?i)No such container') {
-        throw
-      }
-    }
-  }
+  $previousErrorAction = $ErrorActionPreference
+  $nativePreferenceFound = $false
+  $previousNativePreference = $null
   try {
-    & docker network rm "$ProjectName`_default" 1>$null 2>$null
-  } catch {
-    $msg = $_.Exception.Message
-    if ($msg -notmatch '(?i)No such network') {
-      throw
+    $ErrorActionPreference = "Continue"
+    $nativePreferenceVar = Get-Variable -Name "PSNativeCommandUseErrorActionPreference" -Scope Global -ErrorAction SilentlyContinue
+    if ($null -ne $nativePreferenceVar) {
+      $nativePreferenceFound = $true
+      $previousNativePreference = $global:PSNativeCommandUseErrorActionPreference
+      $global:PSNativeCommandUseErrorActionPreference = $false
+    }
+
+    foreach ($containerId in $containerIds) {
+      & docker rm -f $containerId 1>$null 2>$null | Out-Null
+    }
+    & docker network rm "$ProjectName`_default" 1>$null 2>$null | Out-Null
+  } finally {
+    $ErrorActionPreference = $previousErrorAction
+    if ($nativePreferenceFound) {
+      $global:PSNativeCommandUseErrorActionPreference = $previousNativePreference
     }
   }
 }

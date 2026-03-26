@@ -99,9 +99,28 @@ jobs:
         shell: bash
         run: |
           docker run --rm \
+            -e DATABASE_URL="sqlite:////tmp/click2fix-smoke.db" \
+            -e JWT_SECRET="click2fix-smoke-secret-value-0123456789abcdef" \
+            -e WAZUH_URL="https://wazuh.example.invalid" \
+            -e WAZUH_USER="smoke-user" \
+            -e WAZUH_PASSWORD="smoke-password" \
+            -e INDEXER_URL="https://indexer.example.invalid" \
+            -e INDEXER_USER="smoke-user" \
+            -e INDEXER_PASSWORD="smoke-password" \
+            -e C2F_AGENT_MANAGER_URL="http://agent-manager.example.invalid" \
+            -e C2F_AGENT_MANAGER_CONTROL_TOKEN="smoke-agent-manager-token" \
+            -e C2F_AGENT_MANAGER_BOOTSTRAP_TOKEN="smoke-agent-bootstrap-token" \
+            -e C2F_ENROLLMENT_BOOTSTRAP_TOKEN="smoke-enrollment-token" \
+            -e C2F_EVENT_INDEXER_URL="http://event-indexer.example.invalid" \
+            -e C2F_EVENT_INDEXER_TOKEN="smoke-event-indexer-token" \
+            -e C2F_INGEST_GATEWAY_URL="http://ingest-gateway.example.invalid" \
+            -e C2F_INGEST_GATEWAY_TOKEN="smoke-ingest-token" \
+            -e C2F_SOAR_SERVICE_URL="http://soar-service.example.invalid" \
+            -e C2F_SOAR_SERVICE_TOKEN="smoke-soar-token" \
+            -e C2F_AUDIT_HMAC_SECRET="smoke-audit-hmac-secret" \
             --entrypoint python \
             click2fix-backend-smoke:${{ steps.meta.outputs.clean }} \
-            /app/tools/backend_import_smoke.py
+            -c "import importlib; importlib.import_module('main'); print('backend import smoke passed')"
 
       - name: Build and push backend image
         id: backend_build

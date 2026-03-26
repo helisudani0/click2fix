@@ -527,9 +527,17 @@ if (To-Bool $skipPull) {
   Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", "postgres:$postgresImageTag") -FailureMessage "Postgres image not found locally: postgres:$postgresImageTag."
   Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", "$backendImage`:$imageTag") -FailureMessage "Backend image not found locally: $backendImage`:$imageTag."
   Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", "$frontendImage`:$imageTag") -FailureMessage "Frontend image not found locally: $frontendImage`:$imageTag."
-  } else {
+} else {
+  Write-Host "Pulling configured images..."
+  $requiredImages = @(
+    "postgres:$postgresImageTag",
+    "$backendImage`:$imageTag",
+    "$frontendImage`:$imageTag"
+  )
   try {
-    Invoke-ComposeChecked -Arguments @("pull") -FailureMessage "Image pull failed."
+    foreach ($image in $requiredImages) {
+      Invoke-NativeChecked -FilePath "docker" -Arguments @("pull", $image) -FailureMessage "Image pull failed for $image."
+    }
   } catch {
     $detail = $_.Exception.Message
     if ($detail -match "unauthorized|denied|authentication") {

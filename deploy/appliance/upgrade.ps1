@@ -502,7 +502,14 @@ if ($skipPull) {
   }
 } else {
   Write-Host "Pulling configured images..."
-  Invoke-ComposeChecked -Arguments @("pull") -FailureMessage "Failed to pull images."
+  $requiredImages = @(
+    "postgres:$postgresImageTag",
+    "$backendImage`:$imageTag",
+    "$frontendImage`:$imageTag"
+  )
+  foreach ($image in $requiredImages) {
+    Invoke-NativeChecked -FilePath "docker" -Arguments @("pull", $image) -FailureMessage "Failed to pull image: $image."
+  }
 }
 
 Write-Host "Applying upgrade..."

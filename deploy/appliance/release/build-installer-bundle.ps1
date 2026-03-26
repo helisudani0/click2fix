@@ -181,6 +181,9 @@ foreach ($file in $applianceFiles) {
 }
 
 $envFile = Join-Path $bundleDir ".env.appliance.template"
+if (-not (Test-Path -LiteralPath $envFile)) {
+  throw "Expected env template missing after export: $envFile"
+}
 $content = Get-Content -Path $envFile
 $content = $content -replace '^C2F_BACKEND_IMAGE=.*$', "C2F_BACKEND_IMAGE=$BackendImage"
 $content = $content -replace '^C2F_FRONTEND_IMAGE=.*$', "C2F_FRONTEND_IMAGE=$FrontendImage"
@@ -188,12 +191,33 @@ $content = $content -replace '^C2F_IMAGE_TAG=.*$', "C2F_IMAGE_TAG=$ImageTag"
 $content = $content -replace '^C2F_SKIP_PULL=.*$', "C2F_SKIP_PULL=false"
 Set-Content -Path $envFile -Value $content
 
-$zipItems = Get-ChildItem -LiteralPath $bundleDir -Force | ForEach-Object { $_.Name }
-Push-Location $bundleDir
+# Compress-Archive on PowerShell/Linux can fail to resolve dotfiles (for example
+# .env.appliance.template). Build the zip via .NET APIs so hidden files are
+# always included consistently across Windows/Linux runners.
+if (Test-Path -LiteralPath $zipFile) {
+  Remove-Item -Path $zipFile -Force
+}
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$zipArchive = [System.IO.Compression.ZipFile]::Open(
+  $zipFile,
+  [System.IO.Compression.ZipArchiveMode]::Create
+)
 try {
-  Compress-Archive -Path $zipItems -DestinationPath $zipFile -CompressionLevel Optimal -Force
+  $bundleFiles = Get-ChildItem -LiteralPath $bundleDir -Recurse -Force -File
+  $bundleRoot = (Resolve-Path -LiteralPath $bundleDir).Path.TrimEnd('\', '/')
+  foreach ($file in $bundleFiles) {
+    $fullPath = (Resolve-Path -LiteralPath $file.FullName).Path
+    $entryName = $fullPath.Substring($bundleRoot.Length).TrimStart('\', '/').Replace('\', '/')
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+      $zipArchive,
+      $file.FullName,
+      $entryName,
+      [System.IO.Compression.CompressionLevel]::Optimal
+    ) | Out-Null
+  }
 } finally {
-  Pop-Location
+  $zipArchive.Dispose()
 }
 
 $hash = Get-FileHash -Path $zipFile -Algorithm SHA256

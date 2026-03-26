@@ -19,6 +19,11 @@ on:
 permissions:
   contents: write
   packages: write
+  attestations: write
+  id-token: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   release:
@@ -59,36 +64,115 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push backend image
+      - name: Compute image tags
+        id: image_tags
+        run: |
+          {
+            echo "backend<<EOF"
+            echo "${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}"
+            if [ "${{ steps.meta.outputs.publish_latest }}" = "true" ]; then
+              echo "${{ steps.meta.outputs.backend_image }}:latest"
+            fi
+            echo "EOF"
+            echo "frontend<<EOF"
+            echo "${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}"
+            if [ "${{ steps.meta.outputs.publish_latest }}" = "true" ]; then
+              echo "${{ steps.meta.outputs.frontend_image }}:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create release output directory
         shell: bash
         run: |
-          docker build -f docker/backend.Dockerfile -t "${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}" .
-          docker push "${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}"
-          if [ "${{ steps.meta.outputs.publish_latest }}" = "true" ]; then
-            docker tag "${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}" "${{ steps.meta.outputs.backend_image }}:latest"
-            docker push "${{ steps.meta.outputs.backend_image }}:latest"
-          fi
+          mkdir -p "deploy/releases/${{ steps.meta.outputs.version }}"
+
+      - name: Build backend smoke image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/backend.Dockerfile
+          load: true
+          tags: click2fix-backend-smoke:${{ steps.meta.outputs.clean }}
+
+      - name: Smoke test backend image imports
+        shell: bash
+        run: |
+          docker run --rm \
+            --entrypoint python \
+            click2fix-backend-smoke:${{ steps.meta.outputs.clean }} \
+            /app/tools/backend_import_smoke.py
+
+      - name: Build and push backend image
+        id: backend_build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/backend.Dockerfile
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ steps.image_tags.outputs.backend }}
+
+      - name: Attest backend image provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ steps.meta.outputs.backend_image }}
+          subject-digest: ${{ steps.backend_build.outputs.digest }}
+          push-to-registry: true
 
       - name: Build and push frontend image
-        shell: bash
-        run: |
-          docker build -f docker/frontend.Dockerfile -t "${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}" .
-          docker push "${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}"
-          if [ "${{ steps.meta.outputs.publish_latest }}" = "true" ]; then
-            docker tag "${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}" "${{ steps.meta.outputs.frontend_image }}:latest"
-            docker push "${{ steps.meta.outputs.frontend_image }}:latest"
-          fi
+        id: frontend_build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/frontend.Dockerfile
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ steps.image_tags.outputs.frontend }}
+
+      - name: Attest frontend image provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ steps.meta.outputs.frontend_image }}
+          subject-digest: ${{ steps.frontend_build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate backend image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}
+          format: spdx-json
+          output-file: deploy/releases/${{ steps.meta.outputs.version }}/backend-image.spdx.json
+          artifact-name: backend-image-sbom
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate frontend image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}
+          format: spdx-json
+          output-file: deploy/releases/${{ steps.meta.outputs.version }}/frontend-image.spdx.json
+          artifact-name: frontend-image-sbom
+          upload-artifact: false
+          upload-release-assets: false
 
       - name: Build installer bundle
-        shell: bash
+        shell: pwsh
         run: |
-          chmod +x deploy/appliance/release/build-installer-bundle.sh
-          deploy/appliance/release/build-installer-bundle.sh \
-            "${{ steps.meta.outputs.version }}" \
-            "${{ steps.meta.outputs.owner_lc }}" \
-            "${{ steps.meta.outputs.backend_image }}" \
-            "${{ steps.meta.outputs.frontend_image }}" \
-            "${{ steps.meta.outputs.clean }}"
+          ./deploy/appliance/release/build-installer-bundle.ps1 `
+            -Version "${{ steps.meta.outputs.version }}" `
+            -Owner "${{ steps.meta.outputs.owner_lc }}" `
+            -BackendImage "${{ steps.meta.outputs.backend_image }}" `
+            -FrontendImage "${{ steps.meta.outputs.frontend_image }}" `
+            -ImageTag "${{ steps.meta.outputs.clean }}"
+
+      - name: Attest installer bundle
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: deploy/releases/${{ steps.meta.outputs.version }}/click2fix-appliance-installer-${{ steps.meta.outputs.version }}.zip
 
       - name: Prepare release notes
         id: notes
@@ -105,6 +189,11 @@ jobs:
           Published images:
           - ${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}
           - ${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}
+
+          Supply-chain evidence:
+          - backend-image.spdx.json
+          - frontend-image.spdx.json
+          - GitHub provenance attestations published for backend image, frontend image, and installer bundle
 
           Quick install:
           1. Download installer zip from this release.
@@ -123,3 +212,5 @@ jobs:
           files: |
             deploy/releases/${{ steps.meta.outputs.version }}/click2fix-appliance-installer-${{ steps.meta.outputs.version }}.zip
             deploy/releases/${{ steps.meta.outputs.version }}/click2fix-appliance-installer-${{ steps.meta.outputs.version }}.sha256
+            deploy/releases/${{ steps.meta.outputs.version }}/backend-image.spdx.json
+            deploy/releases/${{ steps.meta.outputs.version }}/frontend-image.spdx.json

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any, Dict
 
 import requests
@@ -10,6 +11,8 @@ import requests
 _DEFAULT_PROVIDER = "openai"
 _DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 _DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
+_DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+_DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 
 def _text(value: Any) -> str:
@@ -84,12 +87,83 @@ def _extract_message_text(node: Dict[str, Any]) -> str:
     return ""
 
 
+def _extract_gemini_text(node: Dict[str, Any]) -> str:
+    candidates = node.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        raise AIProviderError("Provider returned no candidates")
+    content = _dict(candidates[0].get("content"))
+    parts = content.get("parts")
+    if not isinstance(parts, list):
+        return ""
+    out = []
+    for item in parts:
+        if not isinstance(item, dict):
+            continue
+        text = _text(item.get("text"))
+        if text:
+            out.append(text)
+    return "\n".join(out)
+
+
+def _gemini_response_json_schema(system_prompt: str) -> Dict[str, Any] | None:
+    prompt = _text(system_prompt).lower()
+    if "keys: analysis, decision, commands" in prompt:
+        return {
+            "type": "object",
+            "properties": {
+                "commands": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "string"},
+                        },
+                        "required": ["command"],
+                        "additionalProperties": True,
+                    },
+                },
+            },
+            "required": ["commands"],
+            "additionalProperties": True,
+        }
+    if "keys: analysis, next" in prompt:
+        return {
+            "type": "object",
+            "properties": {
+                "next": {
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string"},
+                    },
+                    "required": ["command"],
+                    "additionalProperties": True,
+                },
+            },
+            "required": ["next"],
+            "additionalProperties": True,
+        }
+    return None
+
+
 def _clean_base_url(base_url: str) -> str:
     return _text(base_url).rstrip("/")
 
 
 class AIProviderError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retryable: bool = False,
+        retry_after_seconds: float | None = None,
+        response_format_unsupported: bool = False,
+    ):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retryable = bool(retryable)
+        self.retry_after_seconds = retry_after_seconds
+        self.response_format_unsupported = bool(response_format_unsupported)
 
 
 class BaseAIProvider:
@@ -119,23 +193,232 @@ class _OpenAICompatibleProvider(BaseAIProvider):
             headers["Authorization"] = f"Bearer {self.api_key}"
         return headers
 
-    def _request_json(self, *, system_prompt: str, user_payload: Dict[str, Any], force_retry_warning: bool) -> Dict[str, Any]:
-        prompt = system_prompt
-        if force_retry_warning:
-            prompt = f"{prompt}\nPrevious answer was invalid JSON. Respond with exactly one JSON object."
-        body = {
+    def _build_body(
+        self,
+        *,
+        system_prompt: str,
+        user_payload: Dict[str, Any],
+        use_json_response_format: bool,
+    ) -> Dict[str, Any]:
+        body: Dict[str, Any] = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": prompt},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(user_payload, default=str)},
             ],
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
-            "response_format": {"type": "json_object"},
         }
+        if use_json_response_format:
+            body["response_format"] = {"type": "json_object"}
+        return body
+
+    @staticmethod
+    def _parse_retry_after_seconds(resp: requests.Response) -> float | None:
+        retry_after = _text(resp.headers.get("Retry-After"))
+        if not retry_after:
+            return None
+        try:
+            parsed = float(retry_after)
+            if parsed < 0:
+                return None
+            return parsed
+        except Exception:
+            return None
+
+    def _raise_http_error(self, resp: requests.Response) -> None:
+        status = int(resp.status_code or 0)
+        msg = _text(resp.text)[:500]
+        lower = msg.lower()
+        try:
+            node = _dict(resp.json())
+            err = _dict(node.get("error"))
+            detail = _text(err.get("message")) or _text(err.get("detail")) or msg
+            msg = detail[:500]
+            lower = msg.lower()
+        except Exception:
+            pass
+
+        response_format_unsupported = bool(
+            status == 400
+            and "response_format" in lower
+            and any(token in lower for token in ("unsupported", "not support", "not allowed", "invalid"))
+        )
+        retryable = bool(status in {408, 429} or status >= 500)
+        retry_after_seconds = self._parse_retry_after_seconds(resp) if retryable else None
+
+        if status == 401:
+            extra = "authentication failed; verify API key"
+        elif status == 403:
+            extra = "request forbidden for this key/account"
+        elif status == 404 and "model" in lower:
+            extra = f"model '{self.model}' is unavailable for this key; set C2F_LLM_MODEL to an allowed model"
+        elif status == 429:
+            extra = "rate limit or quota exceeded for the supplied key"
+        else:
+            extra = ""
+        suffix = f"; {extra}" if extra else ""
+        raise AIProviderError(
+            f"{self.provider_name} error {status}: {msg}{suffix}",
+            status_code=status,
+            retryable=retryable,
+            retry_after_seconds=retry_after_seconds,
+            response_format_unsupported=response_format_unsupported,
+        )
+
+    def _request_json(
+        self,
+        *,
+        system_prompt: str,
+        user_payload: Dict[str, Any],
+        force_retry_warning: bool,
+        use_json_response_format: bool,
+    ) -> Dict[str, Any]:
+        prompt = system_prompt
+        if force_retry_warning:
+            prompt = f"{prompt}\nPrevious answer was invalid JSON. Respond with exactly one JSON object."
+        body = self._build_body(
+            system_prompt=prompt,
+            user_payload=user_payload,
+            use_json_response_format=use_json_response_format,
+        )
         url = f"{self.base_url}/chat/completions"
         try:
             resp = self.session.post(url, headers=self._headers(), json=body, timeout=self.timeout_seconds)
+        except requests.exceptions.ConnectionError as exc:
+            raise AIProviderError(
+                f"{self.provider_name} is unreachable at {self.base_url}; verify service and network access",
+                retryable=True,
+            ) from exc
+        except requests.exceptions.Timeout as exc:
+            raise AIProviderError(
+                f"{self.provider_name} request timed out after {self.timeout_seconds}s",
+                retryable=True,
+            ) from exc
+        except Exception as exc:
+            raise AIProviderError(f"{self.provider_name} request failed: {exc}") from exc
+        if resp.status_code >= 400:
+            self._raise_http_error(resp)
+        try:
+            return _dict(resp.json())
+        except Exception as exc:
+            raise AIProviderError(f"{self.provider_name} returned non-JSON response") from exc
+
+    def ask_json(self, system_prompt: str, user_payload: dict) -> dict:
+        payload = _dict(user_payload)
+        if not isinstance(user_payload, dict):
+            raise AIProviderError("user_payload must be a JSON object")
+        use_json_response_format = True
+        invalid_json_attempts = 0
+        transport_attempts = 0
+        max_transport_attempts = 4
+        last_error = ""
+        while transport_attempts < max_transport_attempts:
+            force_retry_warning = invalid_json_attempts > 0
+            try:
+                node = self._request_json(
+                    system_prompt=system_prompt,
+                    user_payload=payload,
+                    force_retry_warning=force_retry_warning,
+                    use_json_response_format=use_json_response_format,
+                )
+            except AIProviderError as exc:
+                if exc.response_format_unsupported and use_json_response_format:
+                    # Some OpenAI-compatible models/providers reject response_format.
+                    # Retry once without it and rely on strict prompt + parser validation.
+                    use_json_response_format = False
+                    continue
+                if exc.retryable and transport_attempts < max_transport_attempts - 1:
+                    delay = exc.retry_after_seconds
+                    if delay is None:
+                        delay = min(8.0, float(2**transport_attempts))
+                    if delay > 0:
+                        time.sleep(delay)
+                    transport_attempts += 1
+                    continue
+                raise
+            transport_attempts += 1
+            text = _extract_message_text(node)
+            parsed = _json_from_text(text)
+            if parsed:
+                return parsed
+            invalid_json_attempts += 1
+            last_error = _text(text)[:200]
+            if invalid_json_attempts >= 2:
+                break
+        raise AIProviderError(f"{self.provider_name} returned invalid JSON after retry: {last_error}")
+
+
+class OpenAIProvider(_OpenAICompatibleProvider):
+    provider_name = "openai"
+
+    def __init__(self, config: Dict[str, Any]):
+        merged = dict(config or {})
+        merged["base_url"] = _clean_base_url(merged.get("base_url") or _DEFAULT_OPENAI_BASE_URL)
+        merged["model"] = _text(merged.get("model") or _DEFAULT_OPENAI_MODEL)
+        super().__init__(merged)
+        if not self.api_key:
+            raise AIProviderError("OpenAI provider requires api_key")
+
+
+class GeminiProvider(_OpenAICompatibleProvider):
+    provider_name = "gemini"
+
+    def __init__(self, config: Dict[str, Any]):
+        merged = dict(config or {})
+        self.base_url = _clean_base_url(merged.get("base_url") or _DEFAULT_GEMINI_BASE_URL)
+        self.model = _text(merged.get("model") or _DEFAULT_GEMINI_MODEL)
+        self.api_key = _text(merged.get("api_key"))
+        self.timeout_seconds = max(5, _to_int(merged.get("timeout_seconds"), 45))
+        self.temperature = _to_float(merged.get("temperature"), 0.1)
+        self.max_tokens = max(300, _to_int(merged.get("max_tokens"), 1800))
+        self.session = requests.Session()
+        if not self.base_url:
+            raise AIProviderError("gemini base_url is required")
+        if not self.model:
+            raise AIProviderError("gemini model is required")
+        if not self.api_key:
+            raise AIProviderError("Gemini provider requires api_key")
+
+    def _request_json(
+        self,
+        *,
+        system_prompt: str,
+        user_payload: Dict[str, Any],
+        force_retry_warning: bool,
+        use_json_response_format: bool = True,
+    ) -> Dict[str, Any]:
+        prompt = system_prompt
+        if force_retry_warning:
+            prompt = f"{prompt}\nPrevious answer was invalid JSON. Respond with exactly one JSON object."
+        body = {
+            "systemInstruction": {
+                "parts": [{"text": prompt}],
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": json.dumps(user_payload, default=str)}],
+                }
+            ],
+            "generationConfig": {
+                "temperature": self.temperature,
+                "maxOutputTokens": self.max_tokens,
+                "responseMimeType": "application/json",
+            },
+        }
+        schema = _gemini_response_json_schema(prompt)
+        if schema:
+            body["generationConfig"]["responseJsonSchema"] = schema
+        url = f"{self.base_url}/models/{self.model}:generateContent"
+        try:
+            resp = self.session.post(
+                url,
+                params={"key": self.api_key},
+                headers={"Content-Type": "application/json"},
+                json=body,
+                timeout=self.timeout_seconds,
+            )
         except requests.exceptions.ConnectionError as exc:
             raise AIProviderError(f"{self.provider_name} is unreachable at {self.base_url}; verify service and network access") from exc
         except requests.exceptions.Timeout as exc:
@@ -156,24 +439,12 @@ class _OpenAICompatibleProvider(BaseAIProvider):
         last_error = ""
         for attempt in range(2):
             node = self._request_json(system_prompt=system_prompt, user_payload=payload, force_retry_warning=attempt == 1)
-            text = _extract_message_text(node)
+            text = _extract_gemini_text(node)
             parsed = _json_from_text(text)
             if parsed:
                 return parsed
             last_error = _text(text)[:200]
         raise AIProviderError(f"{self.provider_name} returned invalid JSON after retry: {last_error}")
-
-
-class OpenAIProvider(_OpenAICompatibleProvider):
-    provider_name = "openai"
-
-    def __init__(self, config: Dict[str, Any]):
-        merged = dict(config or {})
-        merged["base_url"] = _clean_base_url(merged.get("base_url") or _DEFAULT_OPENAI_BASE_URL)
-        merged["model"] = _text(merged.get("model") or _DEFAULT_OPENAI_MODEL)
-        super().__init__(merged)
-        if not self.api_key:
-            raise AIProviderError("OpenAI provider requires api_key")
 
 
 class ProviderFactory:
@@ -183,6 +454,8 @@ class ProviderFactory:
         provider = _text(node.get("provider") or _DEFAULT_PROVIDER).lower()
         if provider == "openai":
             return OpenAIProvider(node)
+        if provider == "gemini":
+            return GeminiProvider(node)
         if provider == "ollama":
             # Local Ollama support is intentionally disabled for now and can be restored later.
             raise AIProviderError("Unsupported AI provider: ollama (temporarily disabled)")
@@ -221,9 +494,15 @@ class AIAdapter:
                 return settings_cfg.get(key)
             return default
 
-        provider = _text(pick("provider", "C2F_LLM_PROVIDER", _DEFAULT_PROVIDER)).lower()
-        default_base = _DEFAULT_OPENAI_BASE_URL
-        default_model = _DEFAULT_OPENAI_MODEL
+        provider = _text(pick("provider", "C2F_LLM_PROVIDER", _DEFAULT_PROVIDER)).lower() or _DEFAULT_PROVIDER
+        provider_defaults = {
+            "openai": (_DEFAULT_OPENAI_BASE_URL, _DEFAULT_OPENAI_MODEL),
+            "gemini": (_DEFAULT_GEMINI_BASE_URL, _DEFAULT_GEMINI_MODEL),
+        }
+        default_base, default_model = provider_defaults.get(
+            provider,
+            (_DEFAULT_OPENAI_BASE_URL, _DEFAULT_OPENAI_MODEL),
+        )
         if "api_key" in user_cfg:
             api_key = user_cfg.get("api_key")
         elif has_user_config:
@@ -236,9 +515,16 @@ class AIAdapter:
         return {
             "enabled": _to_bool(pick("enabled", "C2F_AI_REMEDIATION_ENABLED", True), True),
             "provider": provider,
-            "base_url": _text(pick("base_url", "C2F_LLM_BASE_URL", default_base)),
-            "model": _text(pick("model", "C2F_LLM_MODEL", default_model)),
-            "api_key": _text(api_key),
+            "base_url": _text(pick("base_url", "C2F_LLM_BASE_URL", default_base)) or default_base,
+            "model": _text(pick("model", "C2F_LLM_MODEL", default_model)) or default_model,
+            "api_key": _text(
+                api_key
+                or (
+                    os.getenv("OPENAI_API_KEY")
+                    if (not has_user_config and provider == "openai")
+                    else ""
+                )
+            ),
             "timeout_seconds": max(5, _to_int(pick("timeout_seconds", "C2F_LLM_TIMEOUT_SECONDS", 45), 45)),
             "temperature": _to_float(pick("temperature", "C2F_LLM_TEMPERATURE", 0.1), 0.1),
             "max_tokens": max(300, _to_int(pick("max_tokens", "C2F_LLM_MAX_TOKENS", 1800), 1800)),

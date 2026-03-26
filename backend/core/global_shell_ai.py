@@ -259,7 +259,7 @@ def assess_command_safety(command: str, *, shell: str, allow_destructive: bool =
         re.search(pat, raw, flags=re.IGNORECASE)
         for pat in (
             r"\brm\s+-rf\s+/",
-            r"\bformat\b",
+            r"\bformat(?:\.exe)?\b(?=\s+(?:[a-z]:|/))",
             r"\bdiskpart\b.*\bclean\b",
             r"\bdel\s+/[sqf].*\bc:\\",
             r"\berase\s+/[sqf].*\bc:\\",
@@ -399,6 +399,8 @@ class _Agent:
             seen.add(cmd.lower())
             row_shell = _norm_shell(row.get("shell") or normalized_shell)
             safety = enforce_command_safety(cmd, shell=row_shell, allow_destructive=allow_destructive)
+            if safety.get("blocked"):
+                continue
             candidates.append({"command": cmd, "shell": row_shell, "run_as_system": _to_bool(row.get("run_as_system"), False), "verify_kb": _text(row.get("verify_kb")), "verify_min_build": _text(row.get("verify_min_build")), "verify_stdout_contains": _text(row.get("verify_stdout_contains")), "rationale": _text(row.get("rationale")), "confidence": _text(row.get("confidence") or "medium"), "risk_score": max(_to_int(row.get("risk_score"), 0), _to_int(safety.get("risk_score"), 0)), "risk_reasons": safety.get("reasons") or [], "requires_privilege": bool(safety.get("requires_privilege")), "destructive": bool(safety.get("destructive"))})
         if not candidates:
             raise HTTPException(status_code=422, detail="LLM did not provide a usable remediation command")
@@ -446,6 +448,8 @@ class _Agent:
             return None
         row_shell = _norm_shell(nxt.get("shell") or payload["shell"])
         safety = enforce_command_safety(cmd, shell=row_shell, allow_destructive=allow_destructive)
+        if safety.get("blocked"):
+            return None
         row = {"command": cmd, "shell": row_shell, "run_as_system": _to_bool(nxt.get("run_as_system"), current_run_as_system), "verify_kb": _text(nxt.get("verify_kb")), "verify_min_build": _text(nxt.get("verify_min_build")), "verify_stdout_contains": _text(nxt.get("verify_stdout_contains")), "reason": _text(nxt.get("rationale") or _dict(out.get("analysis")).get("why_next_step")), "confidence": _text(nxt.get("confidence") or "medium"), "risk_score": max(_to_int(nxt.get("risk_score"), 0), _to_int(safety.get("risk_score"), 0)), "risk_reasons": safety.get("reasons") or []}
         self.sessions.append(
             sid,

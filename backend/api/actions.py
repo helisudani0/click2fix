@@ -42,7 +42,7 @@ _CONNECTED_STATUSES = {"active", "connected", "online"}
 _GLOBAL_SHELL_MAX_COMMAND_CHARS = 20000
 _GLOBAL_SHELL_MAX_ASSIST_ATTEMPTS = 8
 _AI_REMEDIATION_CONFIG_KEY = "ai_remediation"
-_ALLOWED_AI_PROVIDERS = {"openai"}
+_ALLOWED_AI_PROVIDERS = {"openai", "gemini"}
 
 
 def _ps_single_quoted(value: str) -> str:

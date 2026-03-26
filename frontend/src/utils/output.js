@@ -1,7 +1,7 @@
 /* eslint-disable no-control-regex */
 const ANSI_ESCAPE_RE =
-  /[\u001B\u009B](?:\][^\u0007\u001B]*(?:\u0007|\u001B\\)|[\[\]()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-PR-TZcf-nq-uy=><~])/g;
-const SPINNER_LINE_RE = /^[\s\-\\|/\^v><._]+$/;
+  /[\u001B\u009B](?:\][^\u0007\u001B]*(?:\u0007|\u001B\\)|[[][()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-PR-TZcf-nq-uy=><~])/g;
+const SPINNER_LINE_RE = /^[\s\-\\|/^v><._]+$/;
 const PROGRESS_BAR_RE = /^[\s\u2580-\u259F]+(?:\d{1,3}%|[\d.,]+\s*(KB|MB|GB)\s*\/\s*[\d.,]+\s*(KB|MB|GB))?$/i;
 
 export const normalizeOutputText = (value) =>

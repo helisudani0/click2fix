@@ -1,4 +1,4 @@
-const normalizeBase = (value) => String(value || "").trim().replace(/\/+$/, "");
+﻿const normalizeBase = (value) => String(value || "").trim().replace(/\/+$/, "");
 
 const toWsBase = (value) => {
   const normalized = normalizeBase(value);

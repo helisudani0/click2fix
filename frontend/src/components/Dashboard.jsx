@@ -269,7 +269,7 @@ export default function Dashboard() {
   const parsedCases = useMemo(() => recentCases.map((row) => caseRow(row)), [recentCases]);
   const parsedExecutions = useMemo(() => recentExecutions.map((row) => executionRow(row)), [recentExecutions]);
 
-  const safeStats = Array.isArray(stats) ? stats : [];
+  const safeStats = useMemo(() => (Array.isArray(stats) ? stats : []), [stats]);
   const totalTactics = safeStats.length;
   const totalAlerts = safeStats.reduce((acc, row) => acc + Number(row?.[1] || 0), 0);
   const managerError = integration.wazuh_manager?.error;

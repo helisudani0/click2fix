@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   createAutomationContextProfile,
   getAutomationContextProfiles,
@@ -52,7 +52,7 @@ export default function Governance() {
   const validationAlertCount = Array.isArray(validateResult?.alerts) ? validateResult.alerts.length : 0;
   const lookupAlertCount = Array.isArray(lookupResult?.alerts) ? lookupResult.alerts.length : 0;
 
-  const loadProfiles = async () => {
+  const loadProfiles = useCallback(async () => {
     try {
       const response = await getAutomationContextProfiles({
         enabled_only: enabledOnly,
@@ -63,11 +63,11 @@ export default function Governance() {
     } catch (err) {
       setStatus(err.response?.data?.detail || err.message);
     }
-  };
+  }, [enabledOnly]);
 
   useEffect(() => {
     loadProfiles();
-  }, [enabledOnly]);
+  }, [loadProfiles]);
 
   const submitProfile = async () => {
     if (!profileName.trim()) {

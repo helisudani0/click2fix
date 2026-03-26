@@ -3,7 +3,7 @@ import { Routes, Route } from "react-router-dom";
 import AppLayout from "./components/AppLayout";
 import RequireAuth from "./components/RequireAuth";
 import "./index-base.css";
-import "./styles/console-redesign-v4.css";
+import "./styles/console-overhaul-v1.css";
 
 const Dashboard = lazy(() => import("./components/Dashboard"));
 const Agents = lazy(() => import("./pages/Agents"));

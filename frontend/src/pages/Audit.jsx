@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getAudit } from "../api/wazuh";
 import RelativeTimestamp from "../components/RelativeTimestamp";
 
@@ -44,18 +44,18 @@ export default function Audit() {
     [normalizedRows],
   );
 
-  const load = () => {
+  const load = useCallback(() => {
     getAudit({
       actor: actor || undefined,
       action: action || undefined,
       entity_type: entityType || undefined,
       limit: 200
     }).then(r => setRows(r.data || []));
-  };
+  }, [actor, action, entityType]);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
   const exportAudit = (format) => {
     const params = new URLSearchParams();

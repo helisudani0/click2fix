@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   addCaseNote,
@@ -75,7 +75,7 @@ export default function Cases() {
     loadCases();
   }, []);
 
-  const loadCaseDetail = async (caseId, eventType = timelineFilter) => {
+  const loadCaseDetail = useCallback(async (caseId, eventType = timelineFilter) => {
     setDetailLoading(true);
     try {
       const [detailRes, timelineRes] = await Promise.all([
@@ -113,7 +113,7 @@ export default function Cases() {
     } finally {
       setDetailLoading(false);
     }
-  };
+  }, [timelineFilter]);
 
   const createCase = async () => {
     setCreateStatus("");
@@ -153,7 +153,7 @@ export default function Cases() {
     setSelectedEvidence(null);
     setCustody([]);
     loadCaseDetail(id);
-  }, [requestedCaseParam, cases, selectedId]);
+  }, [requestedCaseParam, cases, selectedId, loadCaseDetail]);
 
   const submitNote = async () => {
     if (!note.trim() || !selectedId) return;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   assignIncident,
   correlateIncidents,
@@ -51,7 +51,7 @@ export default function Incidents() {
     [items, selectedId],
   );
 
-  const loadIncidents = async () => {
+  const loadIncidents = useCallback(async () => {
     try {
       setLoading(true);
       const response = await getIncidents({
@@ -80,11 +80,11 @@ export default function Incidents() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterStatus, filterOwner, filterPriority, filterDueState, selectedId]);
 
   useEffect(() => {
     loadIncidents();
-  }, []);
+  }, [loadIncidents]);
 
   useEffect(() => {
     if (!selectedIncident) return;

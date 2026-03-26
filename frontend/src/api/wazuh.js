@@ -1,4 +1,4 @@
-import api from "./client";
+﻿import api from "./client";
 
 const AGENT_CACHE_TTL_MS = 15000;
 const agentCache = new Map();
@@ -6,6 +6,41 @@ const ALERT_CACHE_TTL_MS = 4000;
 const alertsCache = new Map();
 const EXECUTION_CACHE_TTL_MS = 3000;
 const executionsCache = new Map();
+
+const buildApiUrl = (path, params = {}) => {
+  const base = api.defaults.baseURL || "/api";
+  const normalizedBase = base.endsWith("/") ? base.slice(0, -1) : base;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const url = new URL(`${normalizedBase}${normalizedPath}`, window.location.origin);
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null || String(value).trim() === "") return;
+    url.searchParams.set(key, String(value));
+  });
+  return url.toString();
+};
+
+const unwrapV2 = (response) => {
+  const payload = response?.data;
+  if (payload && typeof payload === "object" && "data" in payload) {
+    return {
+      ...response,
+      data: payload.data,
+      message: payload.message,
+      meta: payload.meta,
+      status: payload.status,
+    };
+  }
+  return response;
+};
+
+const unwrapV2Items = (response) => {
+  const normalized = unwrapV2(response);
+  const items = normalized?.data?.items;
+  return {
+    ...normalized,
+    data: Array.isArray(items) ? items : [],
+  };
+};
 
 const agentCacheKey = (group, options = {}) => {
   const compact = options.compact !== false ? "compact" : "full";
@@ -226,6 +261,76 @@ export const getChanges = (params) => api.get("/changes", { params });
 export const createChange = (payload) => api.post("/changes", payload);
 export const approveChange = (id) => api.post(`/changes/${id}/approve`);
 export const closeChange = (id) => api.post(`/changes/${id}/close`);
+
+export const getTenantsV2 = (params = {}) =>
+  api.get("/v2/tenants", { params }).then(unwrapV2Items);
+export const createTenantV2 = (payload = {}) =>
+  api.post("/v2/tenants", payload).then(unwrapV2);
+export const getTenantUsersV2 = (tenantId, params = {}) =>
+  api.get(`/v2/tenants/${tenantId}/users`, { params }).then(unwrapV2Items);
+export const createTenantUserV2 = (tenantId, payload = {}) =>
+  api.post(`/v2/tenants/${tenantId}/users`, payload).then(unwrapV2);
+export const getRetentionPoliciesV2 = (tenantId, params = {}) =>
+  api.get(`/v2/tenants/${tenantId}/retention-policies`, { params }).then(unwrapV2Items);
+export const upsertRetentionPolicyV2 = (tenantId, dataClass, payload = {}) =>
+  api.put(`/v2/tenants/${tenantId}/retention-policies/${dataClass}`, payload).then(unwrapV2);
+
+export const getEventLifecycleSummaryV2 = (params = {}) =>
+  api.get("/v2/events/lifecycle/summary", { params }).then(unwrapV2);
+export const applyEventLifecycleV2 = (payload = {}) =>
+  api.post("/v2/events/lifecycle/apply", payload).then(unwrapV2);
+export const applyEventLifecycleBatchV2 = (payload = {}) =>
+  api.post("/v2/events/lifecycle/apply-all", payload).then(unwrapV2);
+export const getEventTimeSeriesV2 = (params = {}) =>
+  api.get("/v2/events/timeseries", { params }).then(unwrapV2);
+export const getEventCorrelationV2 = (params = {}) =>
+  api.get("/v2/events/correlate", { params }).then(unwrapV2);
+
+export const getCases = () => api.get("/cases");
+export const getCaseDetail = (caseId) => api.get(`/cases/${caseId}`);
+export const createCaseRecord = (payload = {}) =>
+  api.post("/cases", null, {
+    params: {
+      title: payload?.title,
+      description: payload?.description
+    }
+  });
+export const attachCaseAlert = (caseId, alertId) =>
+  api.post(`/cases/${caseId}/alerts`, null, { params: { alert_id: alertId } });
+export const addCaseNote = (caseId, note) =>
+  api.post(`/cases/${caseId}/notes`, null, { params: { note } });
+export const getCaseTimeline = (caseId, params = {}) =>
+  api.get(`/cases/${caseId}/timeline`, { params });
+export const getCaseTimelineExportUrl = (caseId, params = {}) =>
+  buildApiUrl(`/cases/${caseId}/timeline/export`, params);
+export const getCaseAttachments = (caseId) =>
+  api.get(`/cases/${caseId}/attachments`);
+export const uploadCaseAttachment = (caseId, formData) =>
+  api.post(`/cases/${caseId}/attachments`, formData, {
+    headers: { "Content-Type": "multipart/form-data" }
+  });
+export const downloadCaseAttachment = (caseId, attachmentId) =>
+  api.get(`/cases/${caseId}/attachments/${attachmentId}`, { responseType: "blob" });
+export const getCaseAttackPath = (caseId) =>
+  api.get(`/cases/${caseId}/attack-path`);
+export const getCaseIocGraph = (caseId) =>
+  api.get(`/cases/${caseId}/ioc-graph`);
+export const getCaseEvidence = (caseId) =>
+  api.get(`/cases/${caseId}/evidence`);
+export const uploadCaseEvidence = (caseId, formData) =>
+  api.post(`/cases/${caseId}/evidence`, formData, {
+    headers: { "Content-Type": "multipart/form-data" }
+  });
+export const downloadCaseEvidence = (caseId, evidenceId) =>
+  api.get(`/cases/${caseId}/evidence/${evidenceId}/download`, { responseType: "blob" });
+export const lockCaseEvidence = (caseId, evidenceId) =>
+  api.post(`/cases/${caseId}/evidence/${evidenceId}/lock`);
+export const getCaseEvidenceCustody = (caseId, evidenceId) =>
+  api.get(`/cases/${caseId}/evidence/${evidenceId}/custody`);
+export const updateCaseRisk = (caseId, payload = {}) =>
+  api.post(`/cases/${caseId}/risk`, payload);
+export const updateCaseStatus = (caseId, status) =>
+  api.post(`/cases/${caseId}/status`, null, { params: { status } });
 
 export const requestApproval = (payload) =>
   api.post("/approvals/request", payload);

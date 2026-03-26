@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { decideApproval, getPendingApprovals } from "../api/wazuh";
 import RelativeTimestamp from "../components/RelativeTimestamp";
 
@@ -30,9 +30,11 @@ const approvalRow = (row) => {
 };
 
 export default function Approvals() {
-
   const [rows, setRows] = useState([]);
-  const normalizedRows = useMemo(() => rows.map(approvalRow), [rows]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const safeRows = useMemo(() => (Array.isArray(rows) ? rows : []), [rows]);
+  const normalizedRows = useMemo(() => safeRows.map(approvalRow), [safeRows]);
   const linkedAlertCount = normalizedRows.filter((row) => row.alertId).length;
   const uniqueRequesterCount = useMemo(
     () => new Set(normalizedRows.map((row) => row.requestedBy).filter(Boolean)).size,
@@ -43,11 +45,31 @@ export default function Approvals() {
     0,
   );
 
-  const load = () =>
-    getPendingApprovals()
-      .then(r => setRows(r.data));
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError("");
+    try {
+      const response = await getPendingApprovals();
+      const payload = response?.data;
+      const nextRows = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.items)
+          ? payload.items
+          : Array.isArray(payload?.pending)
+            ? payload.pending
+            : [];
+      setRows(nextRows);
+    } catch (error) {
+      setRows([]);
+      setLoadError(error?.response?.data?.detail || error?.message || "Unable to load approvals.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  useEffect(load, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const approve = id =>
     decideApproval(id, { decision: "approve" })
@@ -65,6 +87,7 @@ export default function Approvals() {
           <p className="muted">Review and approve automation requests.</p>
         </div>
         <div className="page-actions">
+          {loading ? <span className="chip">Refreshing…</span> : null}
           <button className="btn secondary" onClick={load}>Refresh</button>
         </div>
       </div>
@@ -100,6 +123,9 @@ export default function Approvals() {
           </div>
           <span className="chip">{normalizedRows.length} pending</span>
         </div>
+        {loadError ? (
+          <div className="empty-state mb-12">{loadError}</div>
+        ) : null}
         <div className="table-scroll">
           <table className="table readable compact">
             <thead>

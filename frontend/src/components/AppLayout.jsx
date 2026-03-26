@@ -1,27 +1,13 @@
-import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import api, {
-  clearLegacyToken,
-  decodeLegacyTokenPayload,
-  getLegacyToken
-} from "../api/client";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import api, { clearLegacyToken, decodeLegacyTokenPayload, getLegacyToken } from "../api/client";
 import { alertSocket } from "../api/socket";
 import { getExecutionHealth } from "../api/wazuh";
 import { APP_TIMEZONE_LABEL } from "../utils/time";
 import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
-const SIDEBAR_STORAGE_KEY = "c2f-sidebar-collapsed-v4";
-const PRIORITY_PANEL_STORAGE_KEY = "c2f-priority-panel-collapsed-v4";
-const PRIORITY_PANEL_HEIGHT_STORAGE_KEY = "c2f-priority-panel-height-v4";
-const SIDEBAR_WIDTH_STORAGE_KEY = "c2f-sidebar-width-v4";
-const OPS_PANEL_COMPACT_STORAGE_KEY = "c2f-ops-panel-compact-v4";
-const PRIORITY_QUEUE_STORAGE_KEY = "c2f-priority-queue-v2";
-const DEFAULT_PRIORITY_PANEL_HEIGHT = 272;
-const MIN_PRIORITY_PANEL_HEIGHT = 170;
-const MAX_PRIORITY_PANEL_HEIGHT = 520;
-const DEFAULT_SIDEBAR_WIDTH = 320;
-const MIN_SIDEBAR_WIDTH = 260;
-const MAX_SIDEBAR_WIDTH = 560;
+const OPS_PANEL_COMPACT_STORAGE_KEY = "c2f-ops-panel-compact-v8";
+const PRIORITY_QUEUE_STORAGE_KEY = "c2f-priority-queue-v8";
 
 const ROUTE_LABELS = {
   "/": "Dashboard",
@@ -57,7 +43,7 @@ const NAV_SECTIONS = [
   {
     title: "Detection",
     links: [
-      { to: "/", label: "Command Overview", end: true },
+      { to: "/", label: "Overview", end: true },
       { to: "/alerts", label: "Alerts" },
       { to: "/sca-fleet", label: "SCA Fleet" },
       { to: "/incidents", label: "Incidents" },
@@ -160,81 +146,30 @@ const normalizePriorityQueue = (value) => {
   }
 };
 
-const clampPriorityPanelHeight = (value) => {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return DEFAULT_PRIORITY_PANEL_HEIGHT;
-  return Math.min(MAX_PRIORITY_PANEL_HEIGHT, Math.max(MIN_PRIORITY_PANEL_HEIGHT, Math.round(numeric)));
-};
-
-const clampSidebarWidth = (value) => {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return DEFAULT_SIDEBAR_WIDTH;
-  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, Math.round(numeric)));
-};
-
 export default function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const layoutRef = useRef(null);
-  const priorityResizeRef = useRef(null);
-  const sidebarResizeRef = useRef(null);
   const [user, setUser] = useState(null);
   const [search, setSearch] = useState("");
   const [appVersion, setAppVersion] = useState(UI_APP_VERSION);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === "1";
-  });
-  const [priorityPanelCollapsed, setPriorityPanelCollapsed] = useState(() => {
-    if (typeof window === "undefined") return false;
-    const persisted = window.localStorage.getItem(PRIORITY_PANEL_STORAGE_KEY);
-    return persisted === null ? false : persisted === "1";
-  });
-  const [priorityPanelHeight, setPriorityPanelHeight] = useState(() => {
-    if (typeof window === "undefined") return DEFAULT_PRIORITY_PANEL_HEIGHT;
-    return clampPriorityPanelHeight(window.localStorage.getItem(PRIORITY_PANEL_HEIGHT_STORAGE_KEY));
-  });
   const [priorityQueueItems, setPriorityQueueItems] = useState(() => {
     if (typeof window === "undefined") return DEFAULT_PRIORITY_QUEUE;
     return normalizePriorityQueue(window.localStorage.getItem(PRIORITY_QUEUE_STORAGE_KEY));
-  });
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    if (typeof window === "undefined") return DEFAULT_SIDEBAR_WIDTH;
-    return clampSidebarWidth(window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY));
   });
   const [opsCompact, setOpsCompact] = useState(() => {
     if (typeof window === "undefined") return false;
     const persisted = window.localStorage.getItem(OPS_PANEL_COMPACT_STORAGE_KEY);
     return persisted === null ? false : persisted === "1";
   });
-  const [openOpsSections, setOpenOpsSections] = useState(() => ({
-    organizations: true,
-    connectors: true,
-    governance: true,
-  }));
+  const [priorityConfigOpen, setPriorityConfigOpen] = useState(false);
+  const [priorityPanelOpen, setPriorityPanelOpen] = useState(false);
+  const [opsPanelOpen, setOpsPanelOpen] = useState(false);
   const [backendHealth, setBackendHealth] = useState({
     activeExecutions: 0,
     queuedExecutions: 0,
     socketLatencyMs: null,
     socketLive: false,
   });
-  const [priorityConfigOpen, setPriorityConfigOpen] = useState(false);
-  const isGlobalShellRoute = location.pathname.startsWith("/global-shell");
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(SIDEBAR_STORAGE_KEY, sidebarCollapsed ? "1" : "0");
-  }, [sidebarCollapsed]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(PRIORITY_PANEL_STORAGE_KEY, priorityPanelCollapsed ? "1" : "0");
-  }, [priorityPanelCollapsed]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(PRIORITY_PANEL_HEIGHT_STORAGE_KEY, String(priorityPanelHeight));
-  }, [priorityPanelHeight]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -243,91 +178,8 @@ export default function AppLayout() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
-  }, [sidebarWidth]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
     window.localStorage.setItem(OPS_PANEL_COMPACT_STORAGE_KEY, opsCompact ? "1" : "0");
   }, [opsCompact]);
-
-  useEffect(() => {
-    if (priorityPanelCollapsed || sidebarCollapsed) {
-      setPriorityConfigOpen(false);
-    }
-  }, [priorityPanelCollapsed, sidebarCollapsed]);
-
-  const stopPriorityResize = useCallback(() => {
-    if (typeof window !== "undefined" && priorityResizeRef.current) {
-      window.removeEventListener("mousemove", priorityResizeRef.current.onMove);
-      window.removeEventListener("mouseup", priorityResizeRef.current.onUp);
-      priorityResizeRef.current = null;
-    }
-    if (typeof document !== "undefined") {
-      document.body.style.removeProperty("cursor");
-      document.body.style.removeProperty("user-select");
-    }
-  }, []);
-
-  useEffect(() => () => stopPriorityResize(), [stopPriorityResize]);
-
-  const stopSidebarResize = useCallback(() => {
-    if (typeof window !== "undefined" && sidebarResizeRef.current) {
-      window.removeEventListener("mousemove", sidebarResizeRef.current.onMove);
-      window.removeEventListener("mouseup", sidebarResizeRef.current.onUp);
-      sidebarResizeRef.current = null;
-    }
-    if (typeof document !== "undefined") {
-      document.body.style.removeProperty("cursor");
-      document.body.style.removeProperty("user-select");
-    }
-  }, []);
-
-  useEffect(() => () => stopSidebarResize(), [stopSidebarResize]);
-
-  const startPriorityResize = useCallback((event) => {
-    if (sidebarCollapsed || priorityPanelCollapsed || typeof window === "undefined" || window.innerWidth <= 1024) {
-      return;
-    }
-    event.preventDefault();
-    stopPriorityResize();
-    const startY = event.clientY;
-    const startHeight = priorityPanelHeight;
-    const onMove = (moveEvent) => {
-      const delta = moveEvent.clientY - startY;
-      setPriorityPanelHeight(clampPriorityPanelHeight(startHeight + delta));
-    };
-    const onUp = () => stopPriorityResize();
-    priorityResizeRef.current = { onMove, onUp };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    if (typeof document !== "undefined") {
-      document.body.style.cursor = "row-resize";
-      document.body.style.userSelect = "none";
-    }
-  }, [priorityPanelCollapsed, priorityPanelHeight, sidebarCollapsed, stopPriorityResize]);
-
-  const startSidebarResize = useCallback((event) => {
-    if (sidebarCollapsed || typeof window === "undefined" || window.innerWidth <= 1024) {
-      return;
-    }
-    event.preventDefault();
-    stopSidebarResize();
-    const startX = event.clientX;
-    const startWidth = sidebarWidth;
-    const onMove = (moveEvent) => {
-      const delta = moveEvent.clientX - startX;
-      setSidebarWidth(clampSidebarWidth(startWidth + delta));
-    };
-    const onUp = () => stopSidebarResize();
-    sidebarResizeRef.current = { onMove, onUp };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    if (typeof document !== "undefined") {
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-    }
-  }, [sidebarCollapsed, sidebarWidth, stopSidebarResize]);
 
   useEffect(() => {
     let active = true;
@@ -335,7 +187,7 @@ export default function AppLayout() {
     if (tokenPayload?.sub && active) {
       setUser({
         username: String(tokenPayload.sub || "user"),
-        role: String(tokenPayload.role || "user")
+        role: String(tokenPayload.role || "analyst"),
       });
     }
     api
@@ -345,14 +197,12 @@ export default function AppLayout() {
         const data = res?.data || {};
         setUser({
           username: String(data.username || "user"),
-          role: String(data.role || "user"),
+          role: String(data.role || "analyst"),
         });
       })
       .catch((err) => {
         const statusCode = err?.response?.status;
-        if ((statusCode === 404 || statusCode === 405) && getLegacyToken()) {
-          return;
-        }
+        if ((statusCode === 404 || statusCode === 405) && getLegacyToken()) return;
         if (active) setUser(null);
       });
     return () => {
@@ -484,7 +334,7 @@ export default function AppLayout() {
     try {
       await api.post("/auth/logout");
     } catch {
-      // Always proceed with local logout even if API logout fails.
+      // Continue with local logout even if API logout fails.
     }
     clearLegacyToken();
     setUser(null);
@@ -498,6 +348,12 @@ export default function AppLayout() {
     }
   }, [location.pathname, location.search]);
 
+  useEffect(() => {
+    setPriorityConfigOpen(false);
+    setPriorityPanelOpen(false);
+    setOpsPanelOpen(false);
+  }, [location.pathname]);
+
   const breadcrumbs = useMemo(() => {
     const path = location.pathname || "/";
     const currentLabel = ROUTE_LABELS[path] || "Workspace";
@@ -505,9 +361,21 @@ export default function AppLayout() {
   }, [location.pathname]);
 
   const currentPageLabel = useMemo(() => ROUTE_LABELS[location.pathname || "/"] || "Workspace", [location.pathname]);
+  const flatNavLinks = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    NAV_SECTIONS.forEach((section) => {
+      section.links.forEach((link) => {
+        if (seen.has(link.to)) return;
+        seen.add(link.to);
+        list.push(link);
+      });
+    });
+    return list;
+  }, []);
 
-  const submitSearch = (e) => {
-    e.preventDefault();
+  const submitSearch = (event) => {
+    event.preventDefault();
     const term = search.trim();
     if (!term) {
       navigate("/alerts", { replace: false });
@@ -525,8 +393,7 @@ export default function AppLayout() {
     } catch {
       opsOrigin = window.location.origin;
     }
-    const opsUrl = `${opsOrigin}/ops`;
-    window.open(opsUrl, "_blank", "noopener,noreferrer");
+    window.open(`${opsOrigin}/ops`, "_blank", "noopener,noreferrer");
   };
 
   const healthTone = backendHealth.socketLive ? "success" : "pending";
@@ -538,10 +405,17 @@ export default function AppLayout() {
       .filter(Boolean);
   }, [priorityQueueItems]);
 
+  const dockOpsModules = useMemo(
+    () =>
+      OPS_MODULES.map((section) => ({
+        ...section,
+        links: opsCompact ? section.links.slice(0, 2) : section.links,
+      })),
+    [opsCompact]
+  );
+
   const updatePriorityQueueItem = useCallback((route, patch) => {
-    setPriorityQueueItems((current) =>
-      current.map((item) => (item.to === route ? { ...item, ...patch } : item))
-    );
+    setPriorityQueueItems((current) => current.map((item) => (item.to === route ? { ...item, ...patch } : item)));
   }, []);
 
   const movePriorityQueueItem = useCallback((route, direction) => {
@@ -562,325 +436,230 @@ export default function AppLayout() {
   }, []);
 
   return (
-    <div
-      ref={layoutRef}
-      className={`app-layout${sidebarCollapsed ? " sidebar-collapsed" : ""}${isGlobalShellRoute ? " route-global-shell" : ""}`}
-      style={!sidebarCollapsed ? { "--sidebar-width": `${sidebarWidth}px` } : undefined}
-    >
-
-      <aside className="sidebar">
-        <div className="sidebar-top">
-          <div className="brand">
+    <div className="app-layout app-shell-v5">
+      <div className="shell-frame">
+        <header className="shell-header">
+          <div className="shell-brand">
             <div className="brand-badge">C2F</div>
-            <div className="brand-copy">
+            <div className="shell-brand-copy">
               <div className="brand-title">Click2Fix</div>
-              <div className="brand-subtitle">SOC Operations Platform</div>
-              <div className="brand-version">Version {appVersion}</div>
+              <div className="brand-subtitle">SOC Operations</div>
             </div>
           </div>
+
+          <div className="shell-context">
+            <div className="shell-page-title">{currentPageLabel}</div>
+            <div className="shell-breadcrumbs">
+              {breadcrumbs.map((item, index) => (
+                <span key={`${item.href}-${item.label}`}>
+                  {index > 0 ? " / " : ""}
+                  {item.label}
+                </span>
+              ))}
+              <span> / {APP_TIMEZONE_LABEL}</span>
+            </div>
+          </div>
+
+          <form className="shell-search" onSubmit={submitSearch}>
+            <input
+              aria-label="Search alerts, agents, actions"
+              placeholder="Search alerts, agents, CVEs, hosts..."
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+            <button type="submit" className="btn secondary">Search</button>
+          </form>
+
+          <div className="shell-controls">
+            <span className={`shell-health-dot ${healthTone}`} aria-hidden="true" />
+            <span className="shell-chip">{backendHealth.socketLive ? "Socket live" : "Reconnecting"}</span>
+            <span className="shell-chip">{backendHealth.activeExecutions} active</span>
+            <span className="shell-chip">
+              {backendHealth.socketLatencyMs !== null ? `${backendHealth.socketLatencyMs} ms` : "Latency --"}
+            </span>
+            {backendHealth.queuedExecutions > 0 ? (
+              <span className="shell-chip">{backendHealth.queuedExecutions} queued</span>
+            ) : null}
+            <span className="shell-chip shell-chip-user">{user ? `${user.username} - ${user.role}` : "user"}</span>
+            <button type="button" className="btn secondary" onClick={logout}>Logout</button>
+          </div>
+        </header>
+
+        <nav className="shell-nav" aria-label="Primary navigation">
+          <div className="shell-nav-links-row">
+            {flatNavLinks.map((link) => (
+              <NavLink
+                key={link.to}
+                to={link.to}
+                end={Boolean(link.end)}
+                className={({ isActive }) => `shell-nav-link${isActive ? " active" : ""}`}
+              >
+                {link.label}
+              </NavLink>
+            ))}
+          </div>
+          <div className="shell-nav-actions">
+            <button type="button" className="btn secondary" onClick={() => setPriorityPanelOpen(true)}>
+              Priority Queue
+            </button>
+            <button type="button" className="btn secondary" onClick={() => setOpsPanelOpen(true)}>
+              Backend Ops
+            </button>
+            <button type="button" className="btn secondary" onClick={openOpsConsole}>Open /ops</button>
+            <span className="shell-version">v{appVersion}</span>
+          </div>
+        </nav>
+
+        <section className="shell-content">
+          <Outlet />
+        </section>
+      </div>
+
+      {priorityPanelOpen ? (
+        <div className="shell-overlay" role="dialog" aria-modal="true" aria-label="Priority queue panel">
           <button
             type="button"
-            className="sidebar-toggle"
-            onClick={() => setSidebarCollapsed((prev) => !prev)}
-            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-pressed={sidebarCollapsed}
-          >
-            {sidebarCollapsed ? ">" : "<"}
-          </button>
-        </div>
-
-        <div className="sidebar-workspace">
-          <div
-            className={`priority-panel${priorityPanelCollapsed ? " collapsed" : " resizable"}`}
-            aria-label="Priority navigation"
-            data-tour-id="priority-queue"
-            style={!priorityPanelCollapsed && !sidebarCollapsed ? { "--priority-panel-height": `${priorityPanelHeight}px` } : undefined}
-          >
-            <div className="priority-panel-header">
-              <div className="priority-title">Priority Queue</div>
-              <div className="priority-panel-actions">
-                {!priorityPanelCollapsed ? (
-                  <button
-                    type="button"
-                    className="panel-collapse-btn"
-                    onClick={() => setPriorityConfigOpen((prev) => !prev)}
-                    aria-pressed={priorityConfigOpen}
-                    title={priorityConfigOpen ? "Close priority queue settings" : "Customize priority queue"}
-                  >
-                    {priorityConfigOpen ? "Done" : "Edit"}
-                  </button>
-                ) : null}
+            className="shell-overlay-backdrop"
+            aria-label="Close priority queue"
+            onClick={() => setPriorityPanelOpen(false)}
+          />
+          <aside className="shell-overlay-panel">
+            <div className="shell-overlay-header">
+              <div>
+                <div className="shell-overlay-kicker">Priority Queue</div>
+                <h3>Analyst Quick Access</h3>
+              </div>
+              <div className="page-actions">
                 <button
                   type="button"
-                  className="panel-collapse-btn"
-                  onClick={() => setPriorityPanelCollapsed((prev) => !prev)}
-                  aria-expanded={!priorityPanelCollapsed}
-                  aria-label={priorityPanelCollapsed ? "Expand priority queue" : "Collapse priority queue"}
-                  title={priorityPanelCollapsed ? "Expand priority queue" : "Collapse priority queue"}
+                  className="btn secondary"
+                  onClick={() => setPriorityConfigOpen((prev) => !prev)}
+                  aria-pressed={priorityConfigOpen}
                 >
-                  {priorityPanelCollapsed ? "+" : "-"}
+                  {priorityConfigOpen ? "Done" : "Customize"}
                 </button>
+                <button type="button" className="btn secondary" onClick={resetPriorityQueue}>Reset</button>
+                <button type="button" className="btn secondary" onClick={() => setPriorityPanelOpen(false)}>Close</button>
               </div>
             </div>
-            {!priorityPanelCollapsed ? (
-              <div className="priority-panel-body">
-                {priorityConfigOpen ? (
-                  <div className="priority-config">
-                    <div className="priority-config-header">
-                      <span className="meta-line">Choose which shortcuts stay in the queue and reorder them for your workflow.</span>
-                      <button type="button" className="panel-collapse-btn" onClick={resetPriorityQueue} title="Reset priority queue">
-                        Reset
-                      </button>
-                    </div>
-                    <div className="priority-config-list">
-                      {priorityQueueItems.map((item, index) => {
-                        const meta = PRIORITY_LINKS.find((link) => link.to === item.to);
-                        if (!meta) return null;
-                        return (
-                          <div key={item.to} className="priority-config-row">
-                            <label className="priority-config-toggle">
-                              <input
-                                type="checkbox"
-                                checked={item.enabled !== false}
-                                onChange={(event) => updatePriorityQueueItem(item.to, { enabled: event.target.checked })}
-                              />
-                              <span>{meta.label}</span>
-                            </label>
-                            <div className="priority-config-actions">
-                              <button
-                                type="button"
-                                className="panel-collapse-btn"
-                                onClick={() => movePriorityQueueItem(item.to, -1)}
-                                disabled={index === 0}
-                                title="Move up"
-                              >
-                                Up
-                              </button>
-                              <button
-                                type="button"
-                                className="panel-collapse-btn"
-                                onClick={() => movePriorityQueueItem(item.to, 1)}
-                                disabled={index === priorityQueueItems.length - 1}
-                                title="Move down"
-                              >
-                                Down
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : null}
-                <div className="priority-links">
-                  {priorityLinks.length ? priorityLinks.map((item) => (
-                    <NavLink
-                      key={item.to}
-                      to={item.to}
-                      title={item.label}
-                      className={({ isActive }) => `priority-link${isActive ? " active" : ""}`}
-                    >
-                      <span className="nav-link-badge">{shortLabel(item.label)}</span>
-                      <span className="nav-link-label">{item.label}</span>
-                    </NavLink>
-                  )) : (
-                    <div className="empty-state priority-empty-state">
-                      Enable at least one priority shortcut in Edit mode.
-                    </div>
-                  )}
+
+            {priorityConfigOpen ? (
+              <div className="priority-config priority-config-dock">
+                <div className="priority-config-header">
+                  <span className="meta-line">Enable only what you need and reorder for shift-specific triage.</span>
+                </div>
+                <div className="priority-config-list">
+                  {priorityQueueItems.map((item, index) => {
+                    const meta = PRIORITY_LINKS.find((link) => link.to === item.to);
+                    if (!meta) return null;
+                    return (
+                      <div key={item.to} className="priority-config-row">
+                        <label className="priority-config-toggle">
+                          <input
+                            type="checkbox"
+                            checked={item.enabled !== false}
+                            onChange={(event) => updatePriorityQueueItem(item.to, { enabled: event.target.checked })}
+                          />
+                          <span>{meta.label}</span>
+                        </label>
+                        <div className="priority-config-actions">
+                          <button
+                            type="button"
+                            className="panel-collapse-btn"
+                            onClick={() => movePriorityQueueItem(item.to, -1)}
+                            disabled={index === 0}
+                            title="Move up"
+                          >
+                            Up
+                          </button>
+                          <button
+                            type="button"
+                            className="panel-collapse-btn"
+                            onClick={() => movePriorityQueueItem(item.to, 1)}
+                            disabled={index === priorityQueueItems.length - 1}
+                            title="Move down"
+                          >
+                            Down
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ) : null}
-          </div>
 
-          {!sidebarCollapsed ? (
-            <div className={`sidebar-divider${priorityPanelCollapsed ? " disabled" : ""}`} aria-hidden="true">
-              <button
-                type="button"
-                className="sidebar-divider-handle"
-                onMouseDown={startPriorityResize}
-                onDoubleClick={() => setPriorityPanelHeight(DEFAULT_PRIORITY_PANEL_HEIGHT)}
-                disabled={priorityPanelCollapsed}
-                title="Drag to resize priority queue. Double-click to reset."
-              />
+            <div className="workspace-shortcut-grid">
+              {priorityLinks.length ? (
+                priorityLinks.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className={({ isActive }) => `workspace-shortcut-card${isActive ? " active" : ""}`}
+                    onClick={() => setPriorityPanelOpen(false)}
+                  >
+                    <span className="workspace-shortcut-kicker">{shortLabel(item.label)}</span>
+                    <span className="workspace-shortcut-title">{item.label}</span>
+                  </NavLink>
+                ))
+              ) : (
+                <div className="empty-state priority-empty-state">Enable at least one quick surface.</div>
+              )}
             </div>
-          ) : null}
+          </aside>
+        </div>
+      ) : null}
 
-          <div className="sidebar-module-shell">
-            <nav className="nav-groups" aria-label="Primary navigation">
-              {NAV_SECTIONS.map((section) => (
-                <div className="nav-group" key={section.title}>
-                  <div className="nav-group-title">{section.title}</div>
-                  <div className="nav-group-links">
+      {opsPanelOpen ? (
+        <div className="shell-overlay" role="dialog" aria-modal="true" aria-label="Backend ops panel">
+          <button
+            type="button"
+            className="shell-overlay-backdrop"
+            aria-label="Close backend ops"
+            onClick={() => setOpsPanelOpen(false)}
+          />
+          <aside className="shell-overlay-panel">
+            <div className="shell-overlay-header">
+              <div>
+                <div className="shell-overlay-kicker">Backend Ops</div>
+                <h3>Platform Control</h3>
+              </div>
+              <div className="page-actions">
+                <button
+                  type="button"
+                  className="btn secondary"
+                  onClick={() => setOpsCompact((prev) => !prev)}
+                  aria-pressed={opsCompact}
+                >
+                  {opsCompact ? "Expand" : "Compact"}
+                </button>
+                <button type="button" className="btn secondary" onClick={openOpsConsole}>Open /ops</button>
+                <button type="button" className="btn secondary" onClick={() => setOpsPanelOpen(false)}>Close</button>
+              </div>
+            </div>
+
+            <div className="workspace-ops-groups">
+              {dockOpsModules.map((section) => (
+                <div key={section.id} className="workspace-ops-group">
+                  <div className="workspace-nav-group-label">{section.label}</div>
+                  <div className="workspace-ops-links">
                     {section.links.map((link) => (
                       <NavLink
                         key={link.to}
                         to={link.to}
-                        end={Boolean(link.end)}
-                        title={link.label}
-                        className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}
+                        className={({ isActive }) => `workspace-ops-link${isActive ? " active" : ""}`}
+                        onClick={() => setOpsPanelOpen(false)}
                       >
-                        <span className="nav-link-badge">{shortLabel(link.label)}</span>
-                        <span className="nav-link-label">{link.label}</span>
+                        {link.label}
                       </NavLink>
                     ))}
                   </div>
                 </div>
               ))}
-            </nav>
-          </div>
-
-          <div className={`ops-panel${opsCompact ? " compact" : ""}`}>
-            <div className="ops-panel-header">
-              <div className="priority-title">Backend Ops</div>
-              <div className="page-actions gap-6">
-                <button
-                  type="button"
-                  className="panel-collapse-btn"
-                  onClick={() => setOpsCompact((prev) => !prev)}
-                  aria-pressed={opsCompact}
-                  title={opsCompact ? "Expand ops modules" : "Collapse ops modules to icon mode"}
-                >
-                  {opsCompact ? "Full" : "Mini"}
-                </button>
-                <button type="button" className="panel-collapse-btn" onClick={openOpsConsole} title="Open backend ops console">
-                  Open
-                </button>
-              </div>
             </div>
-            <div className="ops-panel-body">
-              <div className="ops-accordion-list">
-                {OPS_MODULES.map((section) => {
-                  const isOpen = !opsCompact && Boolean(openOpsSections[section.id]);
-                  return (
-                    <div key={section.id} className={`ops-accordion${isOpen ? " open" : ""}`}>
-                      <button
-                        type="button"
-                        className="ops-accordion-toggle"
-                        onClick={() => {
-                          if (opsCompact) {
-                            setOpsCompact(false);
-                            return;
-                          }
-                          setOpenOpsSections((prev) => ({
-                            ...prev,
-                            [section.id]: !prev[section.id],
-                          }));
-                        }}
-                        aria-expanded={isOpen}
-                        title={section.label}
-                      >
-                        <span className="nav-link-badge">{shortLabel(section.label)}</span>
-                        {!opsCompact ? <span className="ops-accordion-label">{section.label}</span> : null}
-                        {!opsCompact ? <span className="ops-accordion-state">{isOpen ? "-" : "+"}</span> : null}
-                      </button>
-                      {isOpen ? (
-                        <div className="ops-accordion-links">
-                          {section.links.map((link) => (
-                            <NavLink
-                              key={link.to}
-                              to={link.to}
-                              title={link.label}
-                              className={({ isActive }) => `ops-link${isActive ? " active" : ""}`}
-                            >
-                              <span className="nav-link-badge">{shortLabel(link.label)}</span>
-                              <span className="nav-link-label">{link.label}</span>
-                            </NavLink>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="sidebar-footer">
-          <div className="footer-status">
-            <div className="status-dot" />
-            <span>{user ? `${user.username} - ${user.role}` : "Connected"}</span>
-          </div>
-          <div className="footer-version">
-            Version <span className="version-pill">{appVersion}</span>
-          </div>
-        </div>
-      </aside>
-      {!sidebarCollapsed ? (
-        <div className="app-layout-divider" aria-hidden="true">
-          <button
-            type="button"
-            className="app-layout-divider-handle"
-            onMouseDown={startSidebarResize}
-            onDoubleClick={() => setSidebarWidth(DEFAULT_SIDEBAR_WIDTH)}
-            title="Drag to resize sidebar. Double-click to reset."
-          />
+          </aside>
         </div>
       ) : null}
-
-      <main className="main-content">
-        <div className="workspace-shell">
-          <div className="topbar">
-            <div className="topbar-left">
-              <div className="topbar-title-block">
-                <div className="topbar-kicker">SOC Workspace</div>
-                <div className="topbar-title-row">
-                  <div className="topbar-title">{currentPageLabel}</div>
-                  <span className="topbar-context">Live Operations Surface</span>
-                </div>
-                <div className="topbar-breadcrumbs">
-                  {breadcrumbs.map((item, index) => (
-                    <span key={`${item.href}-${item.label}`}>
-                      {index > 0 ? " / " : ""}
-                      {item.label}
-                    </span>
-                  ))}{" "}
-                  | Timezone: {APP_TIMEZONE_LABEL}
-                </div>
-              </div>
-            </div>
-            <div className="topbar-right">
-              <form className="search" onSubmit={submitSearch}>
-                <input
-                  aria-label="Search alerts, agents, actions"
-                  placeholder="Search by alert ID, CVE, host, IP, IOC..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-                <button className="btn secondary" type="submit">Search</button>
-              </form>
-              <div className="topbar-actions">
-                <span className={`topbar-health-dot ${healthTone}`} aria-hidden="true" />
-                <span className="topbar-health-inline topbar-health-primary">
-                  {backendHealth.socketLive ? "Socket live" : "Reconnecting"}
-                </span>
-                <span className="topbar-health-inline topbar-health-secondary">{backendHealth.activeExecutions} active</span>
-                <span className="topbar-health-inline topbar-health-secondary">
-                  {backendHealth.socketLatencyMs !== null ? `${backendHealth.socketLatencyMs} ms` : "Latency --"}
-                </span>
-                {backendHealth.queuedExecutions > 0 ? (
-                  <span className="topbar-health-inline topbar-health-secondary">{backendHealth.queuedExecutions} queued</span>
-                ) : null}
-                <button
-                  type="button"
-                  className="btn secondary sidebar-toggle-mobile"
-                  onClick={() => setSidebarCollapsed((prev) => !prev)}
-                  aria-pressed={sidebarCollapsed}
-                >
-                  {sidebarCollapsed ? "Expand Nav" : "Collapse Nav"}
-                </button>
-                <button className="btn secondary" onClick={logout}>Logout</button>
-              </div>
-            </div>
-          </div>
-
-          <div className="content content-stage">
-            <Outlet />
-          </div>
-        </div>
-      </main>
     </div>
   );
 }

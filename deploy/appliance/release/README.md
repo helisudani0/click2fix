@@ -41,3 +41,15 @@ If ZIP delivery is blocked on the target environment, use the raw-file bootstrap
 
 - `deploy/appliance/bootstrap-from-github.ps1`
 - `deploy/appliance/bootstrap-from-github.sh`
+
+If the target environment should not install Docker on the analyst workstation, use the VM packaging path documented in:
+
+- `deploy/appliance/ova/README.md`
+
+Build the OVA stage bundle with:
+
+- `deploy/appliance/ova/build-ova-stage.ps1`
+- `deploy/appliance/ova/build-ova-stage.sh`
+
+The release bundle and the OVA stage-builder both fail fast if the local appliance scaffold contains v2-only services. That is intentional so the current release line does not silently ship the wrong runtime model.
+When they are run from this Git checkout, they prefer the committed `HEAD` appliance files so local uncommitted v2 changes do not contaminate a `v1.1.4` package.

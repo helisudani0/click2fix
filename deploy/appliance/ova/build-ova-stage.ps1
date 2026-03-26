@@ -73,13 +73,27 @@ function Assert-CurrentApplianceLayout {
     [bool]$UseGitSource
   )
 
-  $composePath = Join-Path $ApplianceDir "docker-compose.appliance.yml"
-  $envTemplatePath = Join-Path $ApplianceDir ".env.appliance.template"
-  foreach ($required in @("docker-compose.appliance.yml", ".env.appliance.template")) {
-    if (-not (Test-SourceFileExists -RootDir $RootDir -FileSystemPath (Join-Path $ApplianceDir $required) -RepoRelativePath "deploy/appliance/$required" -UseGitSource $UseGitSource)) {
-      throw "Missing required appliance file: $required"
+  $required = @(
+    ".env.appliance.template",
+    "docker-compose.appliance.yml",
+    "install.sh",
+    "setup.sh",
+    "manage.sh",
+    "upgrade.sh",
+    "firstboot/c2f-firstboot.sh",
+    "firstboot/c2f-firstboot.service",
+    "firstboot/install-firstboot-service.sh"
+  )
+
+  foreach ($relativePath in $required) {
+    $target = Join-Path $ApplianceDir $relativePath
+    if (-not (Test-SourceFileExists -RootDir $RootDir -FileSystemPath $target -RepoRelativePath "deploy/appliance/$relativePath" -UseGitSource $UseGitSource)) {
+      throw "Missing required appliance file: $relativePath"
     }
   }
+
+  $composePath = Join-Path $ApplianceDir "docker-compose.appliance.yml"
+  $envTemplatePath = Join-Path $ApplianceDir ".env.appliance.template"
   $compose = Read-SourceText -RootDir $RootDir -FileSystemPath $composePath -RepoRelativePath "deploy/appliance/docker-compose.appliance.yml" -UseGitSource $UseGitSource
   $envTemplate = Read-SourceText -RootDir $RootDir -FileSystemPath $envTemplatePath -RepoRelativePath "deploy/appliance/.env.appliance.template" -UseGitSource $UseGitSource
 
@@ -94,7 +108,7 @@ function Assert-CurrentApplianceLayout {
   )
   foreach ($pattern in $forbiddenCompose) {
     if ($compose -match "(?m)$pattern") {
-      throw "The appliance compose file currently includes v2-only services. Clean deploy/appliance/docker-compose.appliance.yml before building the current release bundle."
+      throw "The appliance compose file currently includes v2-only services. Clean deploy/appliance/docker-compose.appliance.yml before building current-version OVA assets."
     }
   }
 
@@ -113,9 +127,32 @@ function Assert-CurrentApplianceLayout {
   )
   foreach ($pattern in $forbiddenEnv) {
     if ($envTemplate -match "(?m)$pattern") {
-      throw "The appliance env template currently includes v2-only image settings. Clean deploy/appliance/.env.appliance.template before building the current release bundle."
+      throw "The appliance env template currently includes v2-only image settings. Clean deploy/appliance/.env.appliance.template before building current-version OVA assets."
     }
   }
+}
+
+function Set-EnvValue {
+  param(
+    [string]$Path,
+    [string]$Key,
+    [string]$Value
+  )
+  $lines = Get-Content -Path $Path -ErrorAction SilentlyContinue
+  $found = $false
+  $updated = @()
+  foreach ($line in $lines) {
+    if ($line -match "^\s*$Key=") {
+      $updated += "$Key=$Value"
+      $found = $true
+    } else {
+      $updated += $line
+    }
+  }
+  if (-not $found) {
+    $updated += "$Key=$Value"
+  }
+  Set-Content -Path $Path -Value $updated
 }
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -136,9 +173,10 @@ if ([string]::IsNullOrWhiteSpace($ImageTag)) {
 }
 
 $outDir = Join-Path $rootDir "deploy/releases/$Version"
-$bundleDir = Join-Path $outDir "click2fix-appliance-$Version"
-$zipFile = Join-Path $outDir "click2fix-appliance-installer-$Version.zip"
-$shaFile = Join-Path $outDir "click2fix-appliance-installer-$Version.sha256"
+$stageDir = Join-Path $outDir "click2fix-appliance-ova-stage-$Version"
+$stageRoot = Join-Path $stageDir "opt/click2fix/deploy/appliance"
+$stageReadme = Join-Path $stageDir "OVA_STAGE_README.txt"
+
 $applianceFiles = @(
   ".env.appliance.template",
   "bootstrap-from-github.ps1",
@@ -166,33 +204,56 @@ $applianceFiles = @(
   "firstboot/install-firstboot-service.sh"
 )
 
-if (Test-Path $bundleDir) { Remove-Item -Path $bundleDir -Recurse -Force }
-if (Test-Path $zipFile) { Remove-Item -Path $zipFile -Force }
-if (Test-Path $shaFile) { Remove-Item -Path $shaFile -Force }
-New-Item -ItemType Directory -Path $outDir -Force | Out-Null
-
+if (Test-Path $stageDir) {
+  Remove-Item -Path $stageDir -Recurse -Force
+}
+New-Item -ItemType Directory -Path $stageRoot -Force | Out-Null
 foreach ($file in $applianceFiles) {
   Export-SourceFile `
     -RootDir $rootDir `
     -FileSystemPath (Join-Path $applianceDir $file) `
     -RepoRelativePath "deploy/appliance/$file" `
-    -DestinationPath (Join-Path $bundleDir $file) `
+    -DestinationPath (Join-Path $stageRoot $file) `
     -UseGitSource $useGitSource
 }
 
-$envFile = Join-Path $bundleDir ".env.appliance.template"
-$content = Get-Content -Path $envFile
-$content = $content -replace '^C2F_BACKEND_IMAGE=.*$', "C2F_BACKEND_IMAGE=$BackendImage"
-$content = $content -replace '^C2F_FRONTEND_IMAGE=.*$', "C2F_FRONTEND_IMAGE=$FrontendImage"
-$content = $content -replace '^C2F_IMAGE_TAG=.*$', "C2F_IMAGE_TAG=$ImageTag"
-$content = $content -replace '^C2F_SKIP_PULL=.*$', "C2F_SKIP_PULL=false"
-Set-Content -Path $envFile -Value $content
+$envFile = Join-Path $stageRoot ".env.appliance.template"
+Set-EnvValue -Path $envFile -Key "C2F_BACKEND_IMAGE" -Value $BackendImage
+Set-EnvValue -Path $envFile -Key "C2F_FRONTEND_IMAGE" -Value $FrontendImage
+Set-EnvValue -Path $envFile -Key "C2F_IMAGE_TAG" -Value $ImageTag
+Set-EnvValue -Path $envFile -Key "C2F_SKIP_PULL" -Value "false"
 
-Compress-Archive -Path "$bundleDir/*" -DestinationPath $zipFile -CompressionLevel Optimal -Force
+@"
+Click2Fix OVA Stage Bundle
+==========================
 
-$hash = Get-FileHash -Path $zipFile -Algorithm SHA256
-"$($hash.Hash.ToLower())  $(Split-Path $zipFile -Leaf)" | Set-Content -Path $shaFile
+Version: $Version
+Backend image: ${BackendImage}:${ImageTag}
+Frontend image: ${FrontendImage}:${ImageTag}
+Database image: postgres:16
 
-Write-Host "Built installer bundle:"
-Write-Host "  $zipFile"
-Write-Host "  $shaFile"
+This staged directory is intended to be copied into a Linux VM image at:
+
+  /opt/click2fix/deploy/appliance
+
+Recommended VM build flow:
+
+1. Start from Ubuntu Server LTS.
+2. Install Docker Engine and the Docker Compose plugin inside the VM.
+3. Copy the staged opt/ tree from this bundle into the VM root filesystem.
+4. Inside the VM, run:
+
+     cd /opt/click2fix/deploy/appliance/firstboot
+     sudo ./install-firstboot-service.sh
+
+5. Power off the VM and export it as an OVA from your hypervisor.
+
+When the customer boots the VM, the first-boot unit launches the existing
+Click2Fix installer and keeps the runtime on the supported v1.1.4 image set.
+"@ | Set-Content -Path $stageReadme
+
+Write-Host "Built OVA stage bundle:"
+Write-Host "  $stageDir"
+Write-Host ""
+Write-Host "Next step:"
+Write-Host "  Copy the staged opt/ tree into a Linux VM image and install the first-boot service."

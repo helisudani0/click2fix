@@ -1,13 +1,11 @@
 # Click2Fix Appliance Deployment (OVA-Oriented)
 
-This folder is the customer-facing deployment scaffold for a VM appliance model.
+This folder is the customer-facing deployment scaffold for the current Click2Fix appliance line.
 
-The intended flow:
+The intended current flows:
 
-1. Customer imports OVA VM.
-2. Customer runs first-boot wizard (`install.sh`) inside VM.
-3. Customer enters only operational values (Wazuh/Indexer/connector/admin credentials).
-4. Services start automatically with Docker Compose.
+1. Customer runs the Docker-based appliance scaffold directly from release assets or the raw bootstrap path.
+2. Or, maintainer builds a VM/OVA from the same appliance files and uses the existing first-boot wizard inside the VM.
 
 ## Direct Customer Download (GitHub Releases)
 
@@ -53,6 +51,8 @@ Current `v1.1.4` appliance scope:
   - Import image tar bundle on destination host.
 - `firstboot/`
   - OVA first-boot automation files (systemd one-time setup service).
+- `ova/`
+  - current-version OVA stage-builder scripts and docs for a VM-based delivery path.
 
 ## Prerequisites (inside appliance VM)
 
@@ -117,6 +117,7 @@ Get-ChildItem -Path C:\click2fix -Recurse -File | Unblock-File
 
 If an enterprise policy enforces script restrictions, use a signed installer or request an allowlist
 for the Click2Fix installer hash and `C:\click2fix` (or your chosen install path).
+Raw bootstrap avoids the ZIP extraction path, but it does not replace code signing for SmartScreen reputation.
 
 If ZIP download is blocked, bootstrap directly from GitHub raw files instead of downloading the archive:
 
@@ -136,6 +137,12 @@ OWNER=helisudani0 REPO=click2fix VERSION=${VERSION} INSTALL_DIR=/opt/click2fix P
 ```
 
 No backend/frontend repo workflow is needed on the customer side.
+
+If the target environment should not have Docker installed on the analyst workstation at all, use the OVA stage-builder in:
+
+- `deploy/appliance/ova/`
+
+That path packages the same supported appliance runtime into a Linux VM image and keeps Docker inside the VM rather than on the customer host.
 
 What the script does:
 
@@ -267,7 +274,8 @@ Then customer flow becomes:
 Note:
 
 - OVA/VM packaging remains a separate delivery track.
-- The current `v1.1.4` supported customer path is still the Docker-based appliance scaffold above.
+- The current `v1.1.4` supported image set remains `postgres + backend + frontend`.
+- The OVA stage-builder intentionally rejects local appliance files that have drifted into the v2 bounded-service model.
 
 ## GitHub Automation
 

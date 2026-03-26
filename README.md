@@ -176,6 +176,18 @@ Current `v1.1.4` appliance image set:
 - `ghcr.io/helisudani0/click2fix-frontend:<version>`
 - `postgres:16`
 
+VM/OVA path for environments where Windows security policies block ZIP/script delivery:
+
+- build the current-version OVA stage bundle from `deploy/appliance/ova/`
+- import that staged appliance tree into an Ubuntu VM
+- install the bundled first-boot service
+- export the VM as an OVA for customer import
+
+Important:
+
+- raw bootstrap and OVA packaging reduce Windows download friction
+- they do not replace Authenticode signing if you want SmartScreen reputation on Windows-delivered scripts/installers
+
 ### 2. Developer/Local Stack
 
 From `docker/`:
@@ -216,3 +228,6 @@ Required configuration (environment-driven):
   - `ghcr.io/helisudani0/click2fix-backend:<version>`
   - `ghcr.io/helisudani0/click2fix-frontend:<version>`
   - `postgres:16`
+- Alternate delivery paths for the current line:
+  - raw GitHub bootstrap (no ZIP required)
+  - OVA stage-builder for VM-based delivery

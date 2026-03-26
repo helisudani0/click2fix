@@ -33,6 +33,15 @@ deploy/appliance/.env.appliance
 deploy/releases/
 backend/openapi/v2-contract.generated.json
 
+# Appliance VM build outputs
+deploy/appliance/ova/output/
+deploy/appliance/ova/stage/
+deploy/appliance/ova/*.ova
+deploy/appliance/ova/*.ovf
+deploy/appliance/ova/*.vdi
+deploy/appliance/ova/*.vmdk
+deploy/appliance/ova/*.qcow2
+
 # Generated/local playbooks
 backend/playbooks/Auto-Response-*.json
 backend/playbooks/GeneratedPlaybook*.json

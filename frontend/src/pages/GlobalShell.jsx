@@ -973,7 +973,7 @@ export default function GlobalShell() {
                 </div>
               ) : null}
               <div className="meta-line mt-8">
-                AI setup: set `C2F_AI_FEATURES_ENABLED=true` and `C2F_LLM_API_KEY` in appliance `.env.appliance`, then restart backend/frontend.
+                AI setup: use Org Admin / Platform AI Configuration, or set `C2F_AI_FEATURES_ENABLED=true` with `C2F_LLM_API_KEY` in `.env.appliance`.
               </div>
               {assistantPlan?.recommended?.reason ? (
                 <div className="meta-line mt-8">

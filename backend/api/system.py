@@ -1,12 +1,20 @@
 import os
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
 
+from core.ai_providers import AIAdapter
+from core.ingest_gateway_client import IngestGatewayClient
 from core.indexer_client import IndexerClient
 from core.scheduler import scheduler as core_scheduler
 from core.security import require_role
 from core.settings import SETTINGS
+from core.tenant_ai_config import (
+    coerce_ai_provider_config,
+    load_active_tenant_ai_config,
+    to_public_ai_config,
+    upsert_active_tenant_ai_config,
+)
 from core.time_utils import utc_iso, utc_now
 from core.wazuh_client import WazuhClient
 from core.execution_reconciler import reconcile_orphan_executions
@@ -30,6 +38,11 @@ def _safe_settings() -> dict:
     wazuh = cfg.get("wazuh", {}) if isinstance(cfg.get("wazuh", {}), dict) else {}
     indexer = cfg.get("indexer", {}) if isinstance(cfg.get("indexer", {}), dict) else {}
     ingest = cfg.get("analytics_ingest", {}) if isinstance(cfg.get("analytics_ingest", {}), dict) else {}
+    ingest_event_driven = (
+        ingest.get("event_driven", {})
+        if isinstance(ingest.get("event_driven", {}), dict)
+        else {}
+    )
     active_response = cfg.get("active_response", {}) if isinstance(cfg.get("active_response", {}), dict) else {}
     orchestration = cfg.get("orchestration", {}) if isinstance(cfg.get("orchestration", {}), dict) else {}
     endpoint_connectors = (
@@ -97,6 +110,15 @@ def _safe_settings() -> dict:
             "interval_seconds": ingest.get("interval_seconds"),
             "limit": ingest.get("limit"),
             "query": ingest.get("query"),
+            "event_driven": {
+                "enabled": ingest_event_driven.get("enabled"),
+                "worker_interval_seconds": ingest_event_driven.get("worker_interval_seconds"),
+                "batch_size": ingest_event_driven.get("batch_size"),
+                "max_attempts": ingest_event_driven.get("max_attempts"),
+                "retry_base_seconds": ingest_event_driven.get("retry_base_seconds"),
+                "retry_max_seconds": ingest_event_driven.get("retry_max_seconds"),
+                "lock_timeout_seconds": ingest_event_driven.get("lock_timeout_seconds"),
+            },
         },
         "active_response": {
             "enabled": active_response.get("enabled"),
@@ -107,7 +129,10 @@ def _safe_settings() -> dict:
             "bulk_max_workers": orchestration.get("bulk_max_workers"),
             "timeout_seconds": orchestration.get("timeout_seconds"),
             "stop_on_error": orchestration.get("stop_on_error"),
-            "active_response_fallback_to_endpoint": orchestration.get("active_response_fallback_to_endpoint"),
+            "active_response_fallback_to_endpoint": orchestration.get(
+                "active_response_fallback_to_endpoint",
+                False,
+            ),
         },
         "endpoint_connectors": {
             "windows": {
@@ -165,6 +190,29 @@ def _normalize_version_label(raw: str | None) -> str:
     return text if text.lower().startswith("v") else f"v{text}"
 
 
+def _org_id_from_user(user: dict | None) -> int:
+    if not isinstance(user, dict):
+        return 0
+    try:
+        return int(user.get("org_id") or 0)
+    except Exception:
+        return 0
+
+
+def _effective_ai_config_payload(org_id: int) -> dict:
+    tenant_cfg = load_active_tenant_ai_config(org_id)
+    if tenant_cfg:
+        return {
+            "source": "tenant_config",
+            **to_public_ai_config(tenant_cfg),
+        }
+    env_cfg = AIAdapter().config
+    return {
+        "source": "environment",
+        **to_public_ai_config(env_cfg),
+    }
+
+
 @router.get("/version")
 def system_version():
     candidates = [
@@ -177,6 +225,68 @@ def system_version():
     if not version:
         version = _normalize_version_label(os.getenv("IMAGE_TAG")) or "dev"
     return {"version": version, "source": "env"}
+
+
+@router.get("/ai-config")
+def get_system_ai_config(user=Depends(require_role("admin"))):
+    org_id = _org_id_from_user(user if isinstance(user, dict) else None)
+    return {
+        "org_id": org_id,
+        "ai_config": _effective_ai_config_payload(org_id),
+    }
+
+
+@router.put("/ai-config")
+async def update_system_ai_config(request: Request, user=Depends(require_role("admin"))):
+    body: dict = {}
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    payload = body.get("ai_config") if isinstance(body.get("ai_config"), dict) else body
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="ai_config must be an object")
+
+    org_id = _org_id_from_user(user if isinstance(user, dict) else None)
+    if org_id < 1:
+        raise HTTPException(status_code=400, detail="Tenant scope is required for AI config update")
+
+    existing = load_active_tenant_ai_config(org_id)
+    preserve_api_key = bool(body.get("preserve_api_key", True))
+    updates = coerce_ai_provider_config(
+        payload,
+        source_label="system ai config",
+        status_code=400,
+    )
+
+    if preserve_api_key and (("api_key" not in updates) or not str(updates.get("api_key") or "").strip()):
+        if str(existing.get("api_key") or "").strip():
+            updates["api_key"] = str(existing.get("api_key") or "").strip()
+
+    merged = dict(existing or {})
+    merged.update(updates)
+    if "enabled" not in merged:
+        merged["enabled"] = bool(existing.get("enabled")) if isinstance(existing, dict) else False
+    if bool(merged.get("enabled")) and not str(merged.get("api_key") or "").strip():
+        raise HTTPException(status_code=400, detail="api_key is required when AI is enabled")
+
+    actor = str((user or {}).get("sub") or "admin") if isinstance(user, dict) else "admin"
+    notes = str(body.get("notes") or "").strip() or "Updated from Org Admin AI configuration"
+    saved = upsert_active_tenant_ai_config(
+        org_id=org_id,
+        actor=actor,
+        ai_config=merged,
+        notes=notes,
+    )
+    return {
+        "status": "saved",
+        "org_id": org_id,
+        "ai_config": {
+            "source": "tenant_config",
+            **to_public_ai_config(saved),
+        },
+    }
 
 
 @router.get("/overview")
@@ -202,6 +312,20 @@ def overview(user=Depends(require_role("admin"))):
 
     manager = WazuhClient().status()
     indexer = IndexerClient().status()
+    ingest_gateway = IngestGatewayClient()
+    if ingest_gateway.enabled:
+        try:
+            queue_response = ingest_gateway.list_ingestion_queue(
+                params={"limit": 1, "offset": 0, "include_payload": False}
+            )
+            queue_summary = queue_response.get("data", queue_response)
+            ingestion_worker = queue_summary.get("worker") or {"enabled": True, "running": True}
+        except Exception:
+            queue_summary = {"status_counts": {}, "total": 0}
+            ingestion_worker = {"enabled": False, "running": False}
+    else:
+        queue_summary = {"status_counts": {}, "total": 0}
+        ingestion_worker = {"enabled": False, "running": False}
 
     return {
         "started_at": utc_iso(_started_at),
@@ -209,6 +333,7 @@ def overview(user=Depends(require_role("admin"))):
         "integration": {
             "wazuh_manager": manager,
             "indexer": indexer,
+            "ingestion_worker": ingestion_worker,
         },
         "counts": {
             "approvals_pending": approvals_pending,
@@ -219,6 +344,8 @@ def overview(user=Depends(require_role("admin"))):
             "audit_total": audit_total,
             "changes_total": changes_total,
             "changes_open": changes_open,
+            "ingestion_queue_total": int(queue_summary.get("total") or 0),
+            "ingestion_queue_status": queue_summary.get("status_counts") or {},
         },
         "settings": _safe_settings(),
     }

@@ -396,7 +396,7 @@ export default function Analytics() {
           </button>
         </div>
         <div className="meta-line mb-12">
-          AI setup: set `C2F_AI_FEATURES_ENABLED=true` and `C2F_LLM_API_KEY` in appliance `.env.appliance`, then restart backend/frontend.
+          AI setup: use Org Admin / Platform AI Configuration, or set `C2F_AI_FEATURES_ENABLED=true` with `C2F_LLM_API_KEY` in `.env.appliance`.
         </div>
         {!aiInsight ? (
           <div className="empty-state">No AI insight generated yet.</div>

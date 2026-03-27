@@ -5,9 +5,11 @@ import {
   createTenantUserV2,
   createTenantV2,
   getEventLifecycleSummaryV2,
+  getSystemAiConfig,
   getRetentionPoliciesV2,
   getTenantsV2,
   getTenantUsersV2,
+  updateSystemAiConfig,
   upsertRetentionPolicyV2,
 } from "../api/wazuh";
 import { formatWazuhTimestamp } from "../utils/time";
@@ -124,6 +126,23 @@ export default function OrgAdmin() {
 
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
+  const [loadingAiConfig, setLoadingAiConfig] = useState(false);
+  const [savingAiConfig, setSavingAiConfig] = useState(false);
+  const [aiMessage, setAiMessage] = useState("");
+  const [aiError, setAiError] = useState("");
+  const [aiConfig, setAiConfig] = useState({
+    enabled: false,
+    provider: "openai",
+    base_url: "",
+    model: "",
+    api_key: "",
+    timeout_seconds: "45",
+    temperature: "0.1",
+    max_tokens: "1800",
+    has_api_key: false,
+    api_key_masked: "",
+    source: "environment",
+  });
 
   const selectedTenant = useMemo(
     () => tenants.find((tenant) => String(tenant?.tenant_id) === String(selectedTenantId)) || null,
@@ -153,6 +172,79 @@ export default function OrgAdmin() {
   const clearFeedback = () => {
     setMessage(null);
     setError(null);
+  };
+
+  const loadAiConfig = async () => {
+    setLoadingAiConfig(true);
+    setAiError("");
+    try {
+      const response = await getSystemAiConfig();
+      const node = response?.data?.ai_config || {};
+      setAiConfig((current) => ({
+        ...current,
+        enabled: Boolean(node?.enabled),
+        provider: normalizeKey(node?.provider || "openai") || "openai",
+        base_url: normalizeText(node?.base_url),
+        model: normalizeText(node?.model),
+        api_key: "",
+        timeout_seconds: String(node?.timeout_seconds || current.timeout_seconds || "45"),
+        temperature: String(node?.temperature ?? current.temperature ?? "0.1"),
+        max_tokens: String(node?.max_tokens || current.max_tokens || "1800"),
+        has_api_key: Boolean(node?.has_api_key),
+        api_key_masked: normalizeText(node?.api_key_masked),
+        source: normalizeText(node?.source || "environment") || "environment",
+      }));
+    } catch (err) {
+      setAiError(getErrorMessage(err, "Failed to load AI configuration."));
+    } finally {
+      setLoadingAiConfig(false);
+    }
+  };
+
+  const saveAiConfig = async () => {
+    setAiMessage("");
+    setAiError("");
+    setSavingAiConfig(true);
+    try {
+      const payload = {
+        enabled: Boolean(aiConfig?.enabled),
+        provider: normalizeKey(aiConfig?.provider || "openai") || "openai",
+        base_url: normalizeText(aiConfig?.base_url),
+        model: normalizeText(aiConfig?.model),
+        timeout_seconds: Number(aiConfig?.timeout_seconds || 45),
+        temperature: Number(aiConfig?.temperature || 0.1),
+        max_tokens: Number(aiConfig?.max_tokens || 1800),
+      };
+      const apiKey = normalizeText(aiConfig?.api_key);
+      if (apiKey) {
+        payload.api_key = apiKey;
+      }
+
+      const response = await updateSystemAiConfig({
+        ai_config: payload,
+        preserve_api_key: true,
+      });
+      const node = response?.data?.ai_config || {};
+      setAiConfig((current) => ({
+        ...current,
+        enabled: Boolean(node?.enabled),
+        provider: normalizeKey(node?.provider || current.provider || "openai") || "openai",
+        base_url: normalizeText(node?.base_url || current.base_url),
+        model: normalizeText(node?.model || current.model),
+        api_key: "",
+        timeout_seconds: String(node?.timeout_seconds || current.timeout_seconds || "45"),
+        temperature: String(node?.temperature ?? current.temperature ?? "0.1"),
+        max_tokens: String(node?.max_tokens || current.max_tokens || "1800"),
+        has_api_key: Boolean(node?.has_api_key),
+        api_key_masked: normalizeText(node?.api_key_masked),
+        source: normalizeText(node?.source || "tenant_config") || "tenant_config",
+      }));
+      setAiMessage("AI configuration saved. Changes apply immediately.");
+    } catch (err) {
+      setAiError(getErrorMessage(err, "Failed to save AI configuration."));
+    } finally {
+      setSavingAiConfig(false);
+    }
   };
 
   const loadTenants = async () => {
@@ -269,6 +361,7 @@ export default function OrgAdmin() {
 
   const refreshWorkspace = async () => {
     clearFeedback();
+    await loadAiConfig();
     await loadTenants();
     if (selectedTenantId) {
       await Promise.all([
@@ -279,6 +372,7 @@ export default function OrgAdmin() {
   };
 
   useEffect(() => {
+    loadAiConfig();
     loadTenants();
   }, []);
 
@@ -497,6 +591,164 @@ export default function OrgAdmin() {
           <button className="btn secondary" onClick={refreshWorkspace}>
             Refresh
           </button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <div>
+            <h3>Platform AI Configuration</h3>
+            <p className="muted">
+              Enable AI once for this org and reuse it across Global Shell assistant, AI playbook generation, and analytics insights.
+            </p>
+          </div>
+          <span className={`status-pill ${aiConfig.enabled ? "success" : "pending"}`}>
+            {aiConfig.enabled ? "enabled" : "disabled"}
+          </span>
+        </div>
+
+        {aiMessage ? <div className="empty-state">{aiMessage}</div> : null}
+        {aiError ? <div className="empty-state">{aiError}</div> : null}
+
+        <div className="grid-3 mt-12">
+          <label className="list-item">
+            <div className="muted">AI Enabled</div>
+            <select
+              className="input mt-10"
+              value={aiConfig.enabled ? "true" : "false"}
+              onChange={(event) =>
+                setAiConfig((current) => ({
+                  ...current,
+                  enabled: event.target.value === "true",
+                }))
+              }
+            >
+              <option value="false">Disabled</option>
+              <option value="true">Enabled</option>
+            </select>
+          </label>
+          <label className="list-item">
+            <div className="muted">Provider</div>
+            <select
+              className="input mt-10"
+              value={aiConfig.provider}
+              onChange={(event) =>
+                setAiConfig((current) => ({
+                  ...current,
+                  provider: normalizeKey(event.target.value) || "openai",
+                }))
+              }
+            >
+              <option value="openai">openai</option>
+              <option value="gemini">gemini</option>
+            </select>
+          </label>
+          <label className="list-item">
+            <div className="muted">Model</div>
+            <input
+              className="input mt-10"
+              value={aiConfig.model}
+              onChange={(event) =>
+                setAiConfig((current) => ({
+                  ...current,
+                  model: event.target.value,
+                }))
+              }
+              placeholder="gpt-4.1-mini / gemini-2.0-flash"
+            />
+          </label>
+        </div>
+
+        <div className="grid-2 mt-12">
+          <label className="list-item">
+            <div className="muted">Base URL (optional)</div>
+            <input
+              className="input mt-10"
+              value={aiConfig.base_url}
+              onChange={(event) =>
+                setAiConfig((current) => ({
+                  ...current,
+                  base_url: event.target.value,
+                }))
+              }
+              placeholder="https://api.openai.com/v1"
+            />
+          </label>
+          <label className="list-item">
+            <div className="muted">API Key</div>
+            <input
+              className="input mt-10"
+              type="password"
+              value={aiConfig.api_key}
+              onChange={(event) =>
+                setAiConfig((current) => ({
+                  ...current,
+                  api_key: event.target.value,
+                }))
+              }
+              placeholder={aiConfig.has_api_key ? `Stored key: ${aiConfig.api_key_masked}` : "Enter provider API key"}
+            />
+            <div className="muted mt-10">Leave blank to keep the currently stored key.</div>
+          </label>
+        </div>
+
+        <div className="grid-3 mt-12">
+          <label className="list-item">
+            <div className="muted">Timeout (seconds)</div>
+            <input
+              className="input mt-10"
+              type="number"
+              min="5"
+              value={aiConfig.timeout_seconds}
+              onChange={(event) =>
+                setAiConfig((current) => ({
+                  ...current,
+                  timeout_seconds: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="list-item">
+            <div className="muted">Temperature (0-2)</div>
+            <input
+              className="input mt-10"
+              type="number"
+              min="0"
+              max="2"
+              step="0.1"
+              value={aiConfig.temperature}
+              onChange={(event) =>
+                setAiConfig((current) => ({
+                  ...current,
+                  temperature: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="list-item">
+            <div className="muted">Max Tokens</div>
+            <input
+              className="input mt-10"
+              type="number"
+              min="300"
+              value={aiConfig.max_tokens}
+              onChange={(event) =>
+                setAiConfig((current) => ({
+                  ...current,
+                  max_tokens: event.target.value,
+                }))
+              }
+            />
+          </label>
+        </div>
+
+        <div className="page-actions mt-12">
+          <button className="btn" onClick={saveAiConfig} disabled={savingAiConfig || loadingAiConfig}>
+            {savingAiConfig ? "Saving..." : "Save AI Configuration"}
+          </button>
+          <span className="muted">
+            Source: {aiConfig.source}. Changes apply immediately; container restart is not required.
+          </span>
         </div>
       </div>
 

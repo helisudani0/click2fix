@@ -8,10 +8,10 @@ from core.active_defense import predict_alert_storm
 from core.analytics import overview, kill_chain, alert_summary, hourly_volume
 from core.ai_providers import AIAdapter, AIProviderError
 from core.security import current_user
+from core.tenant_ai_config import coerce_ai_provider_config, load_active_tenant_ai_config
 
 
 router = APIRouter(prefix="/analytics")
-_ALLOWED_AI_PROVIDERS = {"openai", "gemini"}
 
 
 def _to_int(value: Any, default: int = 0) -> int:
@@ -36,40 +36,11 @@ def _to_bool(value: Any, default: bool = False) -> bool:
 
 
 def _coerce_ai_config(value: Any) -> dict[str, Any]:
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise HTTPException(status_code=400, detail="ai_config must be an object")
-    out: dict[str, Any] = {}
-    provider = _to_text(value.get("provider")).lower()
-    if provider:
-        if provider not in _ALLOWED_AI_PROVIDERS:
-            raise HTTPException(status_code=400, detail=f"Unsupported AI provider '{provider}'")
-        out["provider"] = provider
-    for key in ("base_url", "model", "api_key"):
-        if key in value:
-            out[key] = _to_text(value.get(key))
-    if "enabled" in value:
-        out["enabled"] = _to_bool(value.get("enabled"), True)
-    if "timeout_seconds" in value:
-        timeout_seconds = _to_int(value.get("timeout_seconds"), -1)
-        if timeout_seconds < 1:
-            raise HTTPException(status_code=400, detail="ai_config.timeout_seconds must be >= 1")
-        out["timeout_seconds"] = timeout_seconds
-    if "max_tokens" in value:
-        max_tokens = _to_int(value.get("max_tokens"), -1)
-        if max_tokens < 1:
-            raise HTTPException(status_code=400, detail="ai_config.max_tokens must be >= 1")
-        out["max_tokens"] = max_tokens
-    if "temperature" in value:
-        try:
-            temperature = float(value.get("temperature"))
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail="ai_config.temperature must be a number") from exc
-        if temperature < 0 or temperature > 2:
-            raise HTTPException(status_code=400, detail="ai_config.temperature must be between 0 and 2")
-        out["temperature"] = temperature
-    return out
+    return coerce_ai_provider_config(
+        value,
+        source_label="request body",
+        status_code=400,
+    )
 
 
 def _fallback_ai_insight(
@@ -172,6 +143,8 @@ async def analytics_ai_insights(request: Request, user=Depends(current_user)):
     alert_id = _to_text(body.get("alert_id"))
     prompt = _to_text(body.get("prompt") or body.get("ai_prompt") or body.get("instructions"))
     ai_config = _coerce_ai_config(body.get("ai_config"))
+    if not ai_config and isinstance(user, dict):
+        ai_config = load_active_tenant_ai_config(user.get("org_id"))
 
     overview_payload = overview()
     hourly_series = hourly_volume(hours)

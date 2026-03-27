@@ -16,6 +16,7 @@ from core.playbook_generator import (
 )
 from core.security import recent_auth_window_seconds, require_recent_auth, require_role
 from core.settings import SETTINGS
+from core.tenant_ai_config import coerce_ai_provider_config, load_active_tenant_ai_config
 from core.time_utils import utc_now_naive
 from core.ws_bus import publish_event
 from core.wazuh_client import WazuhClient
@@ -34,7 +35,6 @@ PLAYBOOK_DIR = (
     else "./playbooks"
 )
 _MAX_PLAYBOOK_STEPS = 25
-_ALLOWED_AI_PROVIDERS = {"openai", "gemini"}
 _PLAYBOOK_STEP_UP_ACTION_IDS = {
     "collect-forensics",
     "collect-memory",
@@ -716,40 +716,11 @@ def _to_bool(value, default: bool = False) -> bool:
 
 
 def _coerce_ai_config(value: Any) -> dict[str, Any]:
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise HTTPException(status_code=400, detail="ai_config must be an object")
-    out: dict[str, Any] = {}
-    provider = str(value.get("provider") or "").strip().lower()
-    if provider:
-        if provider not in _ALLOWED_AI_PROVIDERS:
-            raise HTTPException(status_code=400, detail=f"Unsupported AI provider '{provider}'")
-        out["provider"] = provider
-    for key in ("base_url", "model", "api_key"):
-        if key in value:
-            out[key] = str(value.get(key) or "").strip()
-    if "enabled" in value:
-        out["enabled"] = _to_bool(value.get("enabled"), True)
-    if "timeout_seconds" in value:
-        timeout_seconds = _to_int(value.get("timeout_seconds"), -1)
-        if timeout_seconds < 1:
-            raise HTTPException(status_code=400, detail="ai_config.timeout_seconds must be >= 1")
-        out["timeout_seconds"] = timeout_seconds
-    if "max_tokens" in value:
-        max_tokens = _to_int(value.get("max_tokens"), -1)
-        if max_tokens < 1:
-            raise HTTPException(status_code=400, detail="ai_config.max_tokens must be >= 1")
-        out["max_tokens"] = max_tokens
-    if "temperature" in value:
-        try:
-            temperature = float(value.get("temperature"))
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail="ai_config.temperature must be a number") from exc
-        if temperature < 0 or temperature > 2:
-            raise HTTPException(status_code=400, detail="ai_config.temperature must be between 0 and 2")
-        out["temperature"] = temperature
-    return out
+    return coerce_ai_provider_config(
+        value,
+        source_label="request body",
+        status_code=400,
+    )
 
 
 def _store_execution_targets(conn, execution_id: int, rows) -> None:
@@ -854,6 +825,8 @@ async def generate(request: Request, user=Depends(require_role("analyst"))):
     use_ai = _to_bool(body.get("use_ai"), False) or _to_bool(body.get("ai_enabled"), False)
     ai_prompt = str(body.get("ai_prompt") or body.get("prompt") or body.get("instructions") or "").strip()
     ai_config = _coerce_ai_config(body.get("ai_config"))
+    if not ai_config and isinstance(user, dict):
+        ai_config = load_active_tenant_ai_config(user.get("org_id"))
 
     playbook = generate_playbook(
         alert_id=alert_id,

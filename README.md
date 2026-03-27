@@ -25,6 +25,7 @@ It gives IT/security teams one console for triage, response, remote command exec
 - Response and verification upgrades:
   - winget-backed Windows package remediation with bootstrap fallback and cleaner verification output
   - Global Shell command-file execution on Windows, reusable shell sessions, and optional assistant-guided command planning/retry
+  - org-level AI runtime configuration from Org Admin (provider/key/model) for Global Shell assistant, playbook generation, and analytics insights
   - post-action verification reconciliation for already-satisfied package states and pending SCA verification loops
   - scheduler jobs API parity with lifecycle actions (`create`, `update`, `run-now`, pause/resume via toggle)
   - fleet and per-agent SCA rollups + recommendation APIs
@@ -211,6 +212,25 @@ Required configuration (environment-driven):
 - Indexer URL + credentials
 - JWT secret
 - Endpoint connector credentials (global and optional per-agent overrides)
+
+## AI Enablement (v1.1.4)
+
+Default behavior:
+
+- AI is disabled by default until a valid provider API key is configured.
+
+Enable using environment variables:
+
+- `C2F_AI_FEATURES_ENABLED=true`
+- `C2F_LLM_API_KEY=<your-key>`
+- optional: `C2F_LLM_PROVIDER`, `C2F_LLM_MODEL`, `C2F_LLM_BASE_URL`
+
+Enable from frontend (Org Admin):
+
+- Open **Org Admin -> Platform AI Configuration**
+- Set `enabled`, provider/model, and API key
+- Save configuration
+- Changes apply immediately for AI-enabled areas (Global Shell assistant, Playbooks AI generation, Analytics AI insights) without container restart
 
 ## Security Notes
 

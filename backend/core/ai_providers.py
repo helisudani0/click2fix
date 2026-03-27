@@ -530,8 +530,14 @@ class AIAdapter:
             )
         )
         platform_enabled = AIAdapter._platform_ai_enabled()
+        runtime_enabled_override = bool(
+            has_user_config
+            and ("enabled" in user_cfg)
+            and _to_bool(user_cfg.get("enabled"), False)
+        )
+        effective_platform_enabled = bool(platform_enabled or runtime_enabled_override)
         local_enabled = _to_bool(pick("enabled", _LEGACY_AI_ENABLED_ENV, True), True)
-        enabled = bool(platform_enabled and local_enabled and bool(normalized_api_key))
+        enabled = bool(effective_platform_enabled and local_enabled and bool(normalized_api_key))
         return {
             "enabled": enabled,
             "provider": provider,
@@ -546,7 +552,7 @@ class AIAdapter:
     def ask_json(self, system_prompt: str, user_payload: dict) -> dict:
         if not self.enabled:
             raise AIProviderError(
-                "AI features are disabled. Set C2F_AI_FEATURES_ENABLED=true and configure C2F_LLM_API_KEY."
+                "AI features are disabled. Set C2F_AI_FEATURES_ENABLED=true with C2F_LLM_API_KEY, or configure AI in Org Admin."
             )
         if self.provider is None:
             self.provider = ProviderFactory.create(self.config)

@@ -507,7 +507,7 @@ export default function Playbooks() {
                   placeholder="Example: prioritize containment first, keep user impact low, avoid reboot actions."
                 />
                 <div className="meta-line mt-8">
-                  AI setup: set `C2F_AI_FEATURES_ENABLED=true` and `C2F_LLM_API_KEY` in appliance `.env.appliance`, then restart backend/frontend.
+                  AI setup: use Org Admin / Platform AI Configuration, or set `C2F_AI_FEATURES_ENABLED=true` with `C2F_LLM_API_KEY` in `.env.appliance`.
                 </div>
               </div>
             ) : null}

@@ -229,6 +229,8 @@ export const executePlaybook = (payload) => api.post("/playbooks/execute", paylo
 export const seedDefaultPlaybooks = (payload = {}) =>
   api.post("/playbooks/seed-defaults", payload);
 export const getAnalyticsOverview = () => api.get("/analytics/overview");
+export const getSystemAiConfig = () => api.get("/system/ai-config");
+export const updateSystemAiConfig = (payload = {}) => api.put("/system/ai-config", payload);
 export const getKillChain = (caseId) =>
   api.get("/analytics/kill-chain", { params: caseId ? { case_id: caseId } : undefined });
 export const getAlertSummary = (alertId) => api.get(`/analytics/alert/${alertId}`);

@@ -8,6 +8,7 @@ import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
 const OPS_PANEL_COMPACT_STORAGE_KEY = "c2f-ops-panel-compact-v8";
 const PRIORITY_QUEUE_STORAGE_KEY = "c2f-priority-queue-v8";
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "c2f-sidebar-collapsed-v1";
 
 const ROUTE_LABELS = {
   "/": "Dashboard",
@@ -164,6 +165,10 @@ export default function AppLayout() {
   const [priorityConfigOpen, setPriorityConfigOpen] = useState(false);
   const [priorityPanelOpen, setPriorityPanelOpen] = useState(false);
   const [opsPanelOpen, setOpsPanelOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "1";
+  });
   const [backendHealth, setBackendHealth] = useState({
     activeExecutions: 0,
     queuedExecutions: 0,
@@ -180,6 +185,11 @@ export default function AppLayout() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(OPS_PANEL_COMPACT_STORAGE_KEY, opsCompact ? "1" : "0");
   }, [opsCompact]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? "1" : "0");
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     let active = true;
@@ -361,18 +371,6 @@ export default function AppLayout() {
   }, [location.pathname]);
 
   const currentPageLabel = useMemo(() => ROUTE_LABELS[location.pathname || "/"] || "Workspace", [location.pathname]);
-  const flatNavLinks = useMemo(() => {
-    const seen = new Set();
-    const list = [];
-    NAV_SECTIONS.forEach((section) => {
-      section.links.forEach((link) => {
-        if (seen.has(link.to)) return;
-        seen.add(link.to);
-        list.push(link);
-      });
-    });
-    return list;
-  }, []);
 
   const submitSearch = (event) => {
     event.preventDefault();
@@ -436,83 +434,110 @@ export default function AppLayout() {
   }, []);
 
   return (
-    <div className="app-layout app-shell-v5">
-      <div className="shell-frame">
-        <header className="shell-header">
-          <div className="shell-brand">
-            <div className="brand-badge">C2F</div>
-            <div className="shell-brand-copy">
-              <div className="brand-title">Click2Fix</div>
-              <div className="brand-subtitle">SOC Operations</div>
+    <div className={`app-layout app-shell-v5${sidebarCollapsed ? " is-collapsed" : ""}`}>
+      <div className="shell-frame shell-frame-sidenav">
+        <aside className="shell-sidebar" aria-label="Primary navigation">
+          <div className="shell-sidebar-header">
+            <div className="shell-brand">
+              <div className="brand-badge">C2F</div>
+              <div className="shell-brand-copy">
+                <div className="brand-title">Click2Fix</div>
+                <div className="brand-subtitle">SOC Operations</div>
+              </div>
             </div>
+            <button
+              type="button"
+              className="shell-collapse-toggle"
+              onClick={() => setSidebarCollapsed((prev) => !prev)}
+              aria-pressed={sidebarCollapsed}
+            >
+              {sidebarCollapsed ? "Expand" : "Collapse"}
+            </button>
           </div>
 
-          <div className="shell-context">
-            <div className="shell-page-title">{currentPageLabel}</div>
-            <div className="shell-breadcrumbs">
-              {breadcrumbs.map((item, index) => (
-                <span key={`${item.href}-${item.label}`}>
-                  {index > 0 ? " / " : ""}
-                  {item.label}
-                </span>
-              ))}
-              <span> / {APP_TIMEZONE_LABEL}</span>
-            </div>
-          </div>
-
-          <form className="shell-search" onSubmit={submitSearch}>
-            <input
-              aria-label="Search alerts, agents, actions"
-              placeholder="Search alerts, agents, CVEs, hosts..."
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-            <button type="submit" className="btn secondary">Search</button>
-          </form>
-
-          <div className="shell-controls">
-            <span className={`shell-health-dot ${healthTone}`} aria-hidden="true" />
-            <span className="shell-chip">{backendHealth.socketLive ? "Socket live" : "Reconnecting"}</span>
-            <span className="shell-chip">{backendHealth.activeExecutions} active</span>
-            <span className="shell-chip">
-              {backendHealth.socketLatencyMs !== null ? `${backendHealth.socketLatencyMs} ms` : "Latency --"}
-            </span>
-            {backendHealth.queuedExecutions > 0 ? (
-              <span className="shell-chip">{backendHealth.queuedExecutions} queued</span>
-            ) : null}
-            <span className="shell-chip shell-chip-user">{user ? `${user.username} - ${user.role}` : "user"}</span>
-            <button type="button" className="btn secondary" onClick={logout}>Logout</button>
-          </div>
-        </header>
-
-        <nav className="shell-nav" aria-label="Primary navigation">
-          <div className="shell-nav-links-row">
-            {flatNavLinks.map((link) => (
-              <NavLink
-                key={link.to}
-                to={link.to}
-                end={Boolean(link.end)}
-                className={({ isActive }) => `shell-nav-link${isActive ? " active" : ""}`}
-              >
-                {link.label}
-              </NavLink>
+          <div className="shell-sidebar-body">
+            {NAV_SECTIONS.map((section) => (
+              <div key={section.title} className="shell-nav-group">
+                <div className="shell-nav-group-title">{section.title}</div>
+                <div className="shell-nav-group-links">
+                  {section.links.map((link) => (
+                    <NavLink
+                      key={link.to}
+                      to={link.to}
+                      end={Boolean(link.end)}
+                      className={({ isActive }) => `shell-nav-link${isActive ? " active" : ""}`}
+                    >
+                      <span className="shell-nav-icon">{shortLabel(link.label)}</span>
+                      <span className="shell-nav-text">{link.label}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
-          <div className="shell-nav-actions">
+
+          <div className="shell-sidebar-panels">
+            <div className="shell-nav-group-title">Panels</div>
             <button type="button" className="btn secondary" onClick={() => setPriorityPanelOpen(true)}>
               Priority Queue
             </button>
             <button type="button" className="btn secondary" onClick={() => setOpsPanelOpen(true)}>
               Backend Ops
             </button>
-            <button type="button" className="btn secondary" onClick={openOpsConsole}>Open /ops</button>
-            <span className="shell-version">v{appVersion}</span>
+            <button type="button" className="btn secondary" onClick={openOpsConsole}>
+              Open /ops
+            </button>
           </div>
-        </nav>
 
-        <section className="shell-content">
-          <Outlet />
-        </section>
+          <div className="shell-sidebar-footer">
+            <span className="shell-version">v{appVersion}</span>
+            <span className="shell-user">{user ? `${user.username} - ${user.role}` : "user"}</span>
+          </div>
+        </aside>
+
+        <div className="shell-main">
+          <header className="shell-header">
+            <div className="shell-context">
+              <div className="shell-page-title">{currentPageLabel}</div>
+              <div className="shell-breadcrumbs">
+                {breadcrumbs.map((item, index) => (
+                  <span key={`${item.href}-${item.label}`}>
+                    {index > 0 ? " / " : ""}
+                    {item.label}
+                  </span>
+                ))}
+                <span> / {APP_TIMEZONE_LABEL}</span>
+              </div>
+            </div>
+
+            <form className="shell-search" onSubmit={submitSearch}>
+              <input
+                aria-label="Search alerts, agents, actions"
+                placeholder="Search alerts, agents, CVEs, hosts..."
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+              <button type="submit" className="btn secondary">Search</button>
+            </form>
+
+            <div className="shell-controls">
+              <span className={`shell-health-dot ${healthTone}`} aria-hidden="true" />
+              <span className="shell-chip">{backendHealth.socketLive ? "Socket live" : "Reconnecting"}</span>
+              <span className="shell-chip">{backendHealth.activeExecutions} active</span>
+              <span className="shell-chip">
+                {backendHealth.socketLatencyMs !== null ? `${backendHealth.socketLatencyMs} ms` : "Latency --"}
+              </span>
+              {backendHealth.queuedExecutions > 0 ? (
+                <span className="shell-chip">{backendHealth.queuedExecutions} queued</span>
+              ) : null}
+              <button type="button" className="btn secondary" onClick={logout}>Logout</button>
+            </div>
+          </header>
+
+          <section className="shell-content">
+            <Outlet />
+          </section>
+        </div>
       </div>
 
       {priorityPanelOpen ? (

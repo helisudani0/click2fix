@@ -50,6 +50,7 @@ mkdir -p "${INSTALL_DIR}"
 FILES=(
   ".env.appliance.template"
   "docker-compose.appliance.yml"
+  "nginx.conf"
   "preflight.ps1"
   "install.ps1"
   "manage.ps1"

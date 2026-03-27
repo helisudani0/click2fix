@@ -10,4 +10,4 @@ COPY backend .
 # Create directory for database with proper permissions
 RUN mkdir -p /app/data && chmod 777 /app/data
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

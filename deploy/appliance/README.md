@@ -21,8 +21,8 @@ Download asset:
 
 Current `v1.1.4` appliance scope:
 
-- runtime services: `postgres`, `backend`, `frontend`
-- published Click2Fix images: backend + frontend only
+- runtime services: `postgres`, `redis`, `backend`, `c2f-lb` (nginx), `frontend`
+- published Click2Fix images: backend + frontend only (redis/nginx are public images)
 - `agent-manager`, `event-indexer`, and other v2 bounded services are not part of the current appliance release
 
 ## Files

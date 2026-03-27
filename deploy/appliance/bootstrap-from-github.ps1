@@ -59,6 +59,7 @@ $baseUrl = "https://raw.githubusercontent.com/$Owner/$Repo/$Version/deploy/appli
 $files = @(
   ".env.appliance.template",
   "docker-compose.appliance.yml",
+  "nginx.conf",
   "preflight.ps1",
   "install.ps1",
   "manage.ps1",

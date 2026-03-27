@@ -488,7 +488,7 @@ backend_port="$(resolve_port_conflict "$(normalize_port "${backend_port}" "8000"
 frontend_port="$(resolve_port_conflict "$(normalize_port "${frontend_port}" "5173")" "frontend" frontend)"
 db_port="$(resolve_port_conflict "$(normalize_port "${current_db_port}" "5432")" "db host" db)"
 
-trusted_hosts="localhost,127.0.0.1,*.localhost,backend,frontend,c2f-backend,c2f-frontend,${public_host}"
+trusted_hosts="localhost,127.0.0.1,*.localhost,backend,frontend,c2f-backend,c2f-frontend,c2f-lb,${public_host}"
 cors_origins="http://${public_host}:${frontend_port}"
 
 set_env APP_BRAND "${app_brand}" "${ENV_FILE}"

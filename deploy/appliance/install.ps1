@@ -540,7 +540,7 @@ $frontendPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawVal
 $backendPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $backendPort -DefaultPort 8000) -ServiceNames @("c2f-lb", "backend") -Label "backend"
 $dbPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $dbPort -DefaultPort 5432) -ServiceNames @("db") -Label "db host"
 
-$trustedHosts = "localhost,127.0.0.1,*.localhost,backend,frontend,c2f-backend,c2f-frontend,$publicHost"
+$trustedHosts = "localhost,127.0.0.1,*.localhost,backend,frontend,c2f-backend,c2f-frontend,c2f-lb,$publicHost"
 $corsOrigins = "http://$publicHost`:$frontendPort"
 
 Set-EnvValue -Path $envPath -Key "APP_BRAND" -Value $appBrand

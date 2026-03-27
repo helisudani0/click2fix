@@ -184,6 +184,7 @@ $applianceFiles = @(
   "build-local-images.ps1",
   "build-local-images.sh",
   "docker-compose.appliance.yml",
+  "nginx.conf",
   "export-images.ps1",
   "export-images.sh",
   "import-images.ps1",

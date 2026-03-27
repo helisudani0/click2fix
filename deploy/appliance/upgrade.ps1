@@ -430,7 +430,8 @@ function Build-TrustedHostsValue {
     "backend",
     "frontend",
     "c2f-backend",
-    "c2f-frontend"
+    "c2f-frontend",
+    "c2f-lb"
   )
   $merged = @($base)
   $merged += Split-EnvList -RawValue $ExistingValue

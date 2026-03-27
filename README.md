@@ -197,6 +197,12 @@ From `docker/`:
 docker compose up -d --build
 ```
 
+Notes:
+
+- API traffic is served through the local gateway on `http://localhost:8000`.
+- Scale backend replicas with: `docker compose up -d --scale backend=3`
+- Redis is included to fan out execution WebSocket events across replicas.
+
 ## Minimum Prerequisites (Typical 50-Agent Baseline)
 
 - Docker + Docker Compose

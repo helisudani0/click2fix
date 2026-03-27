@@ -34,6 +34,7 @@ $required = @(
   "manage.ps1",
   "upgrade.ps1",
   "docker-compose.appliance.yml",
+  "nginx.conf",
   ".env.appliance.template",
   "setup.cmd"
 )

@@ -301,6 +301,7 @@ build_trusted_hosts() {
     echo "frontend"
     echo "c2f-backend"
     echo "c2f-frontend"
+    echo "c2f-lb"
     if [[ -n "${public_host}" ]]; then
       echo "${public_host}"
     fi

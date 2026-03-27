@@ -23,11 +23,15 @@ const asFlag = (value, defaultValue) => {
   if (["0", "false", "no", "off"].includes(normalized)) return false;
   return defaultValue;
 };
-const ASSIST_ENV_ENABLED = asFlag(import.meta.env.VITE_AI_REMEDIATION_ENABLED, false);
+const ASSIST_ENV_ENABLED = asFlag(
+  import.meta.env.VITE_C2F_AI_FEATURES_ENABLED,
+  asFlag(import.meta.env.VITE_AI_REMEDIATION_ENABLED, false)
+);
 const looksLikeAssistantUnavailable = (text) => {
   const lowered = String(text || "").toLowerCase();
   return (
     lowered.includes("ai remediation is disabled")
+    || lowered.includes("ai features are disabled")
     || lowered.includes("unsupported ai provider")
     || lowered.includes("requires api_key")
   );
@@ -969,7 +973,7 @@ export default function GlobalShell() {
                 </div>
               ) : null}
               <div className="meta-line mt-8">
-                AI key setup: set `C2F_AI_REMEDIATION_ENABLED=true` and `C2F_LLM_API_KEY` in appliance `.env.appliance`, then restart backend/frontend.
+                AI setup: set `C2F_AI_FEATURES_ENABLED=true` and `C2F_LLM_API_KEY` in appliance `.env.appliance`, then restart backend/frontend.
               </div>
               {assistantPlan?.recommended?.reason ? (
                 <div className="meta-line mt-8">

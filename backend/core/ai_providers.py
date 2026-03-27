@@ -13,6 +13,8 @@ _DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 _DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
 _DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 _DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+_GLOBAL_AI_ENABLED_ENV = "C2F_AI_FEATURES_ENABLED"
+_LEGACY_AI_ENABLED_ENV = "C2F_AI_REMEDIATION_ENABLED"
 
 
 def _text(value: Any) -> str:
@@ -473,9 +475,16 @@ class AIAdapter:
 
     def __init__(self, config: Dict[str, Any] | None = None, settings_config: Dict[str, Any] | None = None):
         self.config = self._resolve_config(config=config, settings_config=settings_config)
-        self.enabled = _to_bool(self.config.get("enabled"), True)
+        self.enabled = _to_bool(self.config.get("enabled"), False)
         # Provider initialization is lazy so disabled AI does not require provider credentials at startup.
         self.provider: BaseAIProvider | None = None
+
+    @staticmethod
+    def _platform_ai_enabled() -> bool:
+        raw = os.getenv(_GLOBAL_AI_ENABLED_ENV)
+        if raw is None:
+            raw = os.getenv(_LEGACY_AI_ENABLED_ENV, "false")
+        return _to_bool(raw, False)
 
     @staticmethod
     def _resolve_config(config: Dict[str, Any] | None, settings_config: Dict[str, Any] | None) -> Dict[str, Any]:
@@ -512,19 +521,23 @@ class AIAdapter:
             api_key = os.getenv("C2F_LLM_API_KEY")
             if api_key is None and "api_key" in settings_cfg:
                 api_key = settings_cfg.get("api_key")
+        normalized_api_key = _text(
+            api_key
+            or (
+                os.getenv("OPENAI_API_KEY")
+                if (not has_user_config and provider == "openai")
+                else ""
+            )
+        )
+        platform_enabled = AIAdapter._platform_ai_enabled()
+        local_enabled = _to_bool(pick("enabled", _LEGACY_AI_ENABLED_ENV, True), True)
+        enabled = bool(platform_enabled and local_enabled and bool(normalized_api_key))
         return {
-            "enabled": _to_bool(pick("enabled", "C2F_AI_REMEDIATION_ENABLED", True), True),
+            "enabled": enabled,
             "provider": provider,
             "base_url": _text(pick("base_url", "C2F_LLM_BASE_URL", default_base)) or default_base,
             "model": _text(pick("model", "C2F_LLM_MODEL", default_model)) or default_model,
-            "api_key": _text(
-                api_key
-                or (
-                    os.getenv("OPENAI_API_KEY")
-                    if (not has_user_config and provider == "openai")
-                    else ""
-                )
-            ),
+            "api_key": normalized_api_key,
             "timeout_seconds": max(5, _to_int(pick("timeout_seconds", "C2F_LLM_TIMEOUT_SECONDS", 45), 45)),
             "temperature": _to_float(pick("temperature", "C2F_LLM_TEMPERATURE", 0.1), 0.1),
             "max_tokens": max(300, _to_int(pick("max_tokens", "C2F_LLM_MAX_TOKENS", 1800), 1800)),
@@ -532,7 +545,9 @@ class AIAdapter:
 
     def ask_json(self, system_prompt: str, user_payload: dict) -> dict:
         if not self.enabled:
-            raise AIProviderError("AI remediation is disabled")
+            raise AIProviderError(
+                "AI features are disabled. Set C2F_AI_FEATURES_ENABLED=true and configure C2F_LLM_API_KEY."
+            )
         if self.provider is None:
             self.provider = ProviderFactory.create(self.config)
         return self.provider.ask_json(system_prompt=system_prompt, user_payload=user_payload)

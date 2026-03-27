@@ -395,6 +395,9 @@ export default function Analytics() {
             {loadingAiInsight ? "Generating..." : "Generate Insight"}
           </button>
         </div>
+        <div className="meta-line mb-12">
+          AI setup: set `C2F_AI_FEATURES_ENABLED=true` and `C2F_LLM_API_KEY` in appliance `.env.appliance`, then restart backend/frontend.
+        </div>
         {!aiInsight ? (
           <div className="empty-state">No AI insight generated yet.</div>
         ) : (

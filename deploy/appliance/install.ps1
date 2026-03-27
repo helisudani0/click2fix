@@ -486,7 +486,11 @@ $winrmPassword = Read-SecretValue "Global WinRM password" (Get-EnvValue $envPath
 $adminUser = Read-Value "Initial Click2Fix admin username" (Get-EnvValue $envPath "C2F_BOOTSTRAP_ADMIN_USERNAME")
 $adminPassword = Read-SecretValue "Initial Click2Fix admin password" (Get-EnvValue $envPath "C2F_BOOTSTRAP_ADMIN_PASSWORD")
 
-$aiEnabled = Read-Value "Enable AI assistant in Global Shell (true/false)" (Get-EnvValue $envPath "C2F_AI_REMEDIATION_ENABLED")
+$currentAiEnabled = Get-EnvValue $envPath "C2F_AI_FEATURES_ENABLED"
+if ([string]::IsNullOrWhiteSpace($currentAiEnabled)) {
+  $currentAiEnabled = Get-EnvValue $envPath "C2F_AI_REMEDIATION_ENABLED"
+}
+$aiEnabled = Read-Value "Enable AI features platform-wide (true/false)" $currentAiEnabled
 $aiProvider = Read-Value "AI provider (openai/gemini)" (Get-EnvValue $envPath "C2F_LLM_PROVIDER")
 $aiBaseUrl = Read-Value "AI base URL (optional; blank = provider default)" (Get-EnvValue $envPath "C2F_LLM_BASE_URL")
 $aiModel = Read-Value "AI model (optional; blank = provider default)" (Get-EnvValue $envPath "C2F_LLM_MODEL")
@@ -529,7 +533,7 @@ if (-not @("openai", "gemini") -contains $aiProvider) {
   throw "AI provider must be 'openai' or 'gemini'."
 }
 if ($aiEnabledFlag -and [string]::IsNullOrWhiteSpace($aiApiKey)) {
-  Write-Host "Warning: AI assistant is enabled but C2F_LLM_API_KEY is empty. Assistant generation will fail until a key is set." -ForegroundColor Yellow
+  Write-Host "Warning: AI features are enabled but C2F_LLM_API_KEY is empty. AI endpoints will remain unavailable until a key is set." -ForegroundColor Yellow
 }
 
 $frontendPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $frontendPort -DefaultPort 5173) -ServiceNames @("frontend") -Label "frontend"
@@ -557,6 +561,7 @@ Set-EnvValue -Path $envPath -Key "C2F_WINRM_USERNAME" -Value $winrmUser
 Set-EnvValue -Path $envPath -Key "C2F_WINRM_PASSWORD" -Value $winrmPassword
 Set-EnvValue -Path $envPath -Key "C2F_BOOTSTRAP_ADMIN_USERNAME" -Value $adminUser
 Set-EnvValue -Path $envPath -Key "C2F_BOOTSTRAP_ADMIN_PASSWORD" -Value $adminPassword
+Set-EnvValue -Path $envPath -Key "C2F_AI_FEATURES_ENABLED" -Value $aiEnabled
 Set-EnvValue -Path $envPath -Key "C2F_AI_REMEDIATION_ENABLED" -Value $aiEnabled
 Set-EnvValue -Path $envPath -Key "C2F_LLM_PROVIDER" -Value $aiProvider
 Set-EnvValue -Path $envPath -Key "C2F_LLM_BASE_URL" -Value $aiBaseUrl

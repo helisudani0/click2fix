@@ -39,7 +39,7 @@ The generated template is pre-filled with:
 
 AI assistant is optional and configured by customer in `.env.appliance`:
 
-- `C2F_AI_REMEDIATION_ENABLED=true`
+- `C2F_AI_FEATURES_ENABLED=true`
 - `C2F_LLM_PROVIDER=openai` (or `gemini`)
 - `C2F_LLM_API_KEY=<key>`
 

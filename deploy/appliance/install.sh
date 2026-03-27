@@ -385,7 +385,10 @@ current_winrm_user="$(get_env C2F_WINRM_USERNAME "${ENV_FILE}")"
 current_winrm_password="$(get_env C2F_WINRM_PASSWORD "${ENV_FILE}")"
 current_admin_user="$(get_env C2F_BOOTSTRAP_ADMIN_USERNAME "${ENV_FILE}")"
 current_admin_password="$(get_env C2F_BOOTSTRAP_ADMIN_PASSWORD "${ENV_FILE}")"
-current_ai_enabled="$(get_env C2F_AI_REMEDIATION_ENABLED "${ENV_FILE}")"
+current_ai_enabled="$(get_env C2F_AI_FEATURES_ENABLED "${ENV_FILE}")"
+if [[ -z "${current_ai_enabled}" ]]; then
+  current_ai_enabled="$(get_env C2F_AI_REMEDIATION_ENABLED "${ENV_FILE}")"
+fi
 current_ai_provider="$(get_env C2F_LLM_PROVIDER "${ENV_FILE}")"
 current_ai_base_url="$(get_env C2F_LLM_BASE_URL "${ENV_FILE}")"
 current_ai_model="$(get_env C2F_LLM_MODEL "${ENV_FILE}")"
@@ -416,7 +419,7 @@ prompt_secret "Global WinRM password" "${current_winrm_password:-}" winrm_passwo
 
 prompt_value "Initial Click2Fix admin username" "${current_admin_user:-admin}" admin_user
 prompt_secret "Initial Click2Fix admin password" "${current_admin_password:-}" admin_password
-prompt_value "Enable AI assistant in Global Shell (true/false)" "${current_ai_enabled:-false}" ai_enabled
+prompt_value "Enable AI features platform-wide (true/false)" "${current_ai_enabled:-false}" ai_enabled
 prompt_value "AI provider (openai/gemini)" "${current_ai_provider:-openai}" ai_provider
 prompt_value "AI base URL (optional; blank = provider default)" "${current_ai_base_url:-}" ai_base_url
 prompt_value "AI model (optional; blank = provider default)" "${current_ai_model:-}" ai_model
@@ -478,7 +481,7 @@ if [[ "${ai_provider}" != "openai" && "${ai_provider}" != "gemini" ]]; then
   exit 1
 fi
 if [[ "${ai_enabled}" == "true" && -z "${ai_api_key}" ]]; then
-  echo "WARNING: AI assistant is enabled but C2F_LLM_API_KEY is empty. Assistant generation will fail until a key is set." >&2
+  echo "WARNING: AI features are enabled but C2F_LLM_API_KEY is empty. AI endpoints will remain unavailable until a key is set." >&2
 fi
 
 backend_port="$(resolve_port_conflict "$(normalize_port "${backend_port}" "8000")" "backend" c2f-lb backend)"
@@ -506,6 +509,7 @@ set_env C2F_WINRM_USERNAME "${winrm_user}" "${ENV_FILE}"
 set_env C2F_WINRM_PASSWORD "${winrm_password}" "${ENV_FILE}"
 set_env C2F_BOOTSTRAP_ADMIN_USERNAME "${admin_user}" "${ENV_FILE}"
 set_env C2F_BOOTSTRAP_ADMIN_PASSWORD "${admin_password}" "${ENV_FILE}"
+set_env C2F_AI_FEATURES_ENABLED "${ai_enabled}" "${ENV_FILE}"
 set_env C2F_AI_REMEDIATION_ENABLED "${ai_enabled}" "${ENV_FILE}"
 set_env C2F_LLM_PROVIDER "${ai_provider}" "${ENV_FILE}"
 set_env C2F_LLM_BASE_URL "${ai_base_url}" "${ENV_FILE}"

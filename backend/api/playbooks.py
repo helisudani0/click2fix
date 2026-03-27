@@ -34,6 +34,7 @@ PLAYBOOK_DIR = (
     else "./playbooks"
 )
 _MAX_PLAYBOOK_STEPS = 25
+_ALLOWED_AI_PROVIDERS = {"openai", "gemini"}
 _PLAYBOOK_STEP_UP_ACTION_IDS = {
     "collect-forensics",
     "collect-memory",
@@ -697,6 +698,13 @@ def _to_text(value) -> str:
         return str(value)
 
 
+def _to_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
 def _to_bool(value, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
@@ -705,6 +713,43 @@ def _to_bool(value, default: bool = False) -> bool:
     if value is None:
         return default
     return bool(value)
+
+
+def _coerce_ai_config(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail="ai_config must be an object")
+    out: dict[str, Any] = {}
+    provider = str(value.get("provider") or "").strip().lower()
+    if provider:
+        if provider not in _ALLOWED_AI_PROVIDERS:
+            raise HTTPException(status_code=400, detail=f"Unsupported AI provider '{provider}'")
+        out["provider"] = provider
+    for key in ("base_url", "model", "api_key"):
+        if key in value:
+            out[key] = str(value.get(key) or "").strip()
+    if "enabled" in value:
+        out["enabled"] = _to_bool(value.get("enabled"), True)
+    if "timeout_seconds" in value:
+        timeout_seconds = _to_int(value.get("timeout_seconds"), -1)
+        if timeout_seconds < 1:
+            raise HTTPException(status_code=400, detail="ai_config.timeout_seconds must be >= 1")
+        out["timeout_seconds"] = timeout_seconds
+    if "max_tokens" in value:
+        max_tokens = _to_int(value.get("max_tokens"), -1)
+        if max_tokens < 1:
+            raise HTTPException(status_code=400, detail="ai_config.max_tokens must be >= 1")
+        out["max_tokens"] = max_tokens
+    if "temperature" in value:
+        try:
+            temperature = float(value.get("temperature"))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="ai_config.temperature must be a number") from exc
+        if temperature < 0 or temperature > 2:
+            raise HTTPException(status_code=400, detail="ai_config.temperature must be between 0 and 2")
+        out["temperature"] = temperature
+    return out
 
 
 def _store_execution_targets(conn, execution_id: int, rows) -> None:
@@ -802,8 +847,21 @@ async def generate(request: Request, user=Depends(require_role("analyst"))):
         body = {}
 
     alert_id = body.get("alert_id")
-    case_id = body.get("case_id")
-    playbook = generate_playbook(alert_id=alert_id, case_id=case_id)
+    case_id_raw = body.get("case_id")
+    case_id = _to_int(case_id_raw, 0) if case_id_raw not in (None, "") else None
+    if case_id is not None and case_id < 1:
+        raise HTTPException(status_code=400, detail="case_id must be a positive integer")
+    use_ai = _to_bool(body.get("use_ai"), False) or _to_bool(body.get("ai_enabled"), False)
+    ai_prompt = str(body.get("ai_prompt") or body.get("prompt") or body.get("instructions") or "").strip()
+    ai_config = _coerce_ai_config(body.get("ai_config"))
+
+    playbook = generate_playbook(
+        alert_id=alert_id,
+        case_id=case_id,
+        use_ai=use_ai,
+        ai_prompt=ai_prompt,
+        ai_config=ai_config or None,
+    )
     return playbook
 
 

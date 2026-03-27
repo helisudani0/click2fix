@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   getAnalyticsOverview,
+  getAnalyticsAiInsights,
   getKillChain,
   getAlertSummary,
   getHourlyVolume,
@@ -61,6 +62,9 @@ export default function Analytics() {
     total_groups: 0,
     correlated_events: 0,
   });
+  const [aiInsightPrompt, setAiInsightPrompt] = useState("");
+  const [loadingAiInsight, setLoadingAiInsight] = useState(false);
+  const [aiInsight, setAiInsight] = useState(null);
 
   const refreshOverview = () => {
     setLoading(true);
@@ -207,6 +211,27 @@ export default function Analytics() {
       .finally(() => setLoadingSummary(false));
   };
 
+  const handleAiInsight = () => {
+    setLoadingAiInsight(true);
+    getAnalyticsAiInsights({
+      hours: 72,
+      alert_id: alertId.trim() || undefined,
+      prompt: aiInsightPrompt || undefined,
+    })
+      .then((response) => {
+        setAiInsight(response?.data || null);
+      })
+      .catch((err) => {
+        setAiInsight({
+          mode: "error",
+          summary: errorText(err, "Unable to generate AI insight right now."),
+          priority_findings: [],
+          recommended_actions: [],
+        });
+      })
+      .finally(() => setLoadingAiInsight(false));
+  };
+
   const anomaly = overview?.anomaly;
   const normalizedHourly = useMemo(() => {
     const rows = Array.isArray(hourlySeries) ? [...hourlySeries] : [];
@@ -350,6 +375,73 @@ export default function Analytics() {
               : "Awaiting telemetry"}
           </div>
         </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <div>
+            <h3>AI Operational Insight</h3>
+            <p className="muted">Generate a concise triage brief from analytics telemetry and optional alert context.</p>
+          </div>
+        </div>
+        <div className="page-actions mb-12">
+          <input
+            className="input w-320"
+            placeholder="Optional instruction (example: focus on containment)"
+            value={aiInsightPrompt}
+            onChange={(event) => setAiInsightPrompt(event.target.value)}
+          />
+          <button className="btn secondary" onClick={handleAiInsight} disabled={loadingAiInsight}>
+            {loadingAiInsight ? "Generating..." : "Generate Insight"}
+          </button>
+        </div>
+        {!aiInsight ? (
+          <div className="empty-state">No AI insight generated yet.</div>
+        ) : (
+          <div className="grid-2">
+            <div className="list">
+              <div className="list-item">
+                <div>Mode</div>
+                <div className="muted">{aiInsight.mode || "unknown"}</div>
+              </div>
+              <div className="list-item">
+                <div>Summary</div>
+                <div className="muted">{aiInsight.summary || "n/a"}</div>
+              </div>
+              {aiInsight.reason ? (
+                <div className="list-item">
+                  <div>Note</div>
+                  <div className="muted">{aiInsight.reason}</div>
+                </div>
+              ) : null}
+            </div>
+            <div className="list">
+              <div className="list-item">
+                <div>Priority Findings</div>
+                <div className="muted">
+                  {Array.isArray(aiInsight.priority_findings) && aiInsight.priority_findings.length
+                    ? aiInsight.priority_findings.join(" | ")
+                    : "n/a"}
+                </div>
+              </div>
+              <div className="list-item">
+                <div>Recommended Actions</div>
+                <div className="muted">
+                  {Array.isArray(aiInsight.recommended_actions) && aiInsight.recommended_actions.length
+                    ? aiInsight.recommended_actions
+                        .map((item) => {
+                          const action = item?.action || item?.name || "";
+                          const reason = item?.reason || "";
+                          return reason ? `${action} (${reason})` : action;
+                        })
+                        .filter(Boolean)
+                        .join(" | ")
+                    : "n/a"}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {dataLayerSupported ? (

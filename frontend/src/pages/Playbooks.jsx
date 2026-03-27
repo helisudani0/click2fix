@@ -146,6 +146,8 @@ export default function Playbooks() {
 
   const [alertId, setAlertId] = useState("");
   const [caseId, setCaseId] = useState("");
+  const [useAiGeneration, setUseAiGeneration] = useState(true);
+  const [aiPrompt, setAiPrompt] = useState("");
   const [playbookSearch, setPlaybookSearch] = useState("");
   const [targetType, setTargetType] = useState("agent");
   const [targetValue, setTargetValue] = useState("");
@@ -294,6 +296,8 @@ export default function Playbooks() {
       const response = await generatePlaybook({
         alert_id: alertId || undefined,
         case_id: caseId && Number.isFinite(parsedCaseId) ? parsedCaseId : undefined,
+        use_ai: useAiGeneration,
+        ai_prompt: useAiGeneration ? (aiPrompt || undefined) : undefined,
       });
       const normalized = normalizePlaybook(response.data);
       if (!normalized) {
@@ -306,7 +310,15 @@ export default function Playbooks() {
         setTargetType("agent");
         setTargetValue(agent);
       }
-      setStatus("Generated playbook loaded into the editor.");
+      const mode = String(response?.data?.source?.generation_mode || "").toLowerCase();
+      const aiError = String(response?.data?.source?.ai_error || "");
+      if (mode === "ai") {
+        setStatus("AI-generated playbook loaded into the editor.");
+      } else if (useAiGeneration && aiError) {
+        setStatus(`Heuristic playbook loaded (AI fallback): ${aiError}`);
+      } else {
+        setStatus("Generated playbook loaded into the editor.");
+      }
     } catch (err) {
       setStatus(formatApiError(err, "Failed to generate playbook."));
     }
@@ -472,6 +484,30 @@ export default function Playbooks() {
             <button className="btn" onClick={handleGenerate}>
               Generate
             </button>
+          </div>
+          <div className="list mt-10">
+            <div className="list-item readable">
+              <label className="inline-check">
+                <input
+                  type="checkbox"
+                  checked={useAiGeneration}
+                  onChange={(event) => setUseAiGeneration(event.target.checked)}
+                />
+                <span>Use AI Assist for higher-precision steps</span>
+              </label>
+            </div>
+            {useAiGeneration ? (
+              <div className="list-item readable">
+                <div className="muted">AI Instructions (optional)</div>
+                <textarea
+                  className="input mt-8"
+                  rows={3}
+                  value={aiPrompt}
+                  onChange={(event) => setAiPrompt(event.target.value)}
+                  placeholder="Example: prioritize containment first, keep user impact low, avoid reboot actions."
+                />
+              </div>
+            ) : null}
           </div>
           <div className="meta-line">
             Generated playbooks are editable. You can still save, modify, or replace every step before execution.

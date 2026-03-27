@@ -222,6 +222,8 @@ export const getFleetScaHardening = (params = {}) =>
 export const getPlaybooks = () => api.get("/playbooks");
 export const getPlaybook = (name) => api.get(`/playbooks/${name}`);
 export const generatePlaybook = (payload) => api.post("/playbooks/generate", payload);
+export const generatePlaybookWithAi = (payload = {}) =>
+  api.post("/playbooks/generate", { ...payload, use_ai: true });
 export const savePlaybook = (payload) => api.post("/playbooks", payload);
 export const executePlaybook = (payload) => api.post("/playbooks/execute", payload);
 export const seedDefaultPlaybooks = (payload = {}) =>
@@ -232,6 +234,8 @@ export const getKillChain = (caseId) =>
 export const getAlertSummary = (alertId) => api.get(`/analytics/alert/${alertId}`);
 export const getHourlyVolume = (hours = 72) =>
   api.get("/analytics/hourly", { params: { hours } });
+export const getAnalyticsAiInsights = (payload = {}) =>
+  api.post("/analytics/ai-insights", payload);
 export const correlateIncidents = (payload = {}) =>
   api.post("/incidents/correlate", payload);
 export const getIncidents = (params = {}) =>

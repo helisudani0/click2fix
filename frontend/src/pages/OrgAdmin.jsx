@@ -120,6 +120,7 @@ export default function OrgAdmin() {
   const [savingRetention, setSavingRetention] = useState(false);
   const [runningLifecycle, setRunningLifecycle] = useState(false);
   const [runningLifecycleBatch, setRunningLifecycleBatch] = useState(false);
+  const [v2Unavailable, setV2Unavailable] = useState(false);
 
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
@@ -159,6 +160,7 @@ export default function OrgAdmin() {
     try {
       const response = await getTenantsV2();
       const items = Array.isArray(response?.data) ? response.data : [];
+      setV2Unavailable(false);
       setTenants(items);
       setSelectedTenantId((current) => {
         if (current && items.some((tenant) => String(tenant?.tenant_id) === String(current))) {
@@ -167,6 +169,20 @@ export default function OrgAdmin() {
         return items[0]?.tenant_id ? String(items[0].tenant_id) : "";
       });
     } catch (err) {
+      const status = Number(err?.response?.status || 0);
+      if ([404, 405, 501].includes(status)) {
+        setV2Unavailable(true);
+        setError(null);
+        setTenants([]);
+        setUsers([]);
+        setRetentionPolicies([]);
+        setSelectedTenantId("");
+        setSelectedPolicyDataClass("");
+        setLifecycleSummary(null);
+        setLifecyclePreview(null);
+        setLifecycleBatchPreview(null);
+        return;
+      }
       setError(getErrorMessage(err, "Failed to load tenants."));
     } finally {
       setLoadingTenants(false);
@@ -484,6 +500,22 @@ export default function OrgAdmin() {
         </div>
       </div>
 
+      {v2Unavailable ? (
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <h3>Feature Unavailable</h3>
+              <p className="muted">Tenant governance APIs are disabled for this deployment.</p>
+            </div>
+          </div>
+          <div className="empty-state">
+            This v1 deployment runs core operations only. Org-wide tenant lifecycle controls are not enabled here.
+          </div>
+        </div>
+      ) : null}
+
+      {v2Unavailable ? null : (
+      <>
       {message ? <div className="empty-state">{message}</div> : null}
       {error ? <div className="empty-state">{error}</div> : null}
 
@@ -1121,6 +1153,8 @@ export default function OrgAdmin() {
           </div>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }

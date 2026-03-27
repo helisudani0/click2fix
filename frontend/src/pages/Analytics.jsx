@@ -30,6 +30,9 @@ const buildIsoRange = (lookbackHours) => {
 const errorText = (err, fallback) =>
   err?.response?.data?.detail || err?.response?.data?.message || err?.message || fallback;
 
+const isNotFoundResult = (result) =>
+  result?.status === "rejected" && Number(result?.reason?.response?.status || 0) === 404;
+
 export default function Analytics() {
   const [overview, setOverview] = useState(null);
   const [killChain, setKillChain] = useState({ stages: {}, raw: [] });
@@ -43,6 +46,7 @@ export default function Analytics() {
   const [timeSeriesBucket, setTimeSeriesBucket] = useState("1h");
   const [correlationWindow, setCorrelationWindow] = useState("15m");
   const [loadingDataLayer, setLoadingDataLayer] = useState(false);
+  const [dataLayerSupported, setDataLayerSupported] = useState(true);
   const [dataLayerError, setDataLayerError] = useState("");
   const [eventTimeSeries, setEventTimeSeries] = useState([]);
   const [eventTimeSeriesTotals, setEventTimeSeriesTotals] = useState([]);
@@ -113,6 +117,26 @@ export default function Analytics() {
     ])
       .then(([seriesResult, correlationResult]) => {
         const errors = [];
+        const unsupported = isNotFoundResult(seriesResult) && isNotFoundResult(correlationResult);
+        if (unsupported) {
+          setDataLayerSupported(false);
+          setEventTimeSeries([]);
+          setEventTimeSeriesTotals([]);
+          setEventTimeSeriesMeta({
+            bucket: timeSeriesBucket,
+            total_count: 0,
+            total_points: 0,
+          });
+          setEventCorrelationGroups([]);
+          setEventCorrelationMeta({
+            window: correlationWindow,
+            total_groups: 0,
+            correlated_events: 0,
+          });
+          setDataLayerError("");
+          return;
+        }
+        setDataLayerSupported(true);
 
         if (seriesResult.status === "fulfilled") {
           const data = seriesResult.value?.data || {};
@@ -328,12 +352,13 @@ export default function Analytics() {
         </div>
       </div>
 
+      {dataLayerSupported ? (
       <div className="grid-2">
         <div className="card">
           <div className="card-header">
             <div>
-              <h3>Data Layer Time-Series (V2)</h3>
-              <p className="muted">Indexed event buckets from `/api/v2/events/timeseries`.</p>
+              <h3>Data Layer Time-Series</h3>
+              <p className="muted">Indexed event buckets for short-window detection analytics.</p>
             </div>
           </div>
 
@@ -432,8 +457,8 @@ export default function Analytics() {
         <div className="card">
           <div className="card-header">
             <div>
-              <h3>High-Speed Correlation (V2)</h3>
-              <p className="muted">Cross-domain correlated clusters from `/api/v2/events/correlate`.</p>
+              <h3>High-Speed Correlation</h3>
+              <p className="muted">Cross-domain correlated clusters across indexed events.</p>
             </div>
           </div>
 
@@ -497,6 +522,19 @@ export default function Analytics() {
           )}
         </div>
       </div>
+      ) : (
+        <div className="card">
+          <div className="card-header">
+            <div>
+              <h3>Advanced Correlation</h3>
+              <p className="muted">Data-layer correlation is disabled in this deployment.</p>
+            </div>
+          </div>
+          <div className="empty-state">
+            Core analytics is active. Advanced indexed correlation endpoints are not enabled for this v1 deployment.
+          </div>
+        </div>
+      )}
 
       <div className="grid-2">
         <div className="card">

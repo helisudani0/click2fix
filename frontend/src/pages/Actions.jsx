@@ -4,10 +4,10 @@ import { getActions, getAgents, getActionConnectorStatus, runAction } from "../a
 import { formatApiError } from "../utils/httpErrors";
 
 const MULTILINE_INPUT_FIELDS = new Set(["command", "custom_command", "script"]);
-const ACTIONS_SIDEBAR_WIDTH_STORAGE_KEY = "c2f-actions-sidebar-width-v3";
-const DEFAULT_ACTIONS_SIDEBAR_WIDTH = 360;
-const MIN_ACTIONS_SIDEBAR_WIDTH = 300;
-const MAX_ACTIONS_SIDEBAR_WIDTH = 520;
+const ACTIONS_SIDEBAR_WIDTH_STORAGE_KEY = "c2f-actions-sidebar-width-v4";
+const DEFAULT_ACTIONS_SIDEBAR_WIDTH = 440;
+const MIN_ACTIONS_SIDEBAR_WIDTH = 360;
+const MAX_ACTIONS_SIDEBAR_WIDTH = 640;
 const DEFAULT_ACTION_JUSTIFICATION = "Action execution requested from Actions workspace.";
 
 const normalizeAgents = (data) => {

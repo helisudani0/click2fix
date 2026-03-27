@@ -1703,7 +1703,7 @@ button.kpi-card:hover {
 
 .actions-workspace {
   display: grid;
-  grid-template-columns: minmax(300px, var(--actions-sidebar-width, 380px)) 10px minmax(0, 1fr);
+  grid-template-columns: minmax(360px, var(--actions-sidebar-width, 440px)) 12px minmax(0, 1fr);
   gap: 0;
   align-items: start;
   min-width: 0;
@@ -1732,7 +1732,7 @@ button.kpi-card:hover {
 
 .actions-console-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 0.96fr) minmax(360px, 1.04fr);
+  grid-template-columns: minmax(360px, 1fr) minmax(380px, 1fr);
   gap: 18px;
   align-items: start;
   min-width: 0;
@@ -1752,7 +1752,7 @@ button.kpi-card:hover {
 }
 
 .actions-workspace-divider-handle {
-  width: 10px;
+  width: 12px;
   border: none;
   padding: 0;
   background:

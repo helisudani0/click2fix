@@ -451,7 +451,8 @@ export default function AppLayout() {
               onClick={() => setSidebarCollapsed((prev) => !prev)}
               aria-pressed={sidebarCollapsed}
             >
-              {sidebarCollapsed ? "Expand" : "Collapse"}
+              <span className="shell-collapse-icon">{sidebarCollapsed ? ">>" : "<<"}</span>
+              <span className="shell-collapse-text">{sidebarCollapsed ? "Expand" : "Collapse"}</span>
             </button>
           </div>
 

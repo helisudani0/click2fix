@@ -37,6 +37,12 @@ The generated template is pre-filled with:
 - `C2F_IMAGE_TAG=<version without v>`
 - `C2F_SKIP_PULL=false`
 
+AI assistant is optional and configured by customer in `.env.appliance`:
+
+- `C2F_AI_REMEDIATION_ENABLED=true`
+- `C2F_LLM_PROVIDER=openai` (or `gemini`)
+- `C2F_LLM_API_KEY=<key>`
+
 If ZIP delivery is blocked on the target environment, use the raw-file bootstrap path documented in:
 
 - `deploy/appliance/bootstrap-from-github.ps1`

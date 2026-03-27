@@ -72,6 +72,7 @@ api.interceptors.response.use(
       syncServerClock(serverTime);
     }
     if (error?.response?.status === 401) {
+      clearLegacyToken();
       // Keep UI stable: surface auth errors to the current screen instead of hard-refreshing.
       error.authExpired = true;
       const detail = String(error?.response?.data?.detail || "").trim();

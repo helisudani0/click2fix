@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import api, { decodeLegacyTokenPayload, getLegacyToken, setLegacyToken } from "../api/client";
+import api, { clearLegacyToken, getLegacyToken, setLegacyToken } from "../api/client";
 import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
 export default function Login() {
@@ -12,15 +12,17 @@ export default function Login() {
   const [ssoLoading, setSsoLoading] = useState(false);
   const [appVersion, setAppVersion] = useState(UI_APP_VERSION);
 
+  const clearStaleSession = async () => {
+    clearLegacyToken();
+    try {
+      await api.get("/auth/session/reset");
+    } catch {
+      // Ignore session reset failures; login attempt will still proceed.
+    }
+  };
+
   useEffect(() => {
     let active = true;
-    const payload = decodeLegacyTokenPayload();
-    if (payload?.sub) {
-      navigate("/", { replace: true });
-      return () => {
-        active = false;
-      };
-    }
     api
       .get("/auth/me")
       .then(() => {
@@ -32,6 +34,13 @@ export default function Login() {
         const statusCode = err?.response?.status;
         if ((statusCode === 404 || statusCode === 405) && getLegacyToken()) {
           navigate("/", { replace: true });
+          return;
+        }
+        if (statusCode === 401) {
+          clearLegacyToken();
+          void api.get("/auth/session/reset").catch(() => {
+            // Ignore best-effort session reset during stale session cleanup.
+          });
         }
       });
     return () => {
@@ -61,12 +70,14 @@ export default function Login() {
     setError(null);
     setLoading(true);
     try {
+      await clearStaleSession();
       const form = new URLSearchParams();
       form.append("username", username);
       form.append("password", password);
       const res = await api.post("/auth/login", form, {
         headers: { "Content-Type": "application/x-www-form-urlencoded" }
       });
+      clearLegacyToken();
       const token = String(res?.data?.access_token || "").trim();
       if (token) {
         setLegacyToken(token);

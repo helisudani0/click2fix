@@ -486,6 +486,12 @@ $winrmPassword = Read-SecretValue "Global WinRM password" (Get-EnvValue $envPath
 $adminUser = Read-Value "Initial Click2Fix admin username" (Get-EnvValue $envPath "C2F_BOOTSTRAP_ADMIN_USERNAME")
 $adminPassword = Read-SecretValue "Initial Click2Fix admin password" (Get-EnvValue $envPath "C2F_BOOTSTRAP_ADMIN_PASSWORD")
 
+$aiEnabled = Read-Value "Enable AI assistant in Global Shell (true/false)" (Get-EnvValue $envPath "C2F_AI_REMEDIATION_ENABLED")
+$aiProvider = Read-Value "AI provider (openai/gemini)" (Get-EnvValue $envPath "C2F_LLM_PROVIDER")
+$aiBaseUrl = Read-Value "AI base URL (optional; blank = provider default)" (Get-EnvValue $envPath "C2F_LLM_BASE_URL")
+$aiModel = Read-Value "AI model (optional; blank = provider default)" (Get-EnvValue $envPath "C2F_LLM_MODEL")
+$aiApiKey = Read-SecretValue "AI API key (optional; required only if AI is enabled)" (Get-EnvValue $envPath "C2F_LLM_API_KEY")
+
 $appBrand = Get-EnvValue $envPath "APP_BRAND"
 if ([string]::IsNullOrWhiteSpace($appBrand)) { $appBrand = "Click2Fix" }
 $backendImage = Get-EnvValue $envPath "C2F_BACKEND_IMAGE"
@@ -515,6 +521,17 @@ if ($adminPassword.Length -lt 8) {
   throw "Initial admin password must be at least 8 characters."
 }
 
+$aiEnabledFlag = To-Bool $aiEnabled
+$aiEnabled = if ($aiEnabledFlag) { "true" } else { "false" }
+$aiProvider = $aiProvider.Trim().ToLowerInvariant()
+if ([string]::IsNullOrWhiteSpace($aiProvider)) { $aiProvider = "openai" }
+if (-not @("openai", "gemini") -contains $aiProvider) {
+  throw "AI provider must be 'openai' or 'gemini'."
+}
+if ($aiEnabledFlag -and [string]::IsNullOrWhiteSpace($aiApiKey)) {
+  Write-Host "Warning: AI assistant is enabled but C2F_LLM_API_KEY is empty. Assistant generation will fail until a key is set." -ForegroundColor Yellow
+}
+
 $frontendPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $frontendPort -DefaultPort 5173) -ServiceNames @("frontend") -Label "frontend"
 $backendPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $backendPort -DefaultPort 8000) -ServiceNames @("c2f-lb", "backend") -Label "backend"
 $dbPort = Resolve-PortConflict -RequestedPort (Parse-PortOrDefault -RawValue $dbPort -DefaultPort 5432) -ServiceNames @("db") -Label "db host"
@@ -540,6 +557,11 @@ Set-EnvValue -Path $envPath -Key "C2F_WINRM_USERNAME" -Value $winrmUser
 Set-EnvValue -Path $envPath -Key "C2F_WINRM_PASSWORD" -Value $winrmPassword
 Set-EnvValue -Path $envPath -Key "C2F_BOOTSTRAP_ADMIN_USERNAME" -Value $adminUser
 Set-EnvValue -Path $envPath -Key "C2F_BOOTSTRAP_ADMIN_PASSWORD" -Value $adminPassword
+Set-EnvValue -Path $envPath -Key "C2F_AI_REMEDIATION_ENABLED" -Value $aiEnabled
+Set-EnvValue -Path $envPath -Key "C2F_LLM_PROVIDER" -Value $aiProvider
+Set-EnvValue -Path $envPath -Key "C2F_LLM_BASE_URL" -Value $aiBaseUrl
+Set-EnvValue -Path $envPath -Key "C2F_LLM_MODEL" -Value $aiModel
+Set-EnvValue -Path $envPath -Key "C2F_LLM_API_KEY" -Value $aiApiKey
 
 if (To-Bool $skipPull) {
   Invoke-NativeChecked -FilePath "docker" -Arguments @("image", "inspect", "postgres:$postgresImageTag") -FailureMessage "Postgres image not found locally: postgres:$postgresImageTag."

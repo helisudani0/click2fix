@@ -385,6 +385,11 @@ current_winrm_user="$(get_env C2F_WINRM_USERNAME "${ENV_FILE}")"
 current_winrm_password="$(get_env C2F_WINRM_PASSWORD "${ENV_FILE}")"
 current_admin_user="$(get_env C2F_BOOTSTRAP_ADMIN_USERNAME "${ENV_FILE}")"
 current_admin_password="$(get_env C2F_BOOTSTRAP_ADMIN_PASSWORD "${ENV_FILE}")"
+current_ai_enabled="$(get_env C2F_AI_REMEDIATION_ENABLED "${ENV_FILE}")"
+current_ai_provider="$(get_env C2F_LLM_PROVIDER "${ENV_FILE}")"
+current_ai_base_url="$(get_env C2F_LLM_BASE_URL "${ENV_FILE}")"
+current_ai_model="$(get_env C2F_LLM_MODEL "${ENV_FILE}")"
+current_ai_api_key="$(get_env C2F_LLM_API_KEY "${ENV_FILE}")"
 current_backend_image="$(get_env C2F_BACKEND_IMAGE "${ENV_FILE}")"
 current_frontend_image="$(get_env C2F_FRONTEND_IMAGE "${ENV_FILE}")"
 current_postgres_image_tag="$(get_env POSTGRES_IMAGE_TAG "${ENV_FILE}")"
@@ -411,6 +416,11 @@ prompt_secret "Global WinRM password" "${current_winrm_password:-}" winrm_passwo
 
 prompt_value "Initial Click2Fix admin username" "${current_admin_user:-admin}" admin_user
 prompt_secret "Initial Click2Fix admin password" "${current_admin_password:-}" admin_password
+prompt_value "Enable AI assistant in Global Shell (true/false)" "${current_ai_enabled:-false}" ai_enabled
+prompt_value "AI provider (openai/gemini)" "${current_ai_provider:-openai}" ai_provider
+prompt_value "AI base URL (optional; blank = provider default)" "${current_ai_base_url:-}" ai_base_url
+prompt_value "AI model (optional; blank = provider default)" "${current_ai_model:-}" ai_model
+prompt_secret "AI API key (optional; required only if AI is enabled)" "${current_ai_api_key:-}" ai_api_key
 
 app_brand="${current_brand:-Click2Fix}"
 backend_image="${current_backend_image:-click2fix-backend}"
@@ -453,6 +463,24 @@ if [[ ${#admin_password} -lt 8 ]]; then
   exit 1
 fi
 
+ai_enabled="${ai_enabled,,}"
+if [[ "${ai_enabled}" != "1" && "${ai_enabled}" != "true" && "${ai_enabled}" != "yes" && "${ai_enabled}" != "on" ]]; then
+  ai_enabled="false"
+else
+  ai_enabled="true"
+fi
+ai_provider="${ai_provider,,}"
+if [[ -z "${ai_provider}" ]]; then
+  ai_provider="openai"
+fi
+if [[ "${ai_provider}" != "openai" && "${ai_provider}" != "gemini" ]]; then
+  echo "ERROR: AI provider must be 'openai' or 'gemini'." >&2
+  exit 1
+fi
+if [[ "${ai_enabled}" == "true" && -z "${ai_api_key}" ]]; then
+  echo "WARNING: AI assistant is enabled but C2F_LLM_API_KEY is empty. Assistant generation will fail until a key is set." >&2
+fi
+
 backend_port="$(resolve_port_conflict "$(normalize_port "${backend_port}" "8000")" "backend" c2f-lb backend)"
 frontend_port="$(resolve_port_conflict "$(normalize_port "${frontend_port}" "5173")" "frontend" frontend)"
 db_port="$(resolve_port_conflict "$(normalize_port "${current_db_port}" "5432")" "db host" db)"
@@ -478,6 +506,11 @@ set_env C2F_WINRM_USERNAME "${winrm_user}" "${ENV_FILE}"
 set_env C2F_WINRM_PASSWORD "${winrm_password}" "${ENV_FILE}"
 set_env C2F_BOOTSTRAP_ADMIN_USERNAME "${admin_user}" "${ENV_FILE}"
 set_env C2F_BOOTSTRAP_ADMIN_PASSWORD "${admin_password}" "${ENV_FILE}"
+set_env C2F_AI_REMEDIATION_ENABLED "${ai_enabled}" "${ENV_FILE}"
+set_env C2F_LLM_PROVIDER "${ai_provider}" "${ENV_FILE}"
+set_env C2F_LLM_BASE_URL "${ai_base_url}" "${ENV_FILE}"
+set_env C2F_LLM_MODEL "${ai_model}" "${ENV_FILE}"
+set_env C2F_LLM_API_KEY "${ai_api_key}" "${ENV_FILE}"
 
 echo
 echo "Pulling and starting appliance services..."

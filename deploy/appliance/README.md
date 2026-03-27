@@ -148,6 +148,7 @@ What the script does:
 
 - creates `.env.appliance` from template if missing
 - prompts only for required runtime values (Wazuh, Indexer, endpoint connector, admin, host/ports)
+- prompts optional Global Shell AI settings (`C2F_AI_REMEDIATION_ENABLED`, `C2F_LLM_PROVIDER`, `C2F_LLM_API_KEY`)
 - optionally applies static IP configuration with netplan
 - updates trusted hosts and CORS for the appliance host/IP
 - pulls release images automatically and starts services
@@ -164,6 +165,20 @@ docker login ghcr.io
 ```
 
 Use a token with `read:packages`.
+
+## Global Shell AI Key
+
+For appliance installs, set the AI key in:
+
+- `deploy/appliance/.env.appliance`
+
+Required variables:
+
+- `C2F_AI_REMEDIATION_ENABLED=true`
+- `C2F_LLM_PROVIDER=openai` (or `gemini`)
+- `C2F_LLM_API_KEY=<your_key>`
+
+Then restart services from Control Center (or rerun setup) so backend/frontend reload env values.
 
 ## Test on Another System
 

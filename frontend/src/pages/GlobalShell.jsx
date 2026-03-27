@@ -968,6 +968,9 @@ export default function GlobalShell() {
                   {assistantDisabledReason || "AI assistant is disabled for now. Use manual commands."}
                 </div>
               ) : null}
+              <div className="meta-line mt-8">
+                AI key setup: set `C2F_AI_REMEDIATION_ENABLED=true` and `C2F_LLM_API_KEY` in appliance `.env.appliance`, then restart backend/frontend.
+              </div>
               {assistantPlan?.recommended?.reason ? (
                 <div className="meta-line mt-8">
                   {String(assistantPlan.recommended.reason)}

@@ -1,5 +1,6 @@
 import secrets
 import time
+import os
 
 from fastapi import APIRouter, HTTPException, Depends, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -189,6 +190,59 @@ def ensure_user(username: str, role: str, org_id: int | None):
     finally:
         db.close()
 
+
+def _bootstrap_admin_on_first_login(username: str, password: str) -> bool:
+    configured_username = str(os.getenv("C2F_BOOTSTRAP_ADMIN_USERNAME") or "").strip()
+    configured_password = str(os.getenv("C2F_BOOTSTRAP_ADMIN_PASSWORD") or "")
+    configured_role = str(os.getenv("C2F_BOOTSTRAP_ADMIN_ROLE") or "admin").strip().lower() or "admin"
+    if configured_role not in {"analyst", "admin", "superadmin"}:
+        configured_role = "admin"
+
+    if not configured_username or len(configured_password) < 8:
+        return False
+    if username != configured_username or password != configured_password:
+        return False
+
+    db = connect()
+    try:
+        existing = db.execute(
+            text("SELECT 1 FROM users WHERE username=:username"),
+            {"username": configured_username},
+        ).scalar()
+        if existing:
+            return True
+
+        user_count = int(
+            db.execute(text("SELECT COUNT(1) FROM users")).scalar() or 0
+        )
+        if user_count > 0:
+            # Do not create surprise users on non-empty deployments.
+            return False
+
+        org_id = db.execute(text("SELECT id FROM orgs ORDER BY id LIMIT 1")).scalar()
+        if not org_id:
+            db.execute(text("INSERT INTO orgs (name) VALUES (:name)"), {"name": "Default Org"})
+            org_id = db.execute(text("SELECT id FROM orgs ORDER BY id LIMIT 1")).scalar()
+
+        db.execute(
+            text(
+                """
+                INSERT INTO users (username, password, role, org_id)
+                VALUES (:username, :password, :role, :org_id)
+                """
+            ),
+            {
+                "username": configured_username,
+                "password": pwd.hash(configured_password),
+                "role": configured_role,
+                "org_id": org_id,
+            },
+        )
+        db.commit()
+        return True
+    finally:
+        db.close()
+
 @router.post("/login")
 def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
     username = form_data.username
@@ -203,6 +257,16 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
         ).fetchone()
     finally:
         db.close()
+
+    if not user and _bootstrap_admin_on_first_login(username, password):
+        db = connect()
+        try:
+            user = db.execute(
+                text("SELECT username,password,role,org_id FROM users WHERE username=:username"),
+                {"username": username},
+            ).fetchone()
+        finally:
+            db.close()
 
     if not user or not pwd.verify(password, user[1]):
         ldap_user = ldap_auth(username, password)
@@ -244,11 +308,18 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
 
 
 @router.post("/logout")
-def logout(request: Request, user=Depends(current_user)):
+def logout(request: Request):
     token = extract_request_token(request)
     if token:
         revoke_token(token)
     response = JSONResponse({"status": "ok"})
+    _clear_auth_cookie(response, request)
+    return response
+
+
+@router.get("/session/reset")
+def reset_session(request: Request):
+    response = JSONResponse({"status": "ok", "cleared": True})
     _clear_auth_cookie(response, request)
     return response
 

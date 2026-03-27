@@ -1,22 +1,12 @@
 import { useEffect, useState } from "react";
 import { Navigate, Outlet } from "react-router-dom";
-import api, { decodeLegacyTokenPayload, getLegacyToken } from "../api/client";
+import api, { clearLegacyToken, getLegacyToken } from "../api/client";
 
 export default function RequireAuth() {
   const [status, setStatus] = useState("checking");
 
   useEffect(() => {
     let active = true;
-    const token = getLegacyToken();
-    if (token) {
-      const payload = decodeLegacyTokenPayload();
-      if (payload?.sub) {
-        setStatus("authenticated");
-        return () => {
-          active = false;
-        };
-      }
-    }
     api
       .get("/auth/me")
       .then(() => {
@@ -28,6 +18,7 @@ export default function RequireAuth() {
           if (active) setStatus("authenticated");
           return;
         }
+        clearLegacyToken();
         if (active) setStatus("unauthenticated");
       });
     return () => {

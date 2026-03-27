@@ -79,6 +79,18 @@ body.console-redesign-v4 .shell-sidebar {
   flex-direction: column;
   gap: 14px;
   box-shadow: 0 16px 28px rgba(6, 12, 20, 0.3);
+  position: relative;
+  overflow: hidden;
+}
+
+body.console-redesign-v4 .shell-sidebar::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 56px;
+  background: linear-gradient(180deg, rgba(20, 30, 44, 0.9), rgba(10, 16, 24, 0.96));
+  border-right: 1px solid rgba(148, 163, 184, 0.2);
+  z-index: 0;
 }
 
 body.console-redesign-v4 .shell-sidebar-header {
@@ -86,6 +98,8 @@ body.console-redesign-v4 .shell-sidebar-header {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  position: relative;
+  z-index: 1;
 }
 
 body.console-redesign-v4 .shell-collapse-toggle {
@@ -125,6 +139,8 @@ body.console-redesign-v4 .shell-sidebar-body {
   display: grid;
   gap: 16px;
   padding-right: 4px;
+  position: relative;
+  z-index: 1;
 }
 
 body.console-redesign-v4 .shell-nav-group {
@@ -156,6 +172,8 @@ body.console-redesign-v4 .shell-sidebar-panels {
   gap: 8px;
   padding-top: 10px;
   border-top: 1px solid rgba(148, 163, 184, 0.18);
+  position: relative;
+  z-index: 1;
 }
 
 body.console-redesign-v4 .shell-sidebar-footer {
@@ -165,6 +183,8 @@ body.console-redesign-v4 .shell-sidebar-footer {
   border-top: 1px solid rgba(148, 163, 184, 0.18);
   font-size: 0.78rem;
   color: var(--ui-muted);
+  position: relative;
+  z-index: 1;
 }
 
 body.console-redesign-v4 .shell-user {
@@ -349,6 +369,7 @@ body.console-redesign-v4 .shell-nav-link {
   white-space: nowrap;
   background: rgba(8, 12, 20, 0.35);
   border-left: 3px solid transparent;
+  min-height: 42px;
 }
 
 body.console-redesign-v4 .shell-nav-link:hover {
@@ -375,11 +396,53 @@ body.console-redesign-v4 .shell-nav-icon {
   color: #d6e6ff;
   font-size: 0.7rem;
   letter-spacing: 0.08em;
+  flex-shrink: 0;
 }
 
 body.console-redesign-v4 .shell-nav-text {
   flex: 1;
   min-width: 0;
+}
+
+body.console-redesign-v4 .shell-quick-access {
+  display: grid;
+  gap: 10px;
+  padding-top: 6px;
+}
+
+body.console-redesign-v4 .shell-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+body.console-redesign-v4 .shell-quick-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(8, 12, 20, 0.5);
+  color: #dbe8f8;
+  font-size: 0.8rem;
+  font-weight: 600;
+  min-height: 40px;
+}
+
+body.console-redesign-v4 .shell-quick-link.active {
+  border-color: rgba(79, 142, 247, 0.6);
+  background: rgba(79, 142, 247, 0.18);
+  color: #f8fbff;
+}
+
+body.console-redesign-v4 .shell-quick-text {
+  flex: 1;
+  min-width: 0;
+}
+
+body.console-redesign-v4 .shell-quick-button {
+  justify-self: start;
 }
 
 body.console-redesign-v4 .shell-version {

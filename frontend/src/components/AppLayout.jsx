@@ -475,13 +475,33 @@ export default function AppLayout() {
                 </div>
               </div>
             ))}
+
+            <div className="shell-quick-access">
+              <div className="shell-nav-group-title">Quick Access</div>
+              <div className="shell-quick-grid">
+                {priorityLinks.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className={({ isActive }) => `shell-quick-link${isActive ? " active" : ""}`}
+                  >
+                    <span className="shell-nav-icon">{shortLabel(item.label)}</span>
+                    <span className="shell-quick-text">{item.label}</span>
+                  </NavLink>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="btn secondary shell-quick-button"
+                onClick={() => setPriorityPanelOpen(true)}
+              >
+                Customize
+              </button>
+            </div>
           </div>
 
           <div className="shell-sidebar-panels">
             <div className="shell-nav-group-title">Panels</div>
-            <button type="button" className="btn secondary" onClick={() => setPriorityPanelOpen(true)}>
-              Priority Queue
-            </button>
             <button type="button" className="btn secondary" onClick={() => setOpsPanelOpen(true)}>
               Backend Ops
             </button>

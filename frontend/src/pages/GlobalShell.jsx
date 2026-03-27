@@ -4,7 +4,13 @@ import ExecutionStream from "../components/ExecutionStream";
 import Pager from "../components/Pager";
 import RelativeTimestamp from "../components/RelativeTimestamp";
 import SideDrawer from "../components/SideDrawer";
-import { getAgents, getExecutions, runGlobalShell, suggestGlobalShellCommand } from "../api/wazuh";
+import {
+  getAgents,
+  getExecutions,
+  getSystemAiConfig,
+  runGlobalShell,
+  suggestGlobalShellCommand,
+} from "../api/wazuh";
 import { formatApiError } from "../utils/httpErrors";
 import { buildHumanReadableOutput, normalizeOutputText, summarizeReadableOutput } from "../utils/output";
 
@@ -25,7 +31,7 @@ const asFlag = (value, defaultValue) => {
 };
 const ASSIST_ENV_ENABLED = asFlag(
   import.meta.env.VITE_C2F_AI_FEATURES_ENABLED,
-  asFlag(import.meta.env.VITE_AI_REMEDIATION_ENABLED, false)
+  asFlag(import.meta.env.VITE_AI_REMEDIATION_ENABLED, true)
 );
 const looksLikeAssistantUnavailable = (text) => {
   const lowered = String(text || "").toLowerCase();
@@ -297,9 +303,7 @@ export default function GlobalShell() {
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantPlan, setAssistantPlan] = useState(null);
   const [assistantEnabled, setAssistantEnabled] = useState(ASSIST_ENV_ENABLED);
-  const [assistantDisabledReason, setAssistantDisabledReason] = useState(
-    ASSIST_ENV_ENABLED ? "" : "AI assistant is temporarily disabled for this deployment."
-  );
+  const [assistantDisabledReason, setAssistantDisabledReason] = useState("");
   const [autoRemediate, setAutoRemediate] = useState(false);
   const [maxAttempts, setMaxAttempts] = useState(3);
   const [vulnerabilityContext, setVulnerabilityContext] = useState(null);
@@ -375,10 +379,30 @@ export default function GlobalShell() {
     }
   }, []);
 
+  const refreshAssistantAvailability = useCallback(async () => {
+    try {
+      const res = await getSystemAiConfig();
+      const node = res?.data?.ai_config || {};
+      const enabled = Boolean(node?.enabled);
+      setAssistantEnabled(enabled);
+      setAssistantDisabledReason(
+        enabled ? "" : "AI assistant is disabled. Enable it in Org Admin / Platform AI Configuration."
+      );
+      return enabled;
+    } catch {
+      setAssistantEnabled(ASSIST_ENV_ENABLED);
+      setAssistantDisabledReason(
+        ASSIST_ENV_ENABLED ? "" : "AI assistant is disabled. Enable it in Org Admin / Platform AI Configuration."
+      );
+      return ASSIST_ENV_ENABLED;
+    }
+  }, []);
+
   useEffect(() => {
     loadAgents();
     loadHistory();
-  }, [loadAgents, loadHistory]);
+    void refreshAssistantAvailability();
+  }, [loadAgents, loadHistory, refreshAssistantAvailability]);
 
   const connectedAgents = useMemo(
     () => agents.filter((agent) => CONNECTED_STATUSES.has(agent.status)),
@@ -604,8 +628,12 @@ export default function GlobalShell() {
   }, []);
 
   const generateAssistantCommand = useCallback(async () => {
-    if (!assistantEnabled) {
-      setStatus(assistantDisabledReason || "AI assistant is disabled. Enter a manual command.");
+    let ready = assistantEnabled;
+    if (!ready) {
+      ready = await refreshAssistantAvailability();
+    }
+    if (!ready) {
+      setStatus(assistantDisabledReason || "AI assistant is disabled. Enable it in Org Admin.");
       return;
     }
     const prompt = assistantPrompt.trim();
@@ -661,7 +689,7 @@ export default function GlobalShell() {
     } finally {
       setAssistantLoading(false);
     }
-  }, [assistantDisabledReason, assistantEnabled, assistantPrompt, shell, vulnerabilityContext, verifyKb, verifyMinBuild]);
+  }, [assistantDisabledReason, assistantEnabled, assistantPrompt, refreshAssistantAvailability, shell, vulnerabilityContext, verifyKb, verifyMinBuild]);
 
   useEffect(() => {
     if (!assistantEnabled) return;
@@ -955,16 +983,23 @@ export default function GlobalShell() {
                 onChange={(e) => setAssistantPrompt(e.target.value)}
                 rows={3}
                 placeholder="Describe the task or vulnerability fix you want (example: Upgrade Google Chrome on affected endpoints)."
-                disabled={!assistantEnabled}
               />
               <div className="page-actions mt-8">
                 <button
                   className="btn secondary"
                   type="button"
                   onClick={generateAssistantCommand}
-                  disabled={!assistantEnabled || assistantLoading}
+                  disabled={assistantLoading}
                 >
                   {assistantLoading ? "Generating..." : "Generate Command"}
+                </button>
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => void refreshAssistantAvailability()}
+                  disabled={assistantLoading}
+                >
+                  Refresh AI Status
                 </button>
               </div>
               {!assistantEnabled ? (

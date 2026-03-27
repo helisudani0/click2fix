@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from fastapi import HTTPException
@@ -11,6 +12,7 @@ from db.database import connect
 
 AI_REMEDIATION_CONFIG_KEY = "ai_remediation"
 ALLOWED_AI_PROVIDERS = {"openai", "gemini"}
+logger = logging.getLogger(__name__)
 
 
 def _to_text(value: Any) -> str:
@@ -122,34 +124,77 @@ def _extract_ai_config_node(node: Any) -> dict[str, Any]:
     return {}
 
 
+def _close_quietly(db) -> None:
+    try:
+        if db is not None:
+            db.close()
+    except Exception:
+        pass
+
+
+def _ensure_tenant_config_store_best_effort() -> None:
+    """
+    Keep v1 deployments resilient when DB schema drift leaves out
+    tenant_config_revisions.
+    """
+    try:
+        from db import database as db_database
+
+        table = getattr(db_database, "tenant_config_revisions", None)
+        engine = getattr(db_database, "engine", None)
+        if table is None or engine is None:
+            return
+        table.create(bind=engine, checkfirst=True)
+    except Exception as exc:
+        logger.debug("tenant config store ensure failed: %s", exc)
+
+
+def _fetch_active_tenant_ai_row(db, tenant_id: int):
+    return db.execute(
+        text(
+            """
+            SELECT config_json
+            FROM tenant_config_revisions
+            WHERE org_id=:tenant_id
+              AND config_key=:config_key
+              AND LOWER(COALESCE(status, 'draft'))='active'
+            ORDER BY version DESC, id DESC
+            LIMIT 1
+            """
+        ),
+        {"tenant_id": tenant_id, "config_key": AI_REMEDIATION_CONFIG_KEY},
+    ).fetchone()
+
+
 def load_active_tenant_ai_config(org_id: Any) -> dict[str, Any]:
     tenant_id = _to_int(org_id, 0)
     if tenant_id < 1:
         return {}
 
-    db = connect()
+    row = None
+    db = None
     try:
-        row = db.execute(
-            text(
-                """
-                SELECT config_json
-                FROM tenant_config_revisions
-                WHERE org_id=:tenant_id
-                  AND config_key=:config_key
-                  AND LOWER(COALESCE(status, 'draft'))='active'
-                ORDER BY version DESC, id DESC
-                LIMIT 1
-                """
-            ),
-            {"tenant_id": tenant_id, "config_key": AI_REMEDIATION_CONFIG_KEY},
-        ).fetchone()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="Tenant config store is unavailable for AI settings",
-        ) from exc
-    finally:
-        db.close()
+        db = connect()
+        row = _fetch_active_tenant_ai_row(db, tenant_id)
+    except Exception as first_exc:
+        _close_quietly(db)
+        _ensure_tenant_config_store_best_effort()
+        retry_db = None
+        try:
+            retry_db = connect()
+            row = _fetch_active_tenant_ai_row(retry_db, tenant_id)
+        except Exception as retry_exc:
+            logger.warning(
+                "Tenant AI config store unavailable for org_id=%s; using env fallback (%s, retry=%s)",
+                tenant_id,
+                first_exc.__class__.__name__,
+                retry_exc.__class__.__name__,
+            )
+            return {}
+        finally:
+            _close_quietly(retry_db)
+    else:
+        _close_quietly(db)
 
     if not row:
         return {}
@@ -162,22 +207,31 @@ def load_active_tenant_ai_config(org_id: Any) -> dict[str, Any]:
     if isinstance(raw_json, str):
         try:
             node = json.loads(raw_json)
-        except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="Active tenant ai_remediation config is not valid JSON",
-            ) from exc
+        except Exception:
+            logger.warning(
+                "Ignoring invalid tenant ai_remediation JSON for org_id=%s",
+                tenant_id,
+            )
+            return {}
     elif isinstance(raw_json, dict):
         node = raw_json
     else:
         return {}
 
     parsed = _extract_ai_config_node(node)
-    return coerce_ai_provider_config(
-        parsed,
-        source_label="tenant ai_remediation config",
-        status_code=503,
-    )
+    try:
+        return coerce_ai_provider_config(
+            parsed,
+            source_label="tenant ai_remediation config",
+            status_code=503,
+        )
+    except HTTPException as exc:
+        logger.warning(
+            "Ignoring invalid tenant ai_remediation config for org_id=%s: %s",
+            tenant_id,
+            exc.detail,
+        )
+        return {}
 
 
 def upsert_active_tenant_ai_config(
@@ -199,6 +253,7 @@ def upsert_active_tenant_ai_config(
     if "enabled" not in normalized:
         normalized["enabled"] = _to_bool(normalized.get("api_key"), False)
 
+    _ensure_tenant_config_store_best_effort()
     db = connect()
     try:
         current_version = (

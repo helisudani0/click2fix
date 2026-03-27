@@ -450,22 +450,44 @@ def _load_active_tenant_ai_config(org_id: Any) -> dict[str, Any]:
             ),
             {"tenant_id": tenant_id, "config_key": _AI_REMEDIATION_CONFIG_KEY},
         ).fetchone()
+    except Exception as exc:
+        logger.warning(
+            "Tenant AI config lookup unavailable for org_id=%s; using env/request fallback (%s)",
+            tenant_id,
+            exc.__class__.__name__,
+        )
+        return {}
     finally:
-        db.close()
+        try:
+            db.close()
+        except Exception:
+            pass
     if not row:
         return {}
     raw_json = row._mapping.get("config_json") if hasattr(row, "_mapping") else (row[0] if isinstance(row, (tuple, list)) and row else row)
     if isinstance(raw_json, str):
         try:
             node = json.loads(raw_json)
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail="Active tenant ai_remediation config is not valid JSON") from exc
+        except Exception:
+            logger.warning(
+                "Ignoring invalid tenant ai_remediation JSON for org_id=%s",
+                tenant_id,
+            )
+            return {}
     elif isinstance(raw_json, dict):
         node = raw_json
     else:
         return {}
     parsed = _extract_ai_config_node(node)
-    return _coerce_ai_provider_config(parsed, source="tenant")
+    try:
+        return _coerce_ai_provider_config(parsed, source="tenant")
+    except HTTPException as exc:
+        logger.warning(
+            "Ignoring invalid tenant ai_remediation config for org_id=%s: %s",
+            tenant_id,
+            exc.detail,
+        )
+        return {}
 
 
 def _resolve_ai_provider_config(*, body: dict[str, Any], user: Any) -> dict[str, Any] | None:

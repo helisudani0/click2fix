@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
@@ -23,6 +25,16 @@ from db.database import connect
 
 router = APIRouter(prefix="/system")
 _started_at = utc_now()
+_OVERVIEW_HEALTH_CACHE_TTL_SECONDS = max(
+    1.0,
+    float(os.getenv("C2F_OVERVIEW_HEALTH_CACHE_TTL_SECONDS", "15")),
+)
+_overview_health_cache_lock = threading.Lock()
+_overview_health_cache: dict[str, object] = {
+    "expires_at": 0.0,
+    "integration": None,
+    "queue_summary": None,
+}
 
 
 def _mask(value: str | None) -> str | None:
@@ -213,6 +225,56 @@ def _effective_ai_config_payload(org_id: int) -> dict:
     }
 
 
+def _collect_integration_health() -> tuple[dict, dict]:
+    manager = WazuhClient().status()
+    indexer = IndexerClient().status()
+    ingest_gateway = IngestGatewayClient()
+
+    if ingest_gateway.enabled:
+        try:
+            queue_response = ingest_gateway.list_ingestion_queue(
+                params={"limit": 1, "offset": 0, "include_payload": False}
+            )
+            queue_summary = queue_response.get("data", queue_response)
+            ingestion_worker = queue_summary.get("worker") or {"enabled": True, "running": True}
+        except Exception:
+            queue_summary = {"status_counts": {}, "total": 0}
+            ingestion_worker = {"enabled": False, "running": False}
+    else:
+        queue_summary = {"status_counts": {}, "total": 0}
+        ingestion_worker = {"enabled": False, "running": False}
+
+    integration = {
+        "wazuh_manager": manager,
+        "indexer": indexer,
+        "ingestion_worker": ingestion_worker,
+    }
+    return integration, queue_summary
+
+
+def _get_cached_integration_health() -> tuple[dict, dict]:
+    now = time.time()
+    with _overview_health_cache_lock:
+        expires_at = float(_overview_health_cache.get("expires_at") or 0.0)
+        cached_integration = _overview_health_cache.get("integration")
+        cached_queue_summary = _overview_health_cache.get("queue_summary")
+        if (
+            cached_integration is not None
+            and cached_queue_summary is not None
+            and now < expires_at
+        ):
+            return dict(cached_integration), dict(cached_queue_summary)
+
+    integration, queue_summary = _collect_integration_health()
+
+    with _overview_health_cache_lock:
+        _overview_health_cache["integration"] = dict(integration)
+        _overview_health_cache["queue_summary"] = dict(queue_summary)
+        _overview_health_cache["expires_at"] = now + _OVERVIEW_HEALTH_CACHE_TTL_SECONDS
+
+    return integration, queue_summary
+
+
 @router.get("/version")
 def system_version():
     candidates = [
@@ -310,31 +372,12 @@ def overview(user=Depends(require_role("admin"))):
     finally:
         db.close()
 
-    manager = WazuhClient().status()
-    indexer = IndexerClient().status()
-    ingest_gateway = IngestGatewayClient()
-    if ingest_gateway.enabled:
-        try:
-            queue_response = ingest_gateway.list_ingestion_queue(
-                params={"limit": 1, "offset": 0, "include_payload": False}
-            )
-            queue_summary = queue_response.get("data", queue_response)
-            ingestion_worker = queue_summary.get("worker") or {"enabled": True, "running": True}
-        except Exception:
-            queue_summary = {"status_counts": {}, "total": 0}
-            ingestion_worker = {"enabled": False, "running": False}
-    else:
-        queue_summary = {"status_counts": {}, "total": 0}
-        ingestion_worker = {"enabled": False, "running": False}
+    integration, queue_summary = _get_cached_integration_health()
 
     return {
         "started_at": utc_iso(_started_at),
         "scheduler_running": core_scheduler.running,
-        "integration": {
-            "wazuh_manager": manager,
-            "indexer": indexer,
-            "ingestion_worker": ingestion_worker,
-        },
+        "integration": integration,
         "counts": {
             "approvals_pending": approvals_pending,
             "approvals_in_review": approvals_review,

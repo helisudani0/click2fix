@@ -407,7 +407,12 @@ body.console-redesign-v4 .shell-nav-text {
 body.console-redesign-v4 .shell-quick-access {
   display: grid;
   gap: 10px;
-  padding-top: 6px;
+  padding: 6px 0 12px;
+  position: sticky;
+  top: 0;
+  background: linear-gradient(180deg, rgba(12, 18, 28, 0.98) 70%, rgba(12, 18, 28, 0.85));
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  z-index: 2;
 }
 
 body.console-redesign-v4 .shell-quick-grid {
@@ -840,6 +845,241 @@ body.console-redesign-v4 .panel-collapse-btn {
 body.console-redesign-v4 .panel-collapse-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+body.console-redesign-v4 .shell-sidebar {
+  width: 248px;
+  min-width: 216px;
+  background: linear-gradient(
+      90deg,
+      rgba(12, 18, 26, 0.98) 0 54px,
+      rgba(16, 22, 32, 0.98) 54px
+    );
+}
+
+body.console-redesign-v4 .shell-sidebar::before {
+  width: 52px;
+  background: linear-gradient(180deg, rgba(18, 28, 40, 0.92), rgba(10, 16, 24, 0.96));
+}
+
+body.console-redesign-v4 .shell-sidebar-header {
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+body.console-redesign-v4 .shell-sidebar-body {
+  gap: 14px;
+  padding-top: 6px;
+}
+
+body.console-redesign-v4 .shell-nav-group-title {
+  padding-left: 40px;
+}
+
+body.console-redesign-v4 .shell-nav-link {
+  min-height: 38px;
+  padding: 8px 10px 8px 8px;
+  border-radius: 12px;
+  background: rgba(9, 13, 20, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+body.console-redesign-v4 .shell-nav-link:hover {
+  background: rgba(79, 142, 247, 0.1);
+  border-color: rgba(79, 142, 247, 0.28);
+}
+
+body.console-redesign-v4 .shell-nav-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: 0.66rem;
+}
+
+body.console-redesign-v4 .shell-quick-access {
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(12, 18, 26, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+body.console-redesign-v4 .shell-quick-grid {
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+body.console-redesign-v4 .shell-quick-link {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(9, 13, 20, 0.65);
+}
+
+body.console-redesign-v4 .shell-header {
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: rgba(13, 19, 28, 0.92);
+  box-shadow: 0 12px 24px rgba(5, 10, 18, 0.28);
+}
+
+body.console-redesign-v4 .shell-search {
+  background: rgba(10, 14, 22, 0.6);
+  border-color: rgba(148, 163, 184, 0.24);
+}
+
+body.console-redesign-v4 .shell-search input {
+  font-size: 0.9rem;
+}
+
+body.console-redesign-v4 .ticketing-kpi {
+  background: rgba(16, 22, 32, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: 0 10px 22px rgba(6, 12, 20, 0.26);
+}
+
+body.console-redesign-v4 .ticketing-kpi-label {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.68rem;
+  color: var(--ui-muted);
+  font-weight: 600;
+}
+
+body.console-redesign-v4 .ticketing-kpi-value {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #f8fbff;
+}
+
+body.console-redesign-v4 .ticketing-kpi-meta {
+  font-size: 0.78rem;
+  color: var(--ui-muted);
+}
+
+body.console-redesign-v4 .ticketing-table-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+body.console-redesign-v4 .ticketing-table-card .card-header {
+  padding: 16px 18px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(16, 22, 32, 0.9);
+}
+
+body.console-redesign-v4 .ticketing-table-card .card-header h3 {
+  font-size: 1.05rem;
+}
+
+body.console-redesign-v4 .ticketing-tabs {
+  gap: 6px;
+}
+
+body.console-redesign-v4 .ticketing-tab {
+  border-radius: 999px;
+  background: rgba(11, 16, 24, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  color: #cbd5e1;
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+
+body.console-redesign-v4 .ticketing-tab.active {
+  background: rgba(79, 142, 247, 0.22);
+  border-color: rgba(79, 142, 247, 0.55);
+  color: #f8fbff;
+  box-shadow: inset 0 0 0 1px rgba(79, 142, 247, 0.3);
+}
+
+body.console-redesign-v4 .ticketing-filters {
+  padding: 10px 18px 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(9, 13, 20, 0.45);
+}
+
+body.console-redesign-v4 .ticketing-table-scroll {
+  border: none;
+  border-radius: 0 0 16px 16px;
+  background: rgba(9, 13, 20, 0.4);
+  max-height: min(56vh, 520px);
+}
+
+body.console-redesign-v4 .ticketing-table-scroll table thead th {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+  background: rgba(8, 12, 20, 0.82);
+}
+
+body.console-redesign-v4 .ticketing-table-scroll table td {
+  padding: 12px 14px;
+}
+
+body.console-redesign-v4 table tbody tr.selected td {
+  background: rgba(79, 142, 247, 0.16);
+}
+
+body.console-redesign-v4 table tbody tr:hover td {
+  background: rgba(79, 142, 247, 0.08);
+}
+
+body.console-redesign-v4 .ticketing-details {
+  padding: 16px;
+  background: rgba(16, 22, 32, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: 0 12px 26px rgba(4, 9, 18, 0.28);
+}
+
+body.console-redesign-v4 .ticketing-detail-header h3 {
+  font-size: 1.05rem;
+}
+
+body.console-redesign-v4 .ticketing-detail-actions .btn {
+  min-height: 30px;
+  padding: 6px 12px;
+  font-size: 0.78rem;
+}
+
+body.console-redesign-v4 .ticketing-detail-section {
+  margin-top: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(8, 12, 20, 0.55);
+}
+
+body.console-redesign-v4 .ticketing-detail-section summary {
+  list-style: none;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #a9bdd6;
+}
+
+body.console-redesign-v4 .ticketing-detail-section summary::-webkit-details-marker {
+  display: none;
+}
+
+body.console-redesign-v4 .ticketing-details .kv-row {
+  border-bottom: 1px dashed rgba(148, 163, 184, 0.16);
+  padding-bottom: 6px;
+}
+
+body.console-redesign-v4 .ticketing-details .kv-key {
+  color: #9fb4ce;
+  font-size: 0.68rem;
+}
+
+body.console-redesign-v4 .ticketing-details .kv-value {
+  font-size: 0.84rem;
+  color: #f4f7fb;
+}
+
+body.console-redesign-v4 .actions-workspace {
+  grid-template-columns: minmax(420px, var(--actions-sidebar-width, 480px)) 12px minmax(0, 1fr);
+}
+
+body.console-redesign-v4 .actions-console-grid {
+  grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr);
 }
 
 @media (max-width: 1100px) {

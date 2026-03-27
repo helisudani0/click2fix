@@ -457,27 +457,8 @@ export default function AppLayout() {
           </div>
 
           <div className="shell-sidebar-body">
-            {NAV_SECTIONS.map((section) => (
-              <div key={section.title} className="shell-nav-group">
-                <div className="shell-nav-group-title">{section.title}</div>
-                <div className="shell-nav-group-links">
-                  {section.links.map((link) => (
-                    <NavLink
-                      key={link.to}
-                      to={link.to}
-                      end={Boolean(link.end)}
-                      className={({ isActive }) => `shell-nav-link${isActive ? " active" : ""}`}
-                    >
-                      <span className="shell-nav-icon">{shortLabel(link.label)}</span>
-                      <span className="shell-nav-text">{link.label}</span>
-                    </NavLink>
-                  ))}
-                </div>
-              </div>
-            ))}
-
             <div className="shell-quick-access">
-              <div className="shell-nav-group-title">Quick Access</div>
+              <div className="shell-nav-group-title">Priority Queue</div>
               <div className="shell-quick-grid">
                 {priorityLinks.map((item) => (
                   <NavLink
@@ -498,6 +479,25 @@ export default function AppLayout() {
                 Customize
               </button>
             </div>
+
+            {NAV_SECTIONS.map((section) => (
+              <div key={section.title} className="shell-nav-group">
+                <div className="shell-nav-group-title">{section.title}</div>
+                <div className="shell-nav-group-links">
+                  {section.links.map((link) => (
+                    <NavLink
+                      key={link.to}
+                      to={link.to}
+                      end={Boolean(link.end)}
+                      className={({ isActive }) => `shell-nav-link${isActive ? " active" : ""}`}
+                    >
+                      <span className="shell-nav-icon">{shortLabel(link.label)}</span>
+                      <span className="shell-nav-text">{link.label}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
 
           <div className="shell-sidebar-panels">

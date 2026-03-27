@@ -3,7 +3,6 @@ import { getExecutions } from "../api/wazuh";
 import ExecutionStream from "../components/ExecutionStream";
 import Pager from "../components/Pager";
 import RelativeTimestamp from "../components/RelativeTimestamp";
-import SideDrawer from "../components/SideDrawer";
 import { parseWazuhTimestamp } from "../utils/time";
 
 const executionRow = (row) => {
@@ -120,8 +119,6 @@ export default function Executions() {
   const [statusFilter, setStatusFilter] = useState("");
   const [queuePage, setQueuePage] = useState(1);
   const [queuePageSize, setQueuePageSize] = useState(15);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [queueCollapsed, setQueueCollapsed] = useState(false);
 
   const load = useCallback((force = false) => {
     setLoading(true);
@@ -266,21 +263,18 @@ export default function Executions() {
         </div>
       </div>
 
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <h3>Execution Queue</h3>
-            <p className="muted">Select a run for live stream and forensic detail.</p>
-          </div>
-          <div className="page-actions">
-            <span className="muted">{filteredRuns.length} visible runs</span>
-            <button type="button" className="btn secondary" onClick={() => setQueueCollapsed((prev) => !prev)}>
-              {queueCollapsed ? "Expand Queue" : "Collapse Queue"}
-            </button>
-          </div>
-        </div>
-        {!queueCollapsed ? (
-          <>
+      <div className="ticketing-layout">
+        <div className="ticketing-main">
+          <div className="card ticketing-table-card">
+            <div className="card-header">
+              <div>
+                <h3>Execution Queue</h3>
+                <p className="muted">Select a run for live stream and forensic detail.</p>
+              </div>
+              <div className="page-actions">
+                <span className="muted">{filteredRuns.length} visible runs</span>
+              </div>
+            </div>
             <div className="table-scroll execution-queue-scroll">
               <table className="table compact readable execution-queue-table">
                 <thead>
@@ -310,7 +304,6 @@ export default function Executions() {
                           key={run.id}
                           onClick={() => {
                             setSelected(run.id);
-                            setDrawerOpen(true);
                           }}
                           className={`clickable ${Number(selected) === Number(run.id) ? "selected" : ""}`}
                         >
@@ -364,74 +357,64 @@ export default function Executions() {
               pageSizeOptions={[15, 25, 50]}
               label="executions"
             />
-          </>
-        ) : (
-          <div className="empty-state">
-            Queue collapsed. Expand it to resume row-by-row navigation.
           </div>
-        )}
-      </div>
+        </div>
 
-      {!drawerOpen ? <div className="empty-state">Select an execution to inspect output and step telemetry.</div> : null}
-
-      <SideDrawer
-        open={drawerOpen && Boolean(selectedRun)}
-        onClose={() => setDrawerOpen(false)}
-        title={selectedRun ? `Execution #${selectedRun.id}` : "Execution"}
-        subtitle={selectedRun ? `${selectedRun.action || "-"} | ${selectedRun.agent || "-"}` : ""}
-      >
-        {selectedRun ? (
-          <div className="drawer-grid">
-            <div className="panel-stack">
-              <div className="card">
-                <div className="card-header">
-                  <div>
-                    <h3>Run Snapshot</h3>
-                    <p className="muted">Core metadata for the selected execution.</p>
-                  </div>
-                </div>
-                <div className="kv-grid">
-                  <div className="kv-row">
-                    <span className="kv-key">Execution ID</span>
-                    <span className="kv-value">{selectedRun.id}</span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Status</span>
-                    <span className="kv-value">
-                      <span className={`status-pill ${statusTone(selectedRun.status)}`}>{selectedRun.status || "-"}</span>
-                    </span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Action</span>
-                    <span className="kv-value">{selectedRun.action || "-"}</span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Target</span>
-                    <span className="kv-value">{selectedRun.agent || "-"}</span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Approved By</span>
-                    <span className="kv-value">{selectedRun.approvedBy || "-"}</span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Started At</span>
-                    <span className="kv-value"><RelativeTimestamp value={selectedRun.startedAt} /></span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Finished At</span>
-                    <span className="kv-value"><RelativeTimestamp value={selectedRun.finishedAt} /></span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Runtime</span>
-                    <span className="kv-value">{formatDuration(selectedRun.startedAt, selectedRun.finishedAt)}</span>
-                  </div>
+        <aside className="card ticketing-details">
+          {selectedRun ? (
+            <>
+              <div className="ticketing-detail-header">
+                <div>
+                  <h3>Execution #{selectedRun.id}</h3>
+                  <p className="muted">{selectedRun.action || "-"} | {selectedRun.agent || "-"}</p>
                 </div>
               </div>
-            </div>
-            <ExecutionStream executionId={selectedRun.id} />
-          </div>
-        ) : null}
-      </SideDrawer>
+              <div className="kv-grid">
+                <div className="kv-row">
+                  <span className="kv-key">Execution ID</span>
+                  <span className="kv-value">{selectedRun.id}</span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Status</span>
+                  <span className="kv-value">
+                    <span className={`status-pill ${statusTone(selectedRun.status)}`}>{selectedRun.status || "-"}</span>
+                  </span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Action</span>
+                  <span className="kv-value">{selectedRun.action || "-"}</span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Target</span>
+                  <span className="kv-value">{selectedRun.agent || "-"}</span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Approved By</span>
+                  <span className="kv-value">{selectedRun.approvedBy || "-"}</span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Started At</span>
+                  <span className="kv-value"><RelativeTimestamp value={selectedRun.startedAt} /></span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Finished At</span>
+                  <span className="kv-value"><RelativeTimestamp value={selectedRun.finishedAt} /></span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Runtime</span>
+                  <span className="kv-value">{formatDuration(selectedRun.startedAt, selectedRun.finishedAt)}</span>
+                </div>
+              </div>
+              <details className="ticketing-detail-section" open>
+                <summary>Execution Stream</summary>
+                <ExecutionStream executionId={selectedRun.id} />
+              </details>
+            </>
+          ) : (
+            <div className="empty-state">Select an execution to inspect output and step telemetry.</div>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }

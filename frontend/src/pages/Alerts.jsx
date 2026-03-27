@@ -5,7 +5,6 @@ import IOCPanel from "../components/IOCPanel";
 import MitrePanel from "../components/MitrePanel";
 import Pager from "../components/Pager";
 import RelativeTimestamp from "../components/RelativeTimestamp";
-import SideDrawer from "../components/SideDrawer";
 import { parseWazuhTimestamp } from "../utils/time";
 
 const pickAlertId = (alert) => {
@@ -91,11 +90,11 @@ export default function Alerts() {
   const [query, setQuery] = useState(queryParam);
   const [agentFilter, setAgentFilter] = useState("");
   const [agentOnly, setAgentOnly] = useState(true);
+  const [severityFilter, setSeverityFilter] = useState("all");
 
   const [agents, setAgents] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [selectedId, setSelectedId] = useState("");
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [queuePage, setQueuePage] = useState(1);
   const [queuePageSize, setQueuePageSize] = useState(50);
 
@@ -149,11 +148,6 @@ export default function Alerts() {
     });
   }, [queryParam, agentFilter, agentOnly]);
 
-  const selected = useMemo(() => {
-    if (!alerts.length) return null;
-    return alerts.find((a) => a.id === selectedId) || alerts[0];
-  }, [alerts, selectedId]);
-
   const triageSummary = useMemo(() => {
     const bucket = { critical: 0, high: 0, medium: 0, low: 0, unknown: 0 };
     alerts.forEach((alert) => {
@@ -162,17 +156,31 @@ export default function Alerts() {
     return bucket;
   }, [alerts]);
 
+  const filteredAlerts = useMemo(() => {
+    if (severityFilter === "all") return alerts;
+    return alerts.filter((alert) => severityBucket(alert.level) === severityFilter);
+  }, [alerts, severityFilter]);
+
+  const selected = useMemo(() => {
+    if (!filteredAlerts.length) return null;
+    return filteredAlerts.find((a) => a.id === selectedId) || filteredAlerts[0];
+  }, [filteredAlerts, selectedId]);
+
   useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(alerts.length / queuePageSize));
+    const totalPages = Math.max(1, Math.ceil(filteredAlerts.length / queuePageSize));
     if (queuePage > totalPages) {
       setQueuePage(totalPages);
     }
-  }, [alerts.length, queuePage, queuePageSize]);
+  }, [filteredAlerts.length, queuePage, queuePageSize]);
+
+  useEffect(() => {
+    setQueuePage(1);
+  }, [severityFilter]);
 
   const pagedAlerts = useMemo(() => {
     const start = (queuePage - 1) * queuePageSize;
-    return alerts.slice(start, start + queuePageSize);
-  }, [alerts, queuePage, queuePageSize]);
+    return filteredAlerts.slice(start, start + queuePageSize);
+  }, [filteredAlerts, queuePage, queuePageSize]);
 
   return (
     <div className="page page-route-alerts">
@@ -193,273 +201,263 @@ export default function Alerts() {
           </button>
         </div>
       </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <h3>Triage Controls</h3>
-            <p className="muted">Filter alert volume to focus analyst attention.</p>
-          </div>
+      <div className="ticketing-kpi-grid">
+        <div className="ticketing-kpi">
+          <div className="ticketing-kpi-label">Total Alerts</div>
+          <div className="ticketing-kpi-value">{alerts.length}</div>
+          <div className="ticketing-kpi-meta">Current filtered queue</div>
         </div>
-        <div className="page-actions">
-          <input
-            className="input"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by alert ID, rule, agent, IOC, or IP..."
-          />
-          <select className="input" value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
-            <option value="">All agents</option>
-            {agents.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.name} ({agent.id})
-              </option>
-            ))}
-          </select>
-          <label className="chip clickable">
-            <input
-              type="checkbox"
-              checked={agentOnly}
-              onChange={(e) => setAgentOnly(e.target.checked)}
-              className="mr-6"
-            />
-            Agent Alerts Only
-          </label>
-          <button className="btn secondary" onClick={() => setSearchParams(query ? { query } : {})}>
-            Apply Search
-          </button>
-          <button
-            className="btn secondary"
-            onClick={() => {
-              setQuery("");
-              setSearchParams({});
-            }}
-          >
-            Clear
-          </button>
+        <div className="ticketing-kpi">
+          <div className="ticketing-kpi-label">Critical</div>
+          <div className="ticketing-kpi-value">{triageSummary.critical}</div>
+          <div className="ticketing-kpi-meta">Immediate analyst attention</div>
         </div>
-
-        <div className="mission-grid mt-12">
-          <div className="mission-card">
-            <div className="mission-label">Total Alerts</div>
-            <div className="mission-value">{alerts.length}</div>
-            <div className="mission-meta">Current filtered queue</div>
-          </div>
-          <div className="mission-card">
-            <div className="mission-label">Critical</div>
-            <div className="mission-value">{triageSummary.critical}</div>
-            <div className="mission-meta">Immediate analyst attention</div>
-          </div>
-          <div className="mission-card">
-            <div className="mission-label">High</div>
-            <div className="mission-value">{triageSummary.high}</div>
-            <div className="mission-meta">Potential incident escalation</div>
-          </div>
-          <div className="mission-card">
-            <div className="mission-label">Medium / Low</div>
-            <div className="mission-value">{triageSummary.medium + triageSummary.low}</div>
-            <div className="mission-meta">Backlog and noise review</div>
-          </div>
+        <div className="ticketing-kpi">
+          <div className="ticketing-kpi-label">High</div>
+          <div className="ticketing-kpi-value">{triageSummary.high}</div>
+          <div className="ticketing-kpi-meta">Potential incident escalation</div>
+        </div>
+        <div className="ticketing-kpi">
+          <div className="ticketing-kpi-label">Medium / Low</div>
+          <div className="ticketing-kpi-value">{triageSummary.medium + triageSummary.low}</div>
+          <div className="ticketing-kpi-meta">Backlog and noise review</div>
         </div>
       </div>
 
       {loading ? <div className="empty-state">Loading alerts...</div> : null}
       {!loading && error ? <div className="empty-state">Error: {error}</div> : null}
 
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <h3>Detection Queue</h3>
-            <p className="muted">Sorted by newest event timestamp.</p>
-          </div>
-        </div>
-        <div className="table-scroll">
-          <table className="table readable">
-            <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>
-                    <span className="column-guide">
-                      Severity
-                      <span className="column-guide-popover">
-                        Wazuh severity maps to rule level. Higher values signal faster escalation and response urgency.
-                      </span>
-                    </span>
-                  </th>
-                  <th className="alerts-col-rule">Rule</th>
-                  <th className="alerts-col-agent">Agent</th>
-                  <th>
-                    <span className="column-guide">
-                      Groups
-                      <span className="column-guide-popover">
-                        Groups show the rule families attached to the alert so we can separate real signal from noisy control categories.
-                      </span>
-                    </span>
-                  </th>
-                  <th className="alerts-col-time">Timestamp</th>
-                </tr>
-            </thead>
-            <tbody>
-              {alerts.length === 0 ? (
-                <tr>
-                  <td colSpan="6" className="text-center">
-                    No alerts found.
-                  </td>
-                </tr>
-              ) : (
-                pagedAlerts.map((alert) => (
-                  <tr
-                    key={alert.id}
-                    onClick={() => {
-                      setSelectedId(alert.id);
-                      setDrawerOpen(true);
-                    }}
-                    className={`clickable ${selected?.id === alert.id ? "selected" : ""}`}
-                  >
-                    <td>{alert.id}</td>
-                    <td>
-                      <span className={`status-pill ${severityClass(alert.level)}`}>{alert.level}</span>
-                    </td>
-                    <td className="alerts-col-rule">
-                      <span className="table-wrap-cell">{alert.rule}</span>
-                    </td>
-                    <td className="alerts-col-agent">
-                      <span className="table-wrap-cell">{alert.agentName}</span>
-                    </td>
-                    <td className="alerts-col-groups">
-                      <span className="table-wrap-cell">{alert.groups || "-"}</span>
-                    </td>
-                    <td className="alerts-col-time"><RelativeTimestamp value={alert.timestampRaw} /></td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-        <Pager
-          total={alerts.length}
-          page={queuePage}
-          pageSize={queuePageSize}
-          onPageChange={setQueuePage}
-          onPageSizeChange={(size) => {
-            setQueuePageSize(size);
-            setQueuePage(1);
-          }}
-          pageSizeOptions={[25, 50, 100]}
-          label="alerts"
-        />
-      </div>
-
-      {!drawerOpen ? <div className="empty-state">Select an alert to inspect its full context.</div> : null}
-
-      <SideDrawer
-        open={drawerOpen && Boolean(selected)}
-        onClose={() => setDrawerOpen(false)}
-        title={selected ? `Alert ${selected.id}` : "Alert"}
-        subtitle={selected ? `${selected.rule} | ${selected.agentName}` : ""}
-        actions={selected ? (
-          <>
-            <button className="btn secondary" onClick={() => navigate(`/alerts?query=${encodeURIComponent(selected.id)}`)}>
-              Pin Alert
-            </button>
-            <button className="btn secondary" onClick={() => navigate("/approvals")}>
-              Request Approval
-            </button>
-            <button className="btn" onClick={() => navigate("/cases")}>
-              Open Case Desk
-            </button>
-          </>
-        ) : null}
-      >
-        {selected ? (
-          <>
-            <div className="drawer-grid">
-              <div className="panel-stack">
-                <div className="card">
-                  <div className="card-header">
-                    <div>
-                      <h3>Incident Snapshot</h3>
-                      <p className="muted">Analyst context for triage, escalation, and playbook execution.</p>
-                    </div>
-                  </div>
-                  <div className="kv-grid">
-                    <div className="kv-row">
-                      <span className="kv-key">Alert ID</span>
-                      <span className="kv-value">{selected.id}</span>
-                    </div>
-                    <div className="kv-row">
-                      <span className="kv-key">Severity</span>
-                      <span className="kv-value">
-                        <span className={`status-pill ${severityClass(selected.level)}`}>Level {selected.level}</span>
-                      </span>
-                    </div>
-                    <div className="kv-row">
-                      <span className="kv-key">Timestamp</span>
-                      <span className="kv-value"><RelativeTimestamp value={selected.timestampRaw} /></span>
-                    </div>
-                    <div className="kv-row">
-                      <span className="kv-key">Agent</span>
-                      <span className="kv-value">
-                        {selected.agentName} ({selected.agentId || "-"}) {selected.agentIp ? `| ${selected.agentIp}` : ""}
-                      </span>
-                    </div>
-                    <div className="kv-row">
-                      <span className="kv-key">Rule</span>
-                      <span className="kv-value">
-                        {selected.rule} {selected.ruleId ? `(${selected.ruleId})` : ""}
-                      </span>
-                    </div>
-                    <div className="kv-row">
-                      <span className="kv-key">Decoder</span>
-                      <span className="kv-value">{selected.decoder || "-"}</span>
-                    </div>
-                    <div className="kv-row">
-                      <span className="kv-key">Location</span>
-                      <span className="kv-value">{selected.location || "-"}</span>
-                    </div>
-                    <div className="kv-row">
-                      <span className="kv-key">Manager</span>
-                      <span className="kv-value">{selected.manager || "-"}</span>
-                    </div>
-                    <div className="kv-row">
-                      <span className="kv-key">Groups</span>
-                      <span className="kv-value">{selected.groups || "-"}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="card">
-                  <div className="card-header">
-                    <div>
-                      <h3>Event Log</h3>
-                      <p className="muted">Raw log content associated with this detection event.</p>
-                    </div>
-                  </div>
-                  <pre className="code-block">{selected.fullLog ? String(selected.fullLog) : "No full_log field on this alert."}</pre>
-                </div>
+      <div className="ticketing-layout">
+        <div className="ticketing-main">
+          <div className="card ticketing-table-card">
+            <div className="card-header">
+              <div>
+                <h3>Detection Queue</h3>
+                <p className="muted">Sorted by newest event timestamp.</p>
               </div>
-
-              <div className="panel-stack">
-                <div className="card">
-                  <IOCPanel alertId={selected.id} />
-                </div>
-                <div className="card">
-                  <MitrePanel alertId={selected.id} />
-                </div>
-                <div className="card">
-                  <div className="card-header">
-                    <div>
-                      <h3>Raw Alert JSON</h3>
-                      <p className="muted">Unmodified payload from Wazuh/indexer.</p>
-                    </div>
-                  </div>
-                  <pre className="code-block">{JSON.stringify(selected.raw, null, 2)}</pre>
-                </div>
+              <div className="ticketing-tabs">
+                {[
+                  { id: "all", label: "All" },
+                  { id: "critical", label: "Critical" },
+                  { id: "high", label: "High" },
+                  { id: "medium", label: "Medium" },
+                  { id: "low", label: "Low" },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`ticketing-tab${severityFilter === tab.id ? " active" : ""}`}
+                    onClick={() => setSeverityFilter(tab.id)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
               </div>
             </div>
-          </>
-        ) : null}
-      </SideDrawer>
+
+            <div className="ticketing-filters">
+              <input
+                className="input"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search by alert ID, rule, agent, IOC, or IP..."
+              />
+              <select className="input" value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
+                <option value="">All agents</option>
+                {agents.map((agent) => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.name} ({agent.id})
+                  </option>
+                ))}
+              </select>
+              <label className="chip clickable">
+                <input
+                  type="checkbox"
+                  checked={agentOnly}
+                  onChange={(e) => setAgentOnly(e.target.checked)}
+                  className="mr-6"
+                />
+                Agent Alerts Only
+              </label>
+              <button className="btn secondary" onClick={() => setSearchParams(query ? { query } : {})}>
+                Apply Search
+              </button>
+              <button
+                className="btn secondary"
+                onClick={() => {
+                  setQuery("");
+                  setSearchParams({});
+                }}
+              >
+                Clear
+              </button>
+            </div>
+
+            <div className="table-scroll ticketing-table-scroll">
+              <table className="table readable">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>
+                      <span className="column-guide">
+                        Severity
+                        <span className="column-guide-popover">
+                          Wazuh severity maps to rule level. Higher values signal faster escalation and response urgency.
+                        </span>
+                      </span>
+                    </th>
+                    <th className="alerts-col-rule">Rule</th>
+                    <th className="alerts-col-agent">Agent</th>
+                    <th>
+                      <span className="column-guide">
+                        Groups
+                        <span className="column-guide-popover">
+                          Groups show the rule families attached to the alert so we can separate real signal from noisy control categories.
+                        </span>
+                      </span>
+                    </th>
+                    <th className="alerts-col-time">Timestamp</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredAlerts.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="text-center">
+                        No alerts found.
+                      </td>
+                    </tr>
+                  ) : (
+                    pagedAlerts.map((alert) => (
+                      <tr
+                        key={alert.id}
+                        onClick={() => {
+                          setSelectedId(alert.id);
+                        }}
+                        className={`clickable ${selected?.id === alert.id ? "selected" : ""}`}
+                      >
+                        <td>{alert.id}</td>
+                        <td>
+                          <span className={`status-pill ${severityClass(alert.level)}`}>{alert.level}</span>
+                        </td>
+                        <td className="alerts-col-rule">
+                          <span className="table-wrap-cell">{alert.rule}</span>
+                        </td>
+                        <td className="alerts-col-agent">
+                          <span className="table-wrap-cell">{alert.agentName}</span>
+                        </td>
+                        <td className="alerts-col-groups">
+                          <span className="table-wrap-cell">{alert.groups || "-"}</span>
+                        </td>
+                        <td className="alerts-col-time"><RelativeTimestamp value={alert.timestampRaw} /></td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <Pager
+              total={filteredAlerts.length}
+              page={queuePage}
+              pageSize={queuePageSize}
+              onPageChange={setQueuePage}
+              onPageSizeChange={(size) => {
+                setQueuePageSize(size);
+                setQueuePage(1);
+              }}
+              pageSizeOptions={[25, 50, 100]}
+              label="alerts"
+            />
+          </div>
+        </div>
+
+        <aside className="card ticketing-details">
+          {selected ? (
+            <>
+              <div className="ticketing-detail-header">
+                <div>
+                  <h3>Alert {selected.id}</h3>
+                  <p className="muted">{selected.rule} | {selected.agentName}</p>
+                </div>
+                <div className="ticketing-detail-actions">
+                  <button className="btn secondary" onClick={() => navigate(`/alerts?query=${encodeURIComponent(selected.id)}`)}>
+                    Pin Alert
+                  </button>
+                  <button className="btn secondary" onClick={() => navigate("/approvals")}>
+                    Request Approval
+                  </button>
+                  <button className="btn" onClick={() => navigate("/cases")}>
+                    Open Case Desk
+                  </button>
+                </div>
+              </div>
+
+              <div className="kv-grid">
+                <div className="kv-row">
+                  <span className="kv-key">Alert ID</span>
+                  <span className="kv-value">{selected.id}</span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Severity</span>
+                  <span className="kv-value">
+                    <span className={`status-pill ${severityClass(selected.level)}`}>Level {selected.level}</span>
+                  </span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Timestamp</span>
+                  <span className="kv-value"><RelativeTimestamp value={selected.timestampRaw} /></span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Agent</span>
+                  <span className="kv-value">
+                    {selected.agentName} ({selected.agentId || "-"}) {selected.agentIp ? `| ${selected.agentIp}` : ""}
+                  </span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Rule</span>
+                  <span className="kv-value">
+                    {selected.rule} {selected.ruleId ? `(${selected.ruleId})` : ""}
+                  </span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Decoder</span>
+                  <span className="kv-value">{selected.decoder || "-"}</span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Location</span>
+                  <span className="kv-value">{selected.location || "-"}</span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Manager</span>
+                  <span className="kv-value">{selected.manager || "-"}</span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key">Groups</span>
+                  <span className="kv-value">{selected.groups || "-"}</span>
+                </div>
+              </div>
+
+              <details className="ticketing-detail-section" open>
+                <summary>Event Log</summary>
+                <pre className="code-block">{selected.fullLog ? String(selected.fullLog) : "No full_log field on this alert."}</pre>
+              </details>
+              <details className="ticketing-detail-section">
+                <summary>Indicators of Compromise</summary>
+                <IOCPanel alertId={selected.id} />
+              </details>
+              <details className="ticketing-detail-section">
+                <summary>MITRE Mapping</summary>
+                <MitrePanel alertId={selected.id} />
+              </details>
+              <details className="ticketing-detail-section">
+                <summary>Raw Alert JSON</summary>
+                <pre className="code-block">{JSON.stringify(selected.raw, null, 2)}</pre>
+              </details>
+            </>
+          ) : (
+            <div className="empty-state">Select an alert to inspect its full context.</div>
+          )}
+        </aside>
+      </div>
     </div>
   );
 }

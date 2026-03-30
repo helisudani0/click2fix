@@ -117,6 +117,7 @@ function PlaybookStepEditor({
     () => actions.find((item) => item.id === step.action) || null,
     [actions, step.action]
   );
+  const hasCustomAction = Boolean(step.action) && !selectedAction;
   const [argsText, setArgsText] = useState(formatArgs(step.args));
   const [argsError, setArgsError] = useState("");
 
@@ -202,6 +203,9 @@ function PlaybookStepEditor({
             }}
           >
             <option value="">Select action</option>
+            {hasCustomAction ? (
+              <option value={step.action}>{`Custom action: ${step.action}`}</option>
+            ) : null}
             {actions.map((action) => (
               <option key={action.id} value={action.id}>
                 {toDisplay(action.label || action.id)}
@@ -222,6 +226,21 @@ function PlaybookStepEditor({
 
       {selectedAction?.description ? (
         <div className="empty-state mt-10">{String(selectedAction.description)}</div>
+      ) : null}
+
+      {hasCustomAction ? (
+        <div className="mt-10">
+          <div className="muted">Custom Action ID</div>
+          <input
+            className="input mt-8 mono"
+            value={step.action}
+            onChange={(event) => onChange(index, { ...step, action: event.target.value })}
+            placeholder="custom-action-id"
+          />
+          <div className="meta-line mt-8">
+            This action is not in the current catalog. Keep it as JSON draft or map it to a supported action before execution.
+          </div>
+        </div>
       ) : null}
 
       {Array.isArray(selectedAction?.inputs) && selectedAction.inputs.length ? (

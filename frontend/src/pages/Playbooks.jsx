@@ -313,8 +313,17 @@ export default function Playbooks() {
       }
       const mode = String(response?.data?.source?.generation_mode || "").toLowerCase();
       const aiError = String(response?.data?.source?.ai_error || "");
+      const unmapped = Array.isArray(response?.data?.source?.unmapped_actions)
+        ? response.data.source.unmapped_actions.filter(Boolean)
+        : [];
       if (mode === "ai") {
         setStatus("AI-generated playbook loaded into the editor.");
+      } else if (mode === "ai_prompt") {
+        setStatus(
+          unmapped.length
+            ? `AI playbook loaded with non-catalog actions (${unmapped.join(", ")}). Review steps before execution.`
+            : "AI-generated playbook loaded into the editor."
+        );
       } else if (useAiGeneration && aiError) {
         setStatus(`Heuristic playbook loaded (AI fallback): ${aiError}`);
       } else {
@@ -347,7 +356,14 @@ export default function Playbooks() {
         return;
       }
       setDraft(normalized);
-      setStatus("AI playbook loaded into the editor.");
+      const unmapped = Array.isArray(response?.data?.source?.unmapped_actions)
+        ? response.data.source.unmapped_actions.filter(Boolean)
+        : [];
+      setStatus(
+        unmapped.length
+          ? `AI playbook loaded with non-catalog actions (${unmapped.join(", ")}). Review or map these before execution.`
+          : "AI playbook loaded into the editor."
+      );
     } catch (err) {
       setStatus(formatApiError(err, "Failed to generate AI playbook."));
     }
@@ -565,6 +581,9 @@ export default function Playbooks() {
               </div>
               <div className="meta-line mt-8">
                 AI setup: use Org Admin / Platform AI Configuration, or set `C2F_AI_FEATURES_ENABLED=true` with `C2F_LLM_API_KEY` in `.env.appliance`.
+              </div>
+              <div className="meta-line mt-8">
+                Prompt mode can include non-catalog action IDs in JSON when needed. Map or edit those steps before execution.
               </div>
             </div>
           </div>

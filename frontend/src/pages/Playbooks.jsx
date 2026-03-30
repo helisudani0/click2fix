@@ -148,6 +148,7 @@ export default function Playbooks() {
   const [caseId, setCaseId] = useState("");
   const [useAiGeneration, setUseAiGeneration] = useState(true);
   const [aiPrompt, setAiPrompt] = useState("");
+  const [aiGoalPrompt, setAiGoalPrompt] = useState("");
   const [playbookSearch, setPlaybookSearch] = useState("");
   const [targetType, setTargetType] = useState("agent");
   const [targetValue, setTargetValue] = useState("");
@@ -321,6 +322,34 @@ export default function Playbooks() {
       }
     } catch (err) {
       setStatus(formatApiError(err, "Failed to generate playbook."));
+    }
+  };
+
+  const handleGenerateFromAiGoal = async () => {
+    const prompt = String(aiGoalPrompt || "").trim();
+    if (!prompt) {
+      setStatus("Describe the playbook goal first, then generate.");
+      return;
+    }
+    setStatus("");
+    setSelectedPlaybookName("");
+    setActiveExecutionId(null);
+    try {
+      const response = await generatePlaybook({
+        use_ai: true,
+        ai_prompt: prompt,
+      });
+      const normalized = normalizePlaybook(response.data);
+      if (!normalized || !Array.isArray(normalized.steps) || normalized.steps.length === 0) {
+        const reason = response?.data?.source?.ai_error
+          || "AI did not return valid playbook steps for this request.";
+        setStatus(`AI generation failed: ${reason}`);
+        return;
+      }
+      setDraft(normalized);
+      setStatus("AI playbook loaded into the editor.");
+    } catch (err) {
+      setStatus(formatApiError(err, "Failed to generate AI playbook."));
     }
   };
 
@@ -514,6 +543,30 @@ export default function Playbooks() {
           </div>
           <div className="meta-line">
             Generated playbooks are editable. You can still save, modify, or replace every step before execution.
+          </div>
+
+          <div className="list mt-12">
+            <div className="list-item readable">
+              <div className="muted">AI Playbook Generator</div>
+              <div className="meta-line mt-8">
+                Describe the response plan you need. AI will generate steps into the same manual editor.
+              </div>
+              <textarea
+                className="input mt-8"
+                rows={4}
+                value={aiGoalPrompt}
+                onChange={(event) => setAiGoalPrompt(event.target.value)}
+                placeholder="Example: isolate endpoint, block suspicious outbound IPs, collect memory+forensics, then run SCA rescan."
+              />
+              <div className="page-actions mt-10">
+                <button className="btn" onClick={handleGenerateFromAiGoal}>
+                  Generate From AI Goal
+                </button>
+              </div>
+              <div className="meta-line mt-8">
+                AI setup: use Org Admin / Platform AI Configuration, or set `C2F_AI_FEATURES_ENABLED=true` with `C2F_LLM_API_KEY` in `.env.appliance`.
+              </div>
+            </div>
           </div>
         </div>
 

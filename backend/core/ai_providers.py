@@ -578,10 +578,19 @@ class ProviderFactory:
             return OpenAIProvider(node)
         if provider == "gemini":
             return GeminiProvider(node)
-        if provider == "ollama":
-            # Local Ollama support is intentionally disabled for now and can be restored later.
-            raise AIProviderError("Unsupported AI provider: ollama (temporarily disabled)")
-        raise AIProviderError(f"Unsupported AI provider: {provider}")
+        # Fallback: treat any named provider as OpenAI-compatible.
+        # This supports providers such as OpenRouter, Groq, xAI, local gateways, etc.
+        generic = dict(node or {})
+        if provider != "openai" and not _text(generic.get("base_url")):
+            raise AIProviderError(
+                f"Unsupported AI provider '{provider}' without base_url; "
+                "set a provider-specific OpenAI-compatible base_url"
+            )
+        generic["base_url"] = _clean_base_url(generic.get("base_url") or _DEFAULT_OPENAI_BASE_URL)
+        generic["model"] = _text(generic.get("model") or _DEFAULT_OPENAI_MODEL)
+        adapter = _OpenAICompatibleProvider(generic)
+        adapter.provider_name = provider or "openai-compatible"
+        return adapter
 
 
 class AIAdapter:
@@ -630,7 +639,7 @@ class AIAdapter:
         }
         default_base, default_model = provider_defaults.get(
             provider,
-            (_DEFAULT_OPENAI_BASE_URL, _DEFAULT_OPENAI_MODEL),
+            ("", ""),
         )
         if "api_key" in user_cfg:
             api_key = user_cfg.get("api_key")

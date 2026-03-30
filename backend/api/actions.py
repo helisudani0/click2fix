@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import threading
 from typing import Any
 
@@ -42,7 +43,7 @@ _CONNECTED_STATUSES = {"active", "connected", "online"}
 _GLOBAL_SHELL_MAX_COMMAND_CHARS = 20000
 _GLOBAL_SHELL_MAX_ASSIST_ATTEMPTS = 8
 _AI_REMEDIATION_CONFIG_KEY = "ai_remediation"
-_ALLOWED_AI_PROVIDERS = {"openai", "gemini"}
+_PROVIDER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 
 def _ps_single_quoted(value: str) -> str:
@@ -306,6 +307,18 @@ def _to_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _normalize_provider(value: Any, *, status_code: int, source_label: str) -> str:
+    provider = str(value or "").strip().lower()
+    if not provider:
+        return ""
+    if not _PROVIDER_PATTERN.match(provider):
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"provider in {source_label} must match ^[a-z0-9][a-z0-9._-]{{0,63}}$",
+        )
+    return provider
+
+
 def _coerce_assist_attempts(value: Any, default: int = 3) -> int:
     parsed = _to_int(value, default)
     if parsed < 1:
@@ -367,10 +380,8 @@ def _coerce_ai_provider_config(value: Any, *, source: str) -> dict[str, Any]:
     source_label = "request body" if source == "request" else "tenant ai_remediation config"
     status_code = 400 if source == "request" else 503
     out: dict[str, Any] = {}
-    provider = str(value.get("provider") or "").strip().lower()
+    provider = _normalize_provider(value.get("provider"), status_code=status_code, source_label=source_label)
     if provider:
-        if provider not in _ALLOWED_AI_PROVIDERS:
-            raise HTTPException(status_code=status_code, detail=f"Unsupported AI provider '{provider}' in {source_label}")
         out["provider"] = provider
     for key in ("base_url", "model", "api_key"):
         if key not in value:
@@ -1365,7 +1376,7 @@ async def run_action(request: Request, user=Depends(require_role("admin"))):
 
 
 @router.post("/global-shell/assist")
-async def global_shell_assist(request: Request, user=Depends(require_role("admin"))):
+async def global_shell_assist(request: Request, user=Depends(require_role("analyst"))):
     body = {}
     try:
         body = await request.json()

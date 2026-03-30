@@ -22,6 +22,8 @@ const AI_PROVIDER_DEFAULT_MODEL = {
   openai: "gpt-4.1-mini",
   gemini: "gemini-2.5-flash",
 };
+const AI_PROVIDER_SUGGESTIONS = ["openai", "gemini", "openrouter", "groq", "xai", "anthropic", "ollama"];
+const defaultModelForProvider = (provider) => AI_PROVIDER_DEFAULT_MODEL[normalizeKey(provider)] || "";
 const isLikelyModelMismatch = (provider, model) => {
   const p = normalizeKey(provider);
   const m = normalizeKey(model);
@@ -221,8 +223,7 @@ export default function OrgAdmin() {
       const provider = normalizeKey(aiConfig?.provider || "openai") || "openai";
       const requestedModel = normalizeText(aiConfig?.model);
       const effectiveModel = requestedModel
-        || AI_PROVIDER_DEFAULT_MODEL[provider]
-        || AI_PROVIDER_DEFAULT_MODEL.openai;
+        || defaultModelForProvider(provider);
       const payload = {
         enabled: Boolean(aiConfig?.enabled),
         provider,
@@ -646,23 +647,27 @@ export default function OrgAdmin() {
           </label>
           <label className="list-item">
             <div className="muted">Provider</div>
-            <select
+            <input
               className="input mt-10"
+              list="ai-provider-options"
               value={aiConfig.provider}
               onChange={(event) =>
                 setAiConfig((current) => {
                   const provider = normalizeKey(event.target.value) || "openai";
                   const next = { ...current, provider };
                   if (isLikelyModelMismatch(provider, current?.model)) {
-                    next.model = AI_PROVIDER_DEFAULT_MODEL[provider] || "";
+                    next.model = defaultModelForProvider(provider);
                   }
                   return next;
                 })
               }
-            >
-              <option value="openai">openai</option>
-              <option value="gemini">gemini</option>
-            </select>
+              placeholder="openai / gemini / openrouter / groq / ..."
+            />
+            <datalist id="ai-provider-options">
+              {AI_PROVIDER_SUGGESTIONS.map((provider) => (
+                <option key={provider} value={provider} />
+              ))}
+            </datalist>
           </label>
           <label className="list-item">
             <div className="muted">Model</div>

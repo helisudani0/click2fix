@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from fastapi import HTTPException
@@ -11,7 +12,6 @@ from core.time_utils import utc_now_naive
 from db.database import connect
 
 AI_REMEDIATION_CONFIG_KEY = "ai_remediation"
-ALLOWED_AI_PROVIDERS = {"openai", "gemini"}
 logger = logging.getLogger(__name__)
 
 
@@ -36,6 +36,21 @@ def _to_bool(value: Any, default: bool = False) -> bool:
     return bool(value)
 
 
+_PROVIDER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def _normalize_provider(value: Any, *, status_code: int) -> str:
+    provider = _to_text(value).lower()
+    if not provider:
+        return ""
+    if not _PROVIDER_PATTERN.match(provider):
+        raise HTTPException(
+            status_code=status_code,
+            detail="provider must match ^[a-z0-9][a-z0-9._-]{0,63}$",
+        )
+    return provider
+
+
 def coerce_ai_provider_config(
     value: Any,
     *,
@@ -48,13 +63,8 @@ def coerce_ai_provider_config(
         raise HTTPException(status_code=status_code, detail="ai_config must be an object")
 
     out: dict[str, Any] = {}
-    provider = _to_text(value.get("provider")).lower()
+    provider = _normalize_provider(value.get("provider"), status_code=status_code)
     if provider:
-        if provider not in ALLOWED_AI_PROVIDERS:
-            raise HTTPException(
-                status_code=status_code,
-                detail=f"Unsupported AI provider '{provider}' in {source_label}",
-            )
         out["provider"] = provider
 
     for key in ("base_url", "model", "api_key"):

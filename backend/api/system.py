@@ -290,7 +290,7 @@ def system_version():
 
 
 @router.get("/ai-config")
-def get_system_ai_config(user=Depends(require_role("admin"))):
+def get_system_ai_config(user=Depends(require_role("analyst"))):
     org_id = _org_id_from_user(user if isinstance(user, dict) else None)
     return {
         "org_id": org_id,

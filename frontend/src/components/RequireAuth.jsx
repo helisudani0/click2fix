@@ -12,13 +12,18 @@ export default function RequireAuth() {
       .then(() => {
         if (active) setStatus("authenticated");
       })
-      .catch((err) => {
+      .catch(async (err) => {
         const statusCode = err?.response?.status;
         if ((statusCode === 404 || statusCode === 405) && getLegacyToken()) {
           if (active) setStatus("authenticated");
           return;
         }
         clearLegacyToken();
+        try {
+          await api.get("/auth/session/reset");
+        } catch {
+          // Best-effort stale cookie cleanup before redirecting to login.
+        }
         if (active) setStatus("unauthenticated");
       });
     return () => {

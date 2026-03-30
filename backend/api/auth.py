@@ -103,18 +103,35 @@ def _set_auth_cookie(response: Response, request: Request, token: str, csrf_toke
         )
 
 
+def _normalize_cookie_path(path_value: str | None) -> str:
+    path = str(path_value or "/").strip() or "/"
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return path
+
+
+def _clear_cookie_for_common_paths(response: Response, key: str, paths: list[str]) -> None:
+    for path in paths:
+        response.delete_cookie(key=key, path=path)
+        response.delete_cookie(key=key, path=path, samesite="lax")
+        response.delete_cookie(key=key, path=path, samesite="strict")
+        response.delete_cookie(key=key, path=path, samesite="none")
+
+
 def _clear_auth_cookie(response: Response, request: Request):
     cfg = _cookie_config(request)
-    response.delete_cookie(
-        key=cfg["name"],
-        path=cfg["path"],
-        samesite=cfg["samesite"],
-    )
-    response.delete_cookie(
-        key=cfg["csrf_name"],
-        path=cfg["path"],
-        samesite=cfg["samesite"],
-    )
+    candidate_paths = [
+        _normalize_cookie_path(cfg.get("path")),
+        "/",
+        "/api",
+        "/auth",
+    ]
+    cookie_paths: list[str] = []
+    for path in candidate_paths:
+        if path not in cookie_paths:
+            cookie_paths.append(path)
+    _clear_cookie_for_common_paths(response, str(cfg["name"]), cookie_paths)
+    _clear_cookie_for_common_paths(response, str(cfg["csrf_name"]), cookie_paths)
 
 
 def _client_ip(request: Request) -> str:
@@ -303,6 +320,8 @@ def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
         payload["access_token"] = token
         payload["token_type"] = "bearer"
     response = JSONResponse(payload)
+    # Always clear stale auth/csrf cookie variants before setting a fresh session.
+    _clear_auth_cookie(response, request)
     _set_auth_cookie(response, request, token, csrf_token=csrf_token)
     return response
 
@@ -394,6 +413,7 @@ def oidc_callback(request: Request, code: str, state: str):
     )
     if frontend_redirect:
         response = RedirectResponse(frontend_redirect)
+        _clear_auth_cookie(response, request)
         _set_auth_cookie(response, request, token, csrf_token=csrf_token)
         return response
     payload = {
@@ -404,5 +424,6 @@ def oidc_callback(request: Request, code: str, state: str):
         payload["access_token"] = token
         payload["token_type"] = "bearer"
     response = JSONResponse(payload)
+    _clear_auth_cookie(response, request)
     _set_auth_cookie(response, request, token, csrf_token=csrf_token)
     return response

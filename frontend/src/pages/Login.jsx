@@ -71,12 +71,30 @@ export default function Login() {
     setLoading(true);
     try {
       await clearStaleSession();
-      const form = new URLSearchParams();
-      form.append("username", username);
-      form.append("password", password);
-      const res = await api.post("/auth/login", form, {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" }
-      });
+      const submitCredentials = async () => {
+        const form = new URLSearchParams();
+        form.append("username", username);
+        form.append("password", password);
+        return api.post("/auth/login", form, {
+          headers: { "Content-Type": "application/x-www-form-urlencoded" }
+        });
+      };
+
+      let res;
+      try {
+        res = await submitCredentials();
+      } catch (firstError) {
+        const statusCode = Number(firstError?.response?.status || 0);
+        const detail = String(firstError?.response?.data?.detail || "").toLowerCase();
+        const csrfRejected = statusCode === 403 && detail.includes("csrf");
+        const authRejected = statusCode === 401;
+        if (!csrfRejected && !authRejected) {
+          throw firstError;
+        }
+        await clearStaleSession();
+        res = await submitCredentials();
+      }
+
       clearLegacyToken();
       const token = String(res?.data?.access_token || "").trim();
       if (token) {

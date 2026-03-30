@@ -5,6 +5,11 @@ const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE || "/api",
   withCredentials: true
 });
+const sessionApi = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE || "/api",
+  withCredentials: true
+});
+let sessionResetPromise = null;
 
 const readCookie = (name) => {
   if (typeof document === "undefined") return "";
@@ -43,6 +48,26 @@ export const decodeLegacyTokenPayload = () => {
   }
 };
 
+const isAuthMaintenancePath = (url) => {
+  const value = String(url || "");
+  return (
+    value.includes("/auth/login") ||
+    value.includes("/auth/logout") ||
+    value.includes("/auth/session/reset")
+  );
+};
+
+const resetSessionBestEffort = () => {
+  if (sessionResetPromise) return sessionResetPromise;
+  sessionResetPromise = sessionApi
+    .get("/auth/session/reset")
+    .catch(() => null)
+    .finally(() => {
+      sessionResetPromise = null;
+    });
+  return sessionResetPromise;
+};
+
 api.interceptors.request.use((config) => {
   const token = getLegacyToken();
   if (token) {
@@ -75,6 +100,9 @@ api.interceptors.response.use(
       clearLegacyToken();
       // Keep UI stable: surface auth errors to the current screen instead of hard-refreshing.
       error.authExpired = true;
+      if (!isAuthMaintenancePath(error?.config?.url)) {
+        void resetSessionBestEffort();
+      }
       const detail = String(error?.response?.data?.detail || "").trim();
       if (detail.toLowerCase().includes("recent login required")) {
         error.requiresRecentLogin = true;

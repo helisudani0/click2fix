@@ -43,6 +43,16 @@ to_bool() {
   esac
 }
 
+to_int() {
+  local raw="${1:-}"
+  local default="${2:-0}"
+  if [[ "${raw}" =~ ^[0-9]+$ ]]; then
+    echo "${raw}"
+  else
+    echo "${default}"
+  fi
+}
+
 set_env() {
   local key="$1"
   local value="$2"
@@ -56,6 +66,64 @@ set_env() {
     END { if (!done) print k "=" v }
   ' "$file" > "$tmp"
   mv "$tmp" "$file"
+}
+
+image_repo_from_ref() {
+  local ref="${1:-}"
+  ref="${ref%%@*}"
+  if [[ "${ref}" == *:* ]]; then
+    echo "${ref%:*}"
+    return
+  fi
+  echo "${ref}"
+}
+
+cleanup_repo_images() {
+  local image_ref="${1:-}"
+  local keep_count="${2:-2}"
+  local repo
+  repo="$(image_repo_from_ref "${image_ref}")"
+  [[ -n "${repo}" ]] || return 0
+
+  local -a ids=()
+  mapfile -t ids < <(
+    docker image ls "${repo}" --format '{{.ID}}|{{.Repository}}:{{.Tag}}' 2>/dev/null |
+      awk -F'|' '$2 !~ /<none>:<none>/ && $1 != "" && !seen[$1]++ { print $1 }'
+  )
+
+  local total="${#ids[@]}"
+  if (( total <= keep_count )); then
+    echo "Image retention: ${repo} has ${total} image(s); keep=${keep_count}, nothing to prune."
+    return 0
+  fi
+
+  local removed=0
+  local idx id
+  for idx in "${!ids[@]}"; do
+    if (( idx < keep_count )); then
+      continue
+    fi
+    id="${ids[$idx]}"
+    [[ -n "${id}" ]] || continue
+    docker image rm "${id}" >/dev/null 2>&1 || true
+    removed=$((removed + 1))
+  done
+
+  echo "Image retention: pruned ${removed} old image(s) for ${repo}; kept newest ${keep_count}."
+}
+
+cleanup_appliance_images() {
+  local keep_count_raw keep_count
+  keep_count_raw="$(env_get C2F_IMAGE_RETENTION_COUNT "${ENV_FILE}")"
+  keep_count="$(to_int "${keep_count_raw}" "2")"
+  if (( keep_count < 1 )); then
+    echo "Image retention disabled (C2F_IMAGE_RETENTION_COUNT=${keep_count_raw:-0})."
+    return 0
+  fi
+
+  cleanup_repo_images "${BACKEND_IMAGE}:${IMAGE_TAG}" "${keep_count}"
+  cleanup_repo_images "${FRONTEND_IMAGE}:${IMAGE_TAG}" "${keep_count}"
+  docker image prune -f >/dev/null 2>&1 || true
 }
 
 compose_project_default_name() {
@@ -398,6 +466,8 @@ if [[ "${SKIP_PULL}" == "true" ]]; then
 else
   compose_cmd up -d --remove-orphans
 fi
+
+cleanup_appliance_images
 
 echo "Upgrade complete."
 echo "Check service status with:"

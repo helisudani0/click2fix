@@ -52,6 +52,18 @@ function To-Bool {
   }
 }
 
+function To-IntOrDefault {
+  param(
+    [string]$RawValue,
+    [int]$Default = 0
+  )
+  $parsed = 0
+  if ([int]::TryParse($RawValue, [ref]$parsed)) {
+    return $parsed
+  }
+  return $Default
+}
+
 function Set-EnvValue {
   param(
     [string]$Path,
@@ -76,6 +88,90 @@ function Set-EnvValue {
     $updated += "$Key=$Value"
   }
   Set-Content -Path $Path -Value $updated
+}
+
+function Get-ImageRepositoryFromRef {
+  param([string]$ImageRef)
+  $value = [string]$ImageRef
+  if ([string]::IsNullOrWhiteSpace($value)) { return "" }
+  if ($value.Contains("@")) {
+    $value = $value.Split("@", 2)[0]
+  }
+  if ($value -match '^[^/]+:[^/]+$') {
+    # Handles image:tag without path safely.
+    return ($value -split ':', 2)[0]
+  }
+  if ($value.Contains(":")) {
+    return ($value.Substring(0, $value.LastIndexOf(":")))
+  }
+  return $value
+}
+
+function Invoke-RepoImageRetentionCleanup {
+  param(
+    [string]$ImageRef,
+    [int]$KeepCount = 2
+  )
+  $repo = Get-ImageRepositoryFromRef -ImageRef $ImageRef
+  if ([string]::IsNullOrWhiteSpace($repo)) { return }
+
+  $rows = & docker image ls $repo --format "{{.ID}}|{{.Repository}}:{{.Tag}}" 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $rows) {
+    Write-Host "Image retention: no local images found for $repo."
+    return
+  }
+
+  $ids = @()
+  $seen = @{}
+  foreach ($row in @($rows)) {
+    if ([string]::IsNullOrWhiteSpace($row)) { continue }
+    $parts = $row -split '\|', 2
+    if ($parts.Count -lt 2) { continue }
+    $id = $parts[0].Trim()
+    $repoTag = $parts[1].Trim()
+    if ([string]::IsNullOrWhiteSpace($id) -or $repoTag -eq "<none>:<none>") { continue }
+    if ($seen.ContainsKey($id)) { continue }
+    $seen[$id] = $true
+    $ids += $id
+  }
+
+  if ($ids.Count -le $KeepCount) {
+    Write-Host "Image retention: $repo has $($ids.Count) image(s); keep=$KeepCount, nothing to prune."
+    return
+  }
+
+  $removed = 0
+  for ($i = $KeepCount; $i -lt $ids.Count; $i++) {
+    $id = $ids[$i]
+    try {
+      & docker image rm $id 1>$null 2>$null | Out-Null
+      $removed++
+    } catch {
+      # Ignore images in use or already removed.
+    }
+  }
+
+  Write-Host "Image retention: pruned $removed old image(s) for $repo; kept newest $KeepCount."
+}
+
+function Invoke-ApplianceImageRetentionCleanup {
+  param(
+    [string]$EnvPath,
+    [string]$BackendImageRef,
+    [string]$FrontendImageRef
+  )
+  $keepRaw = Get-EnvValue -Path $EnvPath -Key "C2F_IMAGE_RETENTION_COUNT"
+  $keepCount = To-IntOrDefault -RawValue $keepRaw -Default 2
+  if ($keepCount -lt 1) {
+    Write-Host "Image retention disabled (C2F_IMAGE_RETENTION_COUNT=$keepRaw)."
+    return
+  }
+
+  Invoke-RepoImageRetentionCleanup -ImageRef $BackendImageRef -KeepCount $keepCount
+  Invoke-RepoImageRetentionCleanup -ImageRef $FrontendImageRef -KeepCount $keepCount
+  try {
+    & docker image prune -f 1>$null 2>$null | Out-Null
+  } catch {}
 }
 
 function Get-DefaultComposeProjectName {
@@ -226,9 +322,17 @@ function Remove-ProjectContainers {
     }
 
     foreach ($containerId in $containerIds) {
-      & docker rm -f $containerId 1>$null 2>$null | Out-Null
+      try {
+        & docker rm -f $containerId 1>$null 2>$null | Out-Null
+      } catch {
+        # Docker Desktop can transiently return "No such container" for stale metadata.
+      }
     }
-    & docker network rm "$ProjectName`_default" 1>$null 2>$null | Out-Null
+    try {
+      & docker network rm "$ProjectName`_default" 1>$null 2>$null | Out-Null
+    } catch {
+      # Ignore absent network during cleanup.
+    }
   } finally {
     $ErrorActionPreference = $previousErrorAction
     if ($nativePreferenceFound) {
@@ -538,6 +642,7 @@ if ($skipPull) {
 }
 Prepare-ComposeProjectForUp -ProjectName $script:composeProjectName
 Invoke-ComposeChecked -Arguments $composeArgs -FailureMessage "Failed to apply upgrade."
+Invoke-ApplianceImageRetentionCleanup -EnvPath $envPath -BackendImageRef "$backendImage`:$imageTag" -FrontendImageRef "$frontendImage`:$imageTag"
 
 Write-Host "Upgrade complete."
 Write-Host "Check status:"

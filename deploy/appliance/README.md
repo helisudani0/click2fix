@@ -227,6 +227,7 @@ For later hotfixes on the same installed appliance:
 - keep `C2F_SKIP_PULL=true`
 - run `upgrade.ps1` / `upgrade.sh` or Control Center option `7`
 - the upgrade path will reuse local images and force-recreate app services instead of pulling from the registry
+- set `C2F_IMAGE_RETENTION_COUNT` in `.env.appliance` (default `2`) to keep only the newest N backend/frontend images after each upgrade (`0` disables cleanup)
 
 The offline/local image bundle for the current appliance includes only:
 

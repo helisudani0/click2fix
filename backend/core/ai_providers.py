@@ -151,6 +151,13 @@ def _clean_base_url(base_url: str) -> str:
     return _text(base_url).rstrip("/")
 
 
+def _normalize_gemini_model_name(model: str) -> str:
+    value = _text(model)
+    if value.lower().startswith("models/"):
+        value = value.split("/", 1)[1]
+    return _text(value)
+
+
 class AIProviderError(RuntimeError):
     def __init__(
         self,
@@ -160,12 +167,14 @@ class AIProviderError(RuntimeError):
         retryable: bool = False,
         retry_after_seconds: float | None = None,
         response_format_unsupported: bool = False,
+        model_not_found: bool = False,
     ):
         super().__init__(message)
         self.status_code = status_code
         self.retryable = bool(retryable)
         self.retry_after_seconds = retry_after_seconds
         self.response_format_unsupported = bool(response_format_unsupported)
+        self.model_not_found = bool(model_not_found)
 
 
 class BaseAIProvider:
@@ -369,7 +378,7 @@ class GeminiProvider(_OpenAICompatibleProvider):
     def __init__(self, config: Dict[str, Any]):
         merged = dict(config or {})
         self.base_url = _clean_base_url(merged.get("base_url") or _DEFAULT_GEMINI_BASE_URL)
-        self.model = _text(merged.get("model") or _DEFAULT_GEMINI_MODEL)
+        self.model = _normalize_gemini_model_name(merged.get("model") or _DEFAULT_GEMINI_MODEL)
         self.api_key = _text(merged.get("api_key"))
         self.timeout_seconds = max(5, _to_int(merged.get("timeout_seconds"), 45))
         self.temperature = _to_float(merged.get("temperature"), 0.1)
@@ -381,6 +390,84 @@ class GeminiProvider(_OpenAICompatibleProvider):
             raise AIProviderError("gemini model is required")
         if not self.api_key:
             raise AIProviderError("Gemini provider requires api_key")
+
+    @staticmethod
+    def _is_model_not_found(status: int, message: str) -> bool:
+        detail = _text(message).lower()
+        if status != 404:
+            return False
+        if "model" not in detail:
+            return False
+        return "not found" in detail or "not supported" in detail
+
+    @staticmethod
+    def _extract_error_message(resp: requests.Response) -> str:
+        fallback = _text(resp.text)[:500]
+        try:
+            node = _dict(resp.json())
+            err = _dict(node.get("error"))
+            detail = _text(err.get("message")) or _text(err.get("detail")) or fallback
+            return detail[:500] if detail else fallback
+        except Exception:
+            return fallback
+
+    def _list_generate_content_models(self) -> list[str]:
+        url = f"{self.base_url}/models"
+        try:
+            resp = self.session.get(
+                url,
+                params={"key": self.api_key},
+                timeout=self.timeout_seconds,
+            )
+        except Exception:
+            return []
+        if int(resp.status_code or 0) >= 400:
+            return []
+        try:
+            payload = _dict(resp.json())
+        except Exception:
+            return []
+        models = payload.get("models")
+        if not isinstance(models, list):
+            return []
+        out: list[str] = []
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            name = _normalize_gemini_model_name(item.get("name"))
+            if not name:
+                continue
+            methods = item.get("supportedGenerationMethods")
+            if isinstance(methods, list) and methods:
+                methods_l = {_text(method).lower() for method in methods}
+                if "generatecontent" not in methods_l:
+                    continue
+            if name not in out:
+                out.append(name)
+        return out
+
+    def _pick_fallback_model(self, blocked_models: set[str]) -> str | None:
+        available = self._list_generate_content_models()
+        if not available:
+            return None
+        blocked = {_normalize_gemini_model_name(name).lower() for name in blocked_models}
+        by_key = {_normalize_gemini_model_name(name).lower(): name for name in available}
+        preferred = [
+            _DEFAULT_GEMINI_MODEL,
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+        ]
+        for candidate in preferred:
+            key = _normalize_gemini_model_name(candidate).lower()
+            if key in by_key and key not in blocked:
+                return by_key[key]
+        for name in available:
+            key = _normalize_gemini_model_name(name).lower()
+            if key not in blocked:
+                return name
+        return None
 
     def _request_json(
         self,
@@ -412,7 +499,11 @@ class GeminiProvider(_OpenAICompatibleProvider):
         schema = _gemini_response_json_schema(prompt)
         if schema:
             body["generationConfig"]["responseJsonSchema"] = schema
-        url = f"{self.base_url}/models/{self.model}:generateContent"
+        model = _normalize_gemini_model_name(self.model)
+        if not model:
+            model = _DEFAULT_GEMINI_MODEL
+        self.model = model
+        url = f"{self.base_url}/models/{model}:generateContent"
         try:
             resp = self.session.post(
                 url,
@@ -428,7 +519,13 @@ class GeminiProvider(_OpenAICompatibleProvider):
         except Exception as exc:
             raise AIProviderError(f"{self.provider_name} request failed: {exc}") from exc
         if resp.status_code >= 400:
-            raise AIProviderError(f"{self.provider_name} error {resp.status_code}: {_text(resp.text)[:400]}")
+            status = int(resp.status_code or 0)
+            detail = self._extract_error_message(resp)
+            raise AIProviderError(
+                f"{self.provider_name} error {status}: {detail}",
+                status_code=status,
+                model_not_found=self._is_model_not_found(status, detail),
+            )
         try:
             return _dict(resp.json())
         except Exception as exc:
@@ -439,13 +536,36 @@ class GeminiProvider(_OpenAICompatibleProvider):
         if not isinstance(user_payload, dict):
             raise AIProviderError("user_payload must be a JSON object")
         last_error = ""
-        for attempt in range(2):
-            node = self._request_json(system_prompt=system_prompt, user_payload=payload, force_retry_warning=attempt == 1)
+        invalid_json_attempts = 0
+        attempted_models: set[str] = set()
+        max_total_attempts = 6
+        total_attempts = 0
+        while total_attempts < max_total_attempts:
+            total_attempts += 1
+            force_retry_warning = invalid_json_attempts > 0
+            attempted_models.add(_normalize_gemini_model_name(self.model))
+            try:
+                node = self._request_json(
+                    system_prompt=system_prompt,
+                    user_payload=payload,
+                    force_retry_warning=force_retry_warning,
+                )
+            except AIProviderError as exc:
+                if exc.model_not_found:
+                    fallback_model = self._pick_fallback_model(attempted_models)
+                    if fallback_model:
+                        self.model = _normalize_gemini_model_name(fallback_model)
+                        invalid_json_attempts = 0
+                        continue
+                raise
             text = _extract_gemini_text(node)
             parsed = _json_from_text(text)
             if parsed:
                 return parsed
+            invalid_json_attempts += 1
             last_error = _text(text)[:200]
+            if invalid_json_attempts >= 2:
+                break
         raise AIProviderError(f"{self.provider_name} returned invalid JSON after retry: {last_error}")
 
 
@@ -538,11 +658,16 @@ class AIAdapter:
         effective_platform_enabled = bool(platform_enabled or runtime_enabled_override)
         local_enabled = _to_bool(pick("enabled", _LEGACY_AI_ENABLED_ENV, True), True)
         enabled = bool(effective_platform_enabled and local_enabled and bool(normalized_api_key))
+        resolved_model = _text(pick("model", "C2F_LLM_MODEL", default_model)) or default_model
+        if provider == "gemini":
+            resolved_model = _normalize_gemini_model_name(resolved_model)
+            if not resolved_model or resolved_model.lower().startswith("gpt-"):
+                resolved_model = _DEFAULT_GEMINI_MODEL
         return {
             "enabled": enabled,
             "provider": provider,
             "base_url": _text(pick("base_url", "C2F_LLM_BASE_URL", default_base)) or default_base,
-            "model": _text(pick("model", "C2F_LLM_MODEL", default_model)) or default_model,
+            "model": resolved_model,
             "api_key": normalized_api_key,
             "timeout_seconds": max(5, _to_int(pick("timeout_seconds", "C2F_LLM_TIMEOUT_SECONDS", 45), 45)),
             "temperature": _to_float(pick("temperature", "C2F_LLM_TEMPERATURE", 0.1), 0.1),

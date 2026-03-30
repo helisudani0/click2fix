@@ -18,6 +18,18 @@ const RETENTION_STREAMS = ["events", "alerts"];
 
 const normalizeText = (value) => String(value || "").trim();
 const normalizeKey = (value) => normalizeText(value).toLowerCase();
+const AI_PROVIDER_DEFAULT_MODEL = {
+  openai: "gpt-4.1-mini",
+  gemini: "gemini-2.5-flash",
+};
+const isLikelyModelMismatch = (provider, model) => {
+  const p = normalizeKey(provider);
+  const m = normalizeKey(model);
+  if (!m) return true;
+  if (p === "gemini") return m.startsWith("gpt-");
+  if (p === "openai") return m.startsWith("gemini-");
+  return false;
+};
 
 const createRetentionForm = (overrides = {}) => ({
   data_class: "events",
@@ -206,11 +218,16 @@ export default function OrgAdmin() {
     setAiError("");
     setSavingAiConfig(true);
     try {
+      const provider = normalizeKey(aiConfig?.provider || "openai") || "openai";
+      const requestedModel = normalizeText(aiConfig?.model);
+      const effectiveModel = requestedModel
+        || AI_PROVIDER_DEFAULT_MODEL[provider]
+        || AI_PROVIDER_DEFAULT_MODEL.openai;
       const payload = {
         enabled: Boolean(aiConfig?.enabled),
-        provider: normalizeKey(aiConfig?.provider || "openai") || "openai",
+        provider,
         base_url: normalizeText(aiConfig?.base_url),
-        model: normalizeText(aiConfig?.model),
+        model: effectiveModel,
         timeout_seconds: Number(aiConfig?.timeout_seconds || 45),
         temperature: Number(aiConfig?.temperature || 0.1),
         max_tokens: Number(aiConfig?.max_tokens || 1800),
@@ -633,10 +650,14 @@ export default function OrgAdmin() {
               className="input mt-10"
               value={aiConfig.provider}
               onChange={(event) =>
-                setAiConfig((current) => ({
-                  ...current,
-                  provider: normalizeKey(event.target.value) || "openai",
-                }))
+                setAiConfig((current) => {
+                  const provider = normalizeKey(event.target.value) || "openai";
+                  const next = { ...current, provider };
+                  if (isLikelyModelMismatch(provider, current?.model)) {
+                    next.model = AI_PROVIDER_DEFAULT_MODEL[provider] || "";
+                  }
+                  return next;
+                })
               }
             >
               <option value="openai">openai</option>

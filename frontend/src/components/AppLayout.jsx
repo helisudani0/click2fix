@@ -450,9 +450,9 @@ export default function AppLayout() {
               className="shell-collapse-toggle"
               onClick={() => setSidebarCollapsed((prev) => !prev)}
               aria-pressed={sidebarCollapsed}
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             >
-              <span className="shell-collapse-icon">{sidebarCollapsed ? ">>" : "<<"}</span>
-              <span className="shell-collapse-text">{sidebarCollapsed ? "Expand" : "Collapse"}</span>
+              <span className="shell-collapse-icon">{sidebarCollapsed ? "▶" : "◀"}</span>
             </button>
           </div>
 
@@ -490,6 +490,7 @@ export default function AppLayout() {
                       to={link.to}
                       end={Boolean(link.end)}
                       className={({ isActive }) => `shell-nav-link${isActive ? " active" : ""}`}
+                      data-label={link.label}
                     >
                       <span className="shell-nav-icon">{shortLabel(link.label)}</span>
                       <span className="shell-nav-text">{link.label}</span>
@@ -555,7 +556,7 @@ export default function AppLayout() {
             </div>
           </header>
 
-          <section className="shell-content">
+          <section className={`shell-content page-route-${(location.pathname || "/").replace(/^\//, "").replace(/\//g, "-") || "home"}`}>
             <Outlet />
           </section>
         </div>

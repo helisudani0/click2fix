@@ -60,15 +60,50 @@ def _include_access_token_in_body() -> bool:
     return bool(raw)
 
 
+def _coerce_bool(raw_value):
+    if isinstance(raw_value, bool):
+        return raw_value
+    if isinstance(raw_value, (int, float)):
+        return bool(raw_value)
+    if isinstance(raw_value, str):
+        normalized = raw_value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return None
+
+
+def _request_scheme(request: Request) -> str:
+    if request is None:
+        return ""
+    for header_name in ("x-forwarded-proto", "x-scheme"):
+        header_value = request.headers.get(header_name)
+        if not header_value:
+            continue
+        first = header_value.split(",", 1)[0].strip().lower()
+        if first:
+            return first
+    try:
+        scheme = (request.url.scheme or "").strip().lower()
+        if scheme:
+            return scheme
+    except Exception:
+        pass
+    return ""
+
+
 def _cookie_config(request: Request):
     security_cfg = SETTINGS.get("security", {}) if isinstance(SETTINGS, dict) else {}
     secure_from_cfg = security_cfg.get("cookie_secure")
-    host = (request.url.hostname or "").strip().lower() if request and request.url else ""
-    is_local = host in {"localhost", "127.0.0.1", "::1"}
-    if secure_from_cfg is None:
-        secure = not is_local
+    use_auto_mode = secure_from_cfg is None or (
+        isinstance(secure_from_cfg, str) and not secure_from_cfg.strip()
+    )
+    if use_auto_mode:
+        secure = _request_scheme(request) == "https"
     else:
-        secure = bool(secure_from_cfg)
+        coerced_secure = _coerce_bool(secure_from_cfg)
+        secure = bool(secure_from_cfg) if coerced_secure is None else coerced_secure
     return {
         "name": security_cfg.get("cookie_name", COOKIE_NAME),
         "csrf_name": security_cfg.get("csrf_cookie_name", CSRF_COOKIE_NAME),
@@ -112,10 +147,11 @@ def _normalize_cookie_path(path_value: str | None) -> str:
 
 def _clear_cookie_for_common_paths(response: Response, key: str, paths: list[str]) -> None:
     for path in paths:
-        response.delete_cookie(key=key, path=path)
-        response.delete_cookie(key=key, path=path, samesite="lax")
-        response.delete_cookie(key=key, path=path, samesite="strict")
-        response.delete_cookie(key=key, path=path, samesite="none")
+        for secure in (False, True):
+            response.delete_cookie(key=key, path=path, secure=secure)
+            response.delete_cookie(key=key, path=path, secure=secure, samesite="lax")
+            response.delete_cookie(key=key, path=path, secure=secure, samesite="strict")
+            response.delete_cookie(key=key, path=path, secure=secure, samesite="none")
 
 
 def _clear_auth_cookie(response: Response, request: Request):

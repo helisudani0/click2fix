@@ -158,7 +158,8 @@ function Invoke-ApplianceImageRetentionCleanup {
   param(
     [string]$EnvPath,
     [string]$BackendImageRef,
-    [string]$FrontendImageRef
+    [string]$FrontendImageRef,
+    [string]$PostgresImageRef
   )
   $keepRaw = Get-EnvValue -Path $EnvPath -Key "C2F_IMAGE_RETENTION_COUNT"
   $keepCount = To-IntOrDefault -RawValue $keepRaw -Default 2
@@ -169,6 +170,7 @@ function Invoke-ApplianceImageRetentionCleanup {
 
   Invoke-RepoImageRetentionCleanup -ImageRef $BackendImageRef -KeepCount $keepCount
   Invoke-RepoImageRetentionCleanup -ImageRef $FrontendImageRef -KeepCount $keepCount
+  Invoke-RepoImageRetentionCleanup -ImageRef $PostgresImageRef -KeepCount $keepCount
   try {
     & docker image prune -f 1>$null 2>$null | Out-Null
   } catch {}
@@ -642,7 +644,11 @@ if ($skipPull) {
 }
 Prepare-ComposeProjectForUp -ProjectName $script:composeProjectName
 Invoke-ComposeChecked -Arguments $composeArgs -FailureMessage "Failed to apply upgrade."
-Invoke-ApplianceImageRetentionCleanup -EnvPath $envPath -BackendImageRef "$backendImage`:$imageTag" -FrontendImageRef "$frontendImage`:$imageTag"
+Invoke-ApplianceImageRetentionCleanup `
+  -EnvPath $envPath `
+  -BackendImageRef "$backendImage`:$imageTag" `
+  -FrontendImageRef "$frontendImage`:$imageTag" `
+  -PostgresImageRef "postgres:$postgresImageTag"
 
 Write-Host "Upgrade complete."
 Write-Host "Check status:"

@@ -1013,7 +1013,8 @@ security:
   token_exp_hours: 8
   cookie_name: "c2f_token"
   csrf_cookie_name: "c2f_csrf"
-  cookie_secure: null
+  # empty env value => auto-detect from request scheme; true/false overrides explicitly.
+  cookie_secure: "env://C2F_COOKIE_SECURE"
   return_access_token_in_body: false
   cookie_samesite: "strict"
   cookie_httponly: true

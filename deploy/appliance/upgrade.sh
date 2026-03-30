@@ -123,6 +123,7 @@ cleanup_appliance_images() {
 
   cleanup_repo_images "${BACKEND_IMAGE}:${IMAGE_TAG}" "${keep_count}"
   cleanup_repo_images "${FRONTEND_IMAGE}:${IMAGE_TAG}" "${keep_count}"
+  cleanup_repo_images "postgres:${POSTGRES_IMAGE_TAG}" "${keep_count}"
   docker image prune -f >/dev/null 2>&1 || true
 }
 

@@ -647,9 +647,8 @@ export default function OrgAdmin() {
           </label>
           <label className="list-item">
             <div className="muted">Provider</div>
-            <input
+            <select
               className="input mt-10"
-              list="ai-provider-options"
               value={aiConfig.provider}
               onChange={(event) =>
                 setAiConfig((current) => {
@@ -661,13 +660,16 @@ export default function OrgAdmin() {
                   return next;
                 })
               }
-              placeholder="openai / gemini / openrouter / groq / ..."
-            />
-            <datalist id="ai-provider-options">
+            >
+              {!AI_PROVIDER_SUGGESTIONS.includes(aiConfig.provider) ? (
+                <option value={aiConfig.provider}>{`Custom (${aiConfig.provider})`}</option>
+              ) : null}
               {AI_PROVIDER_SUGGESTIONS.map((provider) => (
-                <option key={provider} value={provider} />
+                <option key={provider} value={provider}>
+                  {provider}
+                </option>
               ))}
-            </datalist>
+            </select>
           </label>
           <label className="list-item">
             <div className="muted">Model</div>

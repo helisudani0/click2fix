@@ -450,9 +450,13 @@ export default function AppLayout() {
               className="shell-collapse-toggle"
               onClick={() => setSidebarCollapsed((prev) => !prev)}
               aria-pressed={sidebarCollapsed}
+              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
               title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
             >
-              <span className="shell-collapse-icon">{sidebarCollapsed ? "▶" : "◀"}</span>
+              <span className="shell-collapse-icon">{sidebarCollapsed ? ">>" : "<<"}</span>
+              <span className="shell-collapse-text">
+                {sidebarCollapsed ? "Expand" : "Collapse"}
+              </span>
             </button>
           </div>
 

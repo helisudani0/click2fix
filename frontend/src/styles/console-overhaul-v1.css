@@ -60,7 +60,7 @@ body.console-redesign-v4 {
   font-family: "Sora","Segoe UI",system-ui,sans-serif;
   font-size: 14px;
   line-height: 1.5;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.005em;
   background: var(--c-bg);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
@@ -173,6 +173,7 @@ body.console-redesign-v4 .shell-brand {
   display: flex;
   align-items: center;
   gap: 9px;
+  flex: 1;
   min-width: 0;
   overflow: hidden;
 }
@@ -205,7 +206,8 @@ body.console-redesign-v4 .brand-subtitle {
 body.console-redesign-v4 .shell-collapse-toggle {
   flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px;
+  min-width: 28px; height: 28px; width: auto;
+  padding: 0 8px; gap: 6px;
   border-radius: 8px;
   border: 1px solid var(--c-border-md);
   background: transparent;
@@ -220,8 +222,22 @@ body.console-redesign-v4 .shell-collapse-toggle:hover {
   color: var(--c-text);
 }
 
-body.console-redesign-v4 .shell-collapse-icon { font-size: 0.68rem; line-height: 1; }
-body.console-redesign-v4 .shell-collapse-text { display: none; }
+body.console-redesign-v4 .shell-collapse-icon { font-size: 0; line-height: 1; position: relative; }
+body.console-redesign-v4 .shell-collapse-icon::before {
+  content: "<<";
+  font-size: 0.68rem;
+}
+body.console-redesign-v4 .app-shell-v5.is-collapsed .shell-collapse-icon::before { content: ">>"; }
+body.console-redesign-v4 .shell-collapse-text {
+  display: inline-flex;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--c-muted);
+  white-space: nowrap;
+}
+body.console-redesign-v4 .shell-collapse-toggle:hover .shell-collapse-text {
+  color: var(--c-text);
+}
 
 /* ---- sidebar body ---- */
 body.console-redesign-v4 .shell-sidebar-body {
@@ -373,6 +389,13 @@ body.console-redesign-v4 .app-shell-v5.is-collapsed .shell-sidebar-panels { disp
 body.console-redesign-v4 .app-shell-v5.is-collapsed .shell-sidebar-header {
   justify-content: center; flex-direction: column; padding: 12px 6px 10px; gap: 8px;
 }
+body.console-redesign-v4 .app-shell-v5.is-collapsed .shell-collapse-toggle {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  gap: 0;
+}
+body.console-redesign-v4 .app-shell-v5.is-collapsed .shell-collapse-text { display: none; }
 
 body.console-redesign-v4 .app-shell-v5.is-collapsed .shell-sidebar-body { padding: 8px 6px; align-items: center; }
 
@@ -670,6 +693,11 @@ body.console-redesign-v4 textarea.input:focus {
   background: rgba(4,8,14,0.9);
 }
 
+body.console-redesign-v4 .page-route-orgs select.input {
+  cursor: pointer;
+  appearance: auto;
+}
+
 /* ============================================================
    CHIPS & PILLS
    ============================================================ */
@@ -753,6 +781,7 @@ body.console-redesign-v4 table tbody tr td {
   border-bottom: 1px solid rgba(148,163,184,0.06);
   font-size: 0.82rem;
 }
+body.console-redesign-v4 table tr { outline: none; }
 
 body.console-redesign-v4 table tbody tr:last-child td { border-bottom: none; }
 
@@ -771,18 +800,236 @@ body.console-redesign-v4 table th:first-child {
 /* ============================================================
    GLOBAL SHELL — cap output cell height
    ============================================================ */
+body.console-redesign-v4 .page-route-global-shell .table,
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 860px;
+}
+body.console-redesign-v4 .page-route-global-shell .table th:nth-child(1),
+body.console-redesign-v4 .page-route-global-shell .table td:nth-child(1) { width: 58px; text-align: center; }
+body.console-redesign-v4 .page-route-global-shell .table th:nth-child(2),
+body.console-redesign-v4 .page-route-global-shell .table td:nth-child(2) { width: 110px; text-align: center; }
+body.console-redesign-v4 .page-route-global-shell .table th:nth-child(3),
+body.console-redesign-v4 .page-route-global-shell .table td:nth-child(3) { width: 180px; }
+body.console-redesign-v4 .page-route-global-shell .table th:nth-child(4),
+body.console-redesign-v4 .page-route-global-shell .table td:nth-child(4) { width: 100px; }
+body.console-redesign-v4 .page-route-global-shell .table th:nth-child(5),
+body.console-redesign-v4 .page-route-global-shell .table td:nth-child(5) { width: 220px; }
+body.console-redesign-v4 .page-route-global-shell .table th:nth-child(6),
+body.console-redesign-v4 .page-route-global-shell .table td:nth-child(6) { width: auto; min-width: 260px; }
+body.console-redesign-v4 .page-route-global-shell .table th:nth-child(7),
+body.console-redesign-v4 .page-route-global-shell .table td:nth-child(7),
+body.console-redesign-v4 .page-route-global-shell .table th:nth-child(8),
+body.console-redesign-v4 .page-route-global-shell .table td:nth-child(8) {
+  width: 120px;
+  text-align: right;
+  white-space: nowrap;
+}
 body.console-redesign-v4 .page-route-global-shell .table td,
 body.console-redesign-v4 .page-route-global-shell .table th { white-space: normal; word-break: break-word; }
 body.console-redesign-v4 .page-route-global-shell .table-scroll { overflow: auto; }
 
+body.console-redesign-v4 .global-shell-agent-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+body.console-redesign-v4 .global-shell-agent-cell .agent-id {
+  font-size: 0.72rem;
+  color: var(--c-hint);
+  font-family: "IBM Plex Mono", monospace;
+}
+body.console-redesign-v4 .global-shell-agent-cell .agent-count {
+  font-size: 0.79rem;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+body.console-redesign-v4 .shell-type-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  color: #93c5fd;
+  white-space: nowrap;
+}
+body.console-redesign-v4 .shell-type-pill.ps { background: rgba(59,130,246,0.1); border-color: rgba(59,130,246,0.3); color: #93c5fd; }
+body.console-redesign-v4 .shell-type-pill.bash { background: rgba(16,185,129,0.1); border-color: rgba(16,185,129,0.3); color: #6ee7b7; }
+body.console-redesign-v4 .shell-type-pill.cmd { background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.3); color: #fcd34d; }
+
 /* Output column (last data column) — bounded scrollable pre */
 body.console-redesign-v4 .page-route-global-shell table td.output-cell,
-body.console-redesign-v4 .page-route-global-shell table td:nth-child(7) {
+body.console-redesign-v4 .page-route-global-shell table td:nth-child(6) {
   max-width: 280px; max-height: 76px; overflow: hidden;
-  display: block;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   font-family: "IBM Plex Mono", monospace; font-size: 0.7rem;
   white-space: pre-wrap; word-break: break-all; line-height: 1.3;
   vertical-align: top;
+}
+
+body.console-redesign-v4 .shell-run-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+body.console-redesign-v4 .shell-run-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+body.console-redesign-v4 .shell-run-section-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--c-hint);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+body.console-redesign-v4 .shell-run-section-title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--c-border);
+}
+
+body.console-redesign-v4 .shell-run-command-block {
+  background: rgba(6, 10, 18, 0.8);
+  border: 1px solid var(--c-border-md);
+  border-radius: var(--r-md);
+  padding: 12px 16px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.82rem;
+  color: #c7e0ff;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.6;
+}
+
+body.console-redesign-v4 .shell-output-block,
+body.console-redesign-v4 [class*="clean-output"],
+body.console-redesign-v4 [class*="raw-output"],
+body.console-redesign-v4 .shell-run-output {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  height: auto !important;
+  max-height: 420px;
+  min-height: 80px;
+  overflow: auto;
+  background: rgba(4, 8, 14, 0.92);
+  border: 1px solid var(--c-border-md);
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.65;
+  color: #b0cfe8;
+  white-space: pre-wrap;
+  word-break: break-all;
+  tab-size: 2;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 20px,
+    rgba(255, 255, 255, 0.015) 20px,
+    rgba(255, 255, 255, 0.015) 21px
+  );
+}
+
+body.console-redesign-v4 .shell-output-block:empty::before,
+body.console-redesign-v4 [class*="clean-output"]:empty::before,
+body.console-redesign-v4 [class*="raw-output"]:empty::before {
+  content: "— no output captured —";
+  color: var(--c-hint);
+  font-style: italic;
+  font-size: 0.75rem;
+}
+
+body.console-redesign-v4 .shell-output-block .json-key { color: #93c5fd; }
+body.console-redesign-v4 .shell-output-block .json-string { color: #6ee7b7; }
+body.console-redesign-v4 .shell-output-block .json-number { color: #fcd34d; }
+body.console-redesign-v4 .shell-output-block .json-bool { color: #f9a8d4; }
+body.console-redesign-v4 .shell-output-block .json-null { color: var(--c-hint); }
+
+body.console-redesign-v4 .shell-execution-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+body.console-redesign-v4 .shell-step-row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  transition: border-color 0.12s;
+}
+
+body.console-redesign-v4 .shell-step-row:hover { border-color: var(--c-border-md); }
+
+body.console-redesign-v4 .shell-step-index {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  background: var(--c-accent-lo);
+  border: 1px solid var(--c-accent-hi);
+  color: var(--c-accent);
+  flex-shrink: 0;
+}
+
+body.console-redesign-v4 .shell-step-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+body.console-redesign-v4 .shell-step-name { font-size: 0.82rem; font-weight: 600; color: var(--c-text); }
+body.console-redesign-v4 .shell-step-detail {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--c-muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+body.console-redesign-v4 .run-meta-grid {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 10px 16px;
+  align-items: baseline;
+}
+
+body.console-redesign-v4 .run-meta-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c-hint);
+}
+
+body.console-redesign-v4 .run-meta-value {
+  font-size: 0.85rem;
+  color: var(--c-text);
+  word-break: break-word;
 }
 
 body.console-redesign-v4 .page-route-global-shell .drawer-grid { display: grid; grid-template-columns: minmax(0,1fr); gap: 14px; }
@@ -977,20 +1224,27 @@ body.console-redesign-v4 .mission-card {
    ============================================================ */
 body.console-redesign-v4 .actions-workspace {
   display: grid;
-  grid-template-columns: minmax(280px, 360px) 8px minmax(0,1fr);
-  gap: 0; align-items: start;
+  grid-template-columns: minmax(320px, 420px) 10px minmax(0,1fr);
+  gap: 0;
+  align-items: start;
 }
 
 body.console-redesign-v4 .actions-workspace > * { min-width: 0; }
 
 body.console-redesign-v4 .page-route-actions .actions-sidebar-pane {
-  position: sticky; top: 64px; align-self: start;
-  max-height: calc(100vh - 110px);
-  display: flex; flex-direction: column; overflow: hidden;
+  position: sticky;
+  top: 14px;
+  align-self: start;
+  max-height: calc(100vh - 145px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 body.console-redesign-v4 .page-route-actions .actions-sidebar-pane .table-scroll {
-  max-height: calc(100vh - 360px); overflow: auto; flex: 1;
+  max-height: calc(100vh - 390px);
+  overflow: auto;
+  flex: 1;
 }
 
 body.console-redesign-v4 .actions-catalog-table th,
@@ -1014,8 +1268,34 @@ body.console-redesign-v4 .actions-target-scroll .table { width: 100%; table-layo
 body.console-redesign-v4 .actions-console-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
 body.console-redesign-v4 .actions-docs-grid    { display: grid; grid-template-columns: 1fr; gap: 14px; }
 
-body.console-redesign-v4 .actions-main-pane { display: grid; gap: 14px; align-items: start; padding-left: 14px; }
+body.console-redesign-v4 .actions-main-pane { display: grid; gap: 14px; align-items: start; padding-left: 12px; min-width: 0; }
 body.console-redesign-v4 .actions-main-pane .card { width: 100%; }
+body.console-redesign-v4 .actions-catalog-table th:nth-child(1),
+body.console-redesign-v4 .actions-catalog-table td:nth-child(1) { width: 56%; min-width: 190px; }
+body.console-redesign-v4 .actions-catalog-table th:nth-child(2),
+body.console-redesign-v4 .actions-catalog-table td:nth-child(2) { width: 22%; min-width: 90px; }
+body.console-redesign-v4 .actions-catalog-table th:nth-child(3),
+body.console-redesign-v4 .actions-catalog-table td:nth-child(3) { width: 22%; min-width: 110px; }
+body.console-redesign-v4 .actions-target-scroll { max-height: min(50vh, 560px); overflow: auto; }
+body.console-redesign-v4 .actions-target-table { table-layout: fixed; width: 100%; }
+body.console-redesign-v4 .actions-target-table th:nth-child(1),
+body.console-redesign-v4 .actions-target-table td:nth-child(1) { width: 50px; }
+body.console-redesign-v4 .actions-target-table th:nth-child(2),
+body.console-redesign-v4 .actions-target-table td:nth-child(2) { width: 90px; }
+body.console-redesign-v4 .actions-target-table th:nth-child(3),
+body.console-redesign-v4 .actions-target-table td:nth-child(3) { width: auto; min-width: 180px; }
+body.console-redesign-v4 .actions-target-table th:nth-child(4),
+body.console-redesign-v4 .actions-target-table td:nth-child(4) { width: 120px; }
+body.console-redesign-v4 .actions-target-table th:nth-child(5),
+body.console-redesign-v4 .actions-target-table td:nth-child(5) { width: 90px; }
+body.console-redesign-v4 .actions-target-table th:nth-child(6),
+body.console-redesign-v4 .actions-target-table td:nth-child(6) { width: 90px; }
+body.console-redesign-v4 .actions-row-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 body.console-redesign-v4 .page-route-actions .actions-field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(195px,1fr)); gap: 10px; }
 body.console-redesign-v4 .page-route-actions .actions-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px,1fr)); gap: 10px; }
@@ -1024,15 +1304,53 @@ body.console-redesign-v4 .page-route-actions .actions-selection-strip { display:
 /* ============================================================
    EXECUTIONS PAGE
    ============================================================ */
+body.console-redesign-v4 .page-route-executions .ticketing-layout {
+  grid-template-columns: minmax(0, 1.7fr) minmax(360px, 0.9fr);
+  align-items: start;
+}
+body.console-redesign-v4 .page-route-executions .ticketing-main { min-width: 0; }
+body.console-redesign-v4 .page-route-executions .execution-queue-table { table-layout: fixed; width: 100%; }
+body.console-redesign-v4 .page-route-executions .execution-col-id { width: 70px; }
+body.console-redesign-v4 .page-route-executions .execution-col-status { width: 180px; }
+body.console-redesign-v4 .page-route-executions .execution-col-action { width: auto; min-width: 210px; }
+body.console-redesign-v4 .page-route-executions .execution-col-target { width: 180px; }
+body.console-redesign-v4 .page-route-executions .execution-col-approver { width: 130px; }
+body.console-redesign-v4 .page-route-executions .execution-col-time { width: 140px; white-space: nowrap; }
 body.console-redesign-v4 .page-route-executions .execution-queue-table td { vertical-align: top; }
 body.console-redesign-v4 .page-route-executions .ticketing-table-card { overflow: hidden; }
-body.console-redesign-v4 .execution-queue-scroll { overflow: auto; }
+body.console-redesign-v4 .execution-queue-scroll { overflow: auto; max-height: min(58vh, 640px); }
+body.console-redesign-v4 .page-route-executions .execution-cell-text {
+  display: inline-block;
+  max-width: 100%;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+body.console-redesign-v4 .page-route-executions .ticketing-details {
+  position: sticky;
+  top: 14px;
+  max-height: calc(100vh - 145px);
+  overflow: auto;
+}
 
 /* ============================================================
    ALERTS PAGE
    ============================================================ */
 body.console-redesign-v4 .page-route-alerts .table td { vertical-align: top; }
 body.console-redesign-v4 .page-route-alerts .ticketing-table-card { overflow: hidden; }
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll { max-height: min(60vh, 660px); }
+body.console-redesign-v4 .page-route-alerts table { table-layout: fixed; width: 100%; }
+body.console-redesign-v4 .page-route-alerts th:nth-child(1),
+body.console-redesign-v4 .page-route-alerts td:nth-child(1) { width: 170px; }
+body.console-redesign-v4 .page-route-alerts th:nth-child(2),
+body.console-redesign-v4 .page-route-alerts td:nth-child(2) { width: 110px; }
+body.console-redesign-v4 .page-route-alerts th:nth-child(3),
+body.console-redesign-v4 .page-route-alerts td:nth-child(3) { width: 280px; }
+body.console-redesign-v4 .page-route-alerts th:nth-child(4),
+body.console-redesign-v4 .page-route-alerts td:nth-child(4) { width: 170px; }
+body.console-redesign-v4 .page-route-alerts th:nth-child(5),
+body.console-redesign-v4 .page-route-alerts td:nth-child(5) { width: auto; }
+body.console-redesign-v4 .page-route-alerts th:nth-child(6),
+body.console-redesign-v4 .page-route-alerts td:nth-child(6) { width: 140px; white-space: nowrap; }
 
 /* Cap ID column width on alerts */
 body.console-redesign-v4 .page-route-alerts table td:first-child,
@@ -1102,6 +1420,18 @@ body.console-redesign-v4 .panel-collapse-btn:disabled { opacity: 0.35; cursor: n
   body.console-redesign-v4 .shell-sidebar { width: 100%; min-width: 0; height: auto; position: relative; top: 0; }
   body.console-redesign-v4 .shell-sidebar-body { max-height: 280px; }
   body.console-redesign-v4 .actions-workspace { grid-template-columns: 1fr; }
+  body.console-redesign-v4 .actions-main-pane { padding-left: 0; }
+  body.console-redesign-v4 .page-route-actions .actions-sidebar-pane {
+    position: relative;
+    top: 0;
+    max-height: none;
+  }
+  body.console-redesign-v4 .page-route-executions .ticketing-layout { grid-template-columns: 1fr; }
+  body.console-redesign-v4 .page-route-executions .ticketing-details {
+    position: relative;
+    top: 0;
+    max-height: none;
+  }
   body.console-redesign-v4 .split-view { grid-template-columns: 1fr; }
 }
 

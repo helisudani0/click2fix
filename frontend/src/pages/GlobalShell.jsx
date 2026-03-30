@@ -1144,7 +1144,7 @@ export default function GlobalShell() {
               </div>
             </div>
             <div className="table-scroll h-36vh">
-              <table className="table compact readable">
+              <table className="table compact readable global-shell-history-table">
                 <thead>
                   <tr>
                     <th>Agent ID</th>
@@ -1229,17 +1229,37 @@ export default function GlobalShell() {
                           </span>
                         </td>
                         <td className="ws-normal">
-                          {row.targetLabel || row.agent || "-"}
-                          {formatTargetHealth(row) ? (
-                            <div className="meta-line">{formatTargetHealth(row)}</div>
-                          ) : null}
+                          <div className="global-shell-agent-cell">
+                            <span className="agent-count">{row.targetLabel || row.agent || "-"}</span>
+                            {formatTargetHealth(row) ? (
+                              <span className="agent-id">{formatTargetHealth(row)}</span>
+                            ) : null}
+                          </div>
                         </td>
-                        <td>{row.shell || "-"}</td>
+                        <td>
+                          <span
+                            className={`shell-type-pill ${String(row.shell || "")
+                              .toLowerCase()
+                              .includes("cmd")
+                              ? "cmd"
+                              : String(row.shell || "")
+                                  .toLowerCase()
+                                  .includes("bash") || String(row.shell || "").toLowerCase().includes("sh")
+                                ? "bash"
+                                : String(row.shell || "").toLowerCase().includes("power")
+                                  ? "ps"
+                                  : ""}`}
+                          >
+                            {row.shell || "-"}
+                          </span>
+                        </td>
                         <td className="ws-normal" title={row.command || "-"}>
                           {row.command || "-"}
                         </td>
                         <td className="ws-normal" title={row.outputPreview || "-"}>
-                          {row.outputPreview || "-"}
+                          <span className="shell-output-preview">
+                            {row.outputPreview || "-"}
+                          </span>
                         </td>
                         <td><RelativeTimestamp value={row.startedAt} /></td>
                         <td><RelativeTimestamp value={row.finishedAt} /></td>
@@ -1278,51 +1298,51 @@ export default function GlobalShell() {
         {selectedHistory ? (
           <div className="drawer-grid">
             <div className="panel-stack">
-              <div className="card">
-                <div className="card-header">
-                  <div>
-                    <h3>Run Command</h3>
-                    <p className="muted">Shell context and sanitized preview for rapid debugging.</p>
-                  </div>
+            <div className="card shell-run-detail">
+              <div className="card-header">
+                <div>
+                  <h3>Run Command</h3>
+                  <p className="muted">Shell context and sanitized preview for rapid debugging.</p>
                 </div>
-                <div className="kv-grid">
-                  <div className="kv-row">
-                    <span className="kv-key">Shell</span>
-                    <span className="kv-value">{selectedHistory.shell || "-"}</span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Status</span>
-                    <span className="kv-value">
-                      <span className={`status-pill ${statusTone(selectedHistory.status)}`}>{selectedHistory.status || "-"}</span>
-                    </span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Started</span>
-                    <span className="kv-value"><RelativeTimestamp value={selectedHistory.startedAt} /></span>
-                  </div>
-                  <div className="kv-row">
-                    <span className="kv-key">Finished</span>
-                    <span className="kv-value"><RelativeTimestamp value={selectedHistory.finishedAt} /></span>
-                  </div>
-                </div>
-                <details className="ticketing-detail-section" open>
-                  <summary>Command</summary>
-                  <pre className="code-block mt-8">{selectedHistory.command || "-"}</pre>
-                </details>
-                <details className="ticketing-detail-section">
-                  <summary>Clean Output Preview</summary>
-                  <pre className="code-block mt-8">{selectedHistory.cleanOutputPreview || "-"}</pre>
-                </details>
-                <details className="ticketing-detail-section">
-                  <summary>Raw Output Preview</summary>
-                  <pre className="code-block mt-8">{selectedHistory.outputPreview || "-"}</pre>
-                </details>
               </div>
+              <div className="kv-grid run-meta-grid">
+                <div className="kv-row">
+                  <span className="kv-key run-meta-label">Shell</span>
+                  <span className="kv-value run-meta-value">{selectedHistory.shell || "-"}</span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key run-meta-label">Status</span>
+                  <span className="kv-value run-meta-value">
+                    <span className={`status-pill ${statusTone(selectedHistory.status)}`}>{selectedHistory.status || "-"}</span>
+                  </span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key run-meta-label">Started</span>
+                  <span className="kv-value run-meta-value"><RelativeTimestamp value={selectedHistory.startedAt} /></span>
+                </div>
+                <div className="kv-row">
+                  <span className="kv-key run-meta-label">Finished</span>
+                  <span className="kv-value run-meta-value"><RelativeTimestamp value={selectedHistory.finishedAt} /></span>
+                </div>
+              </div>
+              <details className="ticketing-detail-section shell-run-section" open>
+                <summary className="shell-run-section-title">Command</summary>
+                <pre className="shell-run-command-block">{selectedHistory.command || "-"}</pre>
+              </details>
+              <details className="ticketing-detail-section shell-run-section">
+                <summary className="shell-run-section-title">Clean Output Preview</summary>
+                <pre className="shell-output-block">{selectedHistory.cleanOutputPreview || "-"}</pre>
+              </details>
+              <details className="ticketing-detail-section shell-run-section">
+                <summary className="shell-run-section-title">Raw Output Preview</summary>
+                <pre className="shell-output-block">{selectedHistory.outputPreview || "-"}</pre>
+              </details>
             </div>
-            <details className="ticketing-detail-section">
-              <summary>Execution Steps</summary>
-              <ExecutionStream executionId={selectedHistory.id} />
-            </details>
+          </div>
+          <details className="ticketing-detail-section shell-run-section">
+            <summary className="shell-run-section-title">Execution Steps</summary>
+            <ExecutionStream executionId={selectedHistory.id} />
+          </details>
           </div>
         ) : null}
       </SideDrawer>

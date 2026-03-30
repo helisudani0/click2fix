@@ -21,15 +21,54 @@ const normalizeKey = (value) => normalizeText(value).toLowerCase();
 const AI_PROVIDER_DEFAULT_MODEL = {
   openai: "gpt-4.1-mini",
   gemini: "gemini-2.5-flash",
+  openrouter: "openai/gpt-4.1-mini",
+  groq: "llama-3.3-70b-versatile",
+  xai: "grok-3-mini",
+  anthropic: "claude-3-5-sonnet-latest",
+  ollama: "llama3.1:8b",
 };
 const AI_PROVIDER_SUGGESTIONS = ["openai", "gemini", "openrouter", "groq", "xai", "anthropic", "ollama"];
+const AI_PROVIDER_DEFAULT_BASE_URL = {
+  openai: "https://api.openai.com/v1",
+  gemini: "https://generativelanguage.googleapis.com/v1beta",
+  openrouter: "https://openrouter.ai/api/v1",
+  groq: "https://api.groq.com/openai/v1",
+  xai: "https://api.x.ai/v1",
+  anthropic: "https://api.anthropic.com/v1",
+  ollama: "http://localhost:11434/v1",
+};
+const AI_PROVIDER_MODEL_OPTIONS = {
+  openai: ["gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "gpt-4o"],
+  gemini: ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
+  openrouter: ["openai/gpt-4.1-mini", "google/gemini-2.5-flash", "anthropic/claude-3.5-sonnet"],
+  groq: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
+  xai: ["grok-3-mini", "grok-3"],
+  anthropic: ["claude-3-5-sonnet-latest", "claude-3-5-haiku-latest", "claude-3-opus-latest"],
+  ollama: ["llama3.1:8b", "qwen2.5:7b", "mistral:7b"],
+};
 const defaultModelForProvider = (provider) => AI_PROVIDER_DEFAULT_MODEL[normalizeKey(provider)] || "";
+const defaultBaseUrlForProvider = (provider) => AI_PROVIDER_DEFAULT_BASE_URL[normalizeKey(provider)] || "";
+const modelOptionsForProvider = (provider) => AI_PROVIDER_MODEL_OPTIONS[normalizeKey(provider)] || [];
+const matchingModelOption = (provider, model) => {
+  const options = modelOptionsForProvider(provider);
+  const key = normalizeKey(model);
+  if (!key) return "";
+  return options.find((option) => normalizeKey(option) === key) || "";
+};
 const isLikelyModelMismatch = (provider, model) => {
   const p = normalizeKey(provider);
   const m = normalizeKey(model);
   if (!m) return true;
   if (p === "gemini") return m.startsWith("gpt-");
   if (p === "openai") return m.startsWith("gemini-");
+  return false;
+};
+const isLikelyBaseUrlMismatch = (provider, baseUrl) => {
+  const p = normalizeKey(provider);
+  const base = normalizeKey(baseUrl);
+  if (!base) return false;
+  if (p === "gemini") return base.includes("api.openai.com");
+  if (p === "openai") return base.includes("generativelanguage.googleapis.com");
   return false;
 };
 
@@ -161,6 +200,11 @@ export default function OrgAdmin() {
   const selectedTenant = useMemo(
     () => tenants.find((tenant) => String(tenant?.tenant_id) === String(selectedTenantId)) || null,
     [tenants, selectedTenantId],
+  );
+  const aiModelOptions = useMemo(() => modelOptionsForProvider(aiConfig.provider), [aiConfig.provider]);
+  const selectedModelOption = useMemo(
+    () => matchingModelOption(aiConfig.provider, aiConfig.model),
+    [aiConfig.provider, aiConfig.model],
   );
 
   const selectedPolicy = useMemo(
@@ -657,6 +701,9 @@ export default function OrgAdmin() {
                   if (isLikelyModelMismatch(provider, current?.model)) {
                     next.model = defaultModelForProvider(provider);
                   }
+                  if (!normalizeText(current?.base_url) || isLikelyBaseUrlMismatch(provider, current?.base_url)) {
+                    next.base_url = defaultBaseUrlForProvider(provider);
+                  }
                   return next;
                 })
               }
@@ -673,17 +720,55 @@ export default function OrgAdmin() {
           </label>
           <label className="list-item">
             <div className="muted">Model</div>
-            <input
-              className="input mt-10"
-              value={aiConfig.model}
-              onChange={(event) =>
-                setAiConfig((current) => ({
-                  ...current,
-                  model: event.target.value,
-                }))
-              }
-              placeholder="gpt-4.1-mini / gemini-2.0-flash"
-            />
+            {aiModelOptions.length > 0 ? (
+              <>
+                <select
+                  className="input mt-10"
+                  value={selectedModelOption || "__custom__"}
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+                    if (nextValue === "__custom__") return;
+                    setAiConfig((current) => ({
+                      ...current,
+                      model: nextValue,
+                    }));
+                  }}
+                >
+                  <option value="__custom__">Custom model...</option>
+                  {aiModelOptions.map((modelOption) => (
+                    <option key={modelOption} value={modelOption}>
+                      {modelOption}
+                    </option>
+                  ))}
+                </select>
+                {!selectedModelOption ? (
+                  <input
+                    className="input mt-10"
+                    value={aiConfig.model}
+                    onChange={(event) =>
+                      setAiConfig((current) => ({
+                        ...current,
+                        model: event.target.value,
+                      }))
+                    }
+                    placeholder="Enter custom model id"
+                  />
+                ) : null}
+              </>
+            ) : (
+              <input
+                className="input mt-10"
+                value={aiConfig.model}
+                onChange={(event) =>
+                  setAiConfig((current) => ({
+                    ...current,
+                    model: event.target.value,
+                  }))
+                }
+                placeholder="Enter model id"
+              />
+            )}
+            <div className="muted mt-10">Use dropdown presets to avoid spelling/model-format errors.</div>
           </label>
         </div>
 

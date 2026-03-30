@@ -1144,7 +1144,7 @@ export default function GlobalShell() {
               </div>
             </div>
             <div className="table-scroll h-36vh">
-              <table className="table compact readable global-shell-history-table">
+              <table className="table compact readable">
                 <thead>
                   <tr>
                     <th>Agent ID</th>
@@ -1195,7 +1195,7 @@ export default function GlobalShell() {
               </div>
             </div>
             <div className="table-scroll h-44vh">
-              <table className="table compact readable">
+              <table className="table compact readable global-shell-history-table">
                 <thead>
                   <tr>
                     <th>ID</th>

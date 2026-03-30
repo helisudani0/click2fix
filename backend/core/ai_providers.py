@@ -155,7 +155,7 @@ def _normalize_gemini_model_name(model: str) -> str:
     value = _text(model)
     if value.lower().startswith("models/"):
         value = value.split("/", 1)[1]
-    return _text(value)
+    return _text(value).lower()
 
 
 class AIProviderError(RuntimeError):
@@ -668,14 +668,18 @@ class AIAdapter:
         local_enabled = _to_bool(pick("enabled", _LEGACY_AI_ENABLED_ENV, True), True)
         enabled = bool(effective_platform_enabled and local_enabled and bool(normalized_api_key))
         resolved_model = _text(pick("model", "C2F_LLM_MODEL", default_model)) or default_model
+        resolved_base_url = _text(pick("base_url", "C2F_LLM_BASE_URL", default_base)) or default_base
         if provider == "gemini":
             resolved_model = _normalize_gemini_model_name(resolved_model)
             if not resolved_model or resolved_model.lower().startswith("gpt-"):
                 resolved_model = _DEFAULT_GEMINI_MODEL
+            resolved_base_url = _clean_base_url(resolved_base_url or _DEFAULT_GEMINI_BASE_URL)
+            if not resolved_base_url or resolved_base_url.lower().startswith("https://api.openai.com"):
+                resolved_base_url = _DEFAULT_GEMINI_BASE_URL
         return {
             "enabled": enabled,
             "provider": provider,
-            "base_url": _text(pick("base_url", "C2F_LLM_BASE_URL", default_base)) or default_base,
+            "base_url": resolved_base_url,
             "model": resolved_model,
             "api_key": normalized_api_key,
             "timeout_seconds": max(5, _to_int(pick("timeout_seconds", "C2F_LLM_TIMEOUT_SECONDS", 45), 45)),

@@ -664,7 +664,10 @@ export default function Actions() {
                 ))}
               </div>
               <div className="mission-label">Payload Preview</div>
-              <pre className="code-block">{payloadPreview || "Select an action to generate the request payload preview."}</pre>
+              <details className="ticketing-detail-section" open>
+                <summary>View Technical Payload</summary>
+                <pre className="code-block">{payloadPreview || "Select an action to generate the request payload preview."}</pre>
+              </details>
             </div>
 
             <div className="card">
@@ -704,7 +707,10 @@ export default function Actions() {
                 </div>
                 <span className="status-pill pending">Execution #{activeExecutionId}</span>
               </div>
-              <ExecutionStream executionId={activeExecutionId} />
+              <details className="ticketing-detail-section" open>
+                <summary>View Execution Logs</summary>
+                <ExecutionStream executionId={activeExecutionId} />
+              </details>
             </div>
           ) : null}
         </div>

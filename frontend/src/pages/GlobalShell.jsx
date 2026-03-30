@@ -1305,15 +1305,24 @@ export default function GlobalShell() {
                     <span className="kv-value"><RelativeTimestamp value={selectedHistory.finishedAt} /></span>
                   </div>
                 </div>
-                <div className="muted mt-12">Command</div>
-                <pre className="code-block mt-8">{selectedHistory.command || "-"}</pre>
-                <div className="muted mt-12">Clean Output Preview</div>
-                <pre className="code-block mt-8">{selectedHistory.cleanOutputPreview || "-"}</pre>
-                <div className="muted mt-12">Raw Output Preview</div>
-                <pre className="code-block mt-8">{selectedHistory.outputPreview || "-"}</pre>
+                <details className="ticketing-detail-section" open>
+                  <summary>Command</summary>
+                  <pre className="code-block mt-8">{selectedHistory.command || "-"}</pre>
+                </details>
+                <details className="ticketing-detail-section">
+                  <summary>Clean Output Preview</summary>
+                  <pre className="code-block mt-8">{selectedHistory.cleanOutputPreview || "-"}</pre>
+                </details>
+                <details className="ticketing-detail-section">
+                  <summary>Raw Output Preview</summary>
+                  <pre className="code-block mt-8">{selectedHistory.outputPreview || "-"}</pre>
+                </details>
               </div>
             </div>
-            <ExecutionStream executionId={selectedHistory.id} />
+            <details className="ticketing-detail-section">
+              <summary>Execution Steps</summary>
+              <ExecutionStream executionId={selectedHistory.id} />
+            </details>
           </div>
         ) : null}
       </SideDrawer>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getExecutions } from "../api/wazuh";
 import ExecutionStream from "../components/ExecutionStream";
 import Pager from "../components/Pager";
@@ -120,8 +120,9 @@ export default function Executions() {
   const [queuePage, setQueuePage] = useState(1);
   const [queuePageSize, setQueuePageSize] = useState(15);
 
+  const initialLoadRef = useRef(true);
   const load = useCallback((force = false) => {
-    setLoading(true);
+    if (initialLoadRef.current) setLoading(true);
     getExecutions({ limit: 400 }, { force })
       .then((r) => {
         const data = Array.isArray(r.data) ? r.data : [];
@@ -133,11 +134,17 @@ export default function Executions() {
           const first = data.length ? executionRow(data[0]) : null;
           return first?.id || null;
         });
-        setLoading(false);
+        if (initialLoadRef.current) {
+          setLoading(false);
+          initialLoadRef.current = false;
+        }
       })
       .catch((err) => {
         setError(err.response?.data?.detail || err.message || "Failed to load execution history");
-        setLoading(false);
+        if (initialLoadRef.current) {
+          setLoading(false);
+          initialLoadRef.current = false;
+        }
       });
   }, []);
 

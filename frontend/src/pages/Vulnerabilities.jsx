@@ -511,6 +511,123 @@ export default function Vulnerabilities() {
         ))}
       </div>
 
+      <div className="card">
+        <div className="card-header">
+          <div>
+            <h3>Vulnerability Feed</h3>
+            <p className="muted">
+              Source: {source}. Unique vulnerabilities: {summary.total}. Records scanned: {summary.records}. Affected agents: {summary.affected_agents}.
+            </p>
+          </div>
+        </div>
+
+        <div className="table-scroll">
+          <table className="table readable compact">
+            <thead>
+              <tr>
+                <th>Vulnerability</th>
+                <th>Severity</th>
+                <th>Package</th>
+                <th>Affected</th>
+                <th>Status</th>
+                <th>Timeline</th>
+                <th>References</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagedItems.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="muted">
+                    No vulnerabilities in this scope/filter.
+                  </td>
+                </tr>
+              ) : (
+                pagedItems.map((row) => {
+                  const references = Array.isArray(row.references) ? row.references : [];
+                  return (
+                    <tr
+                      key={row.id}
+                      className={`clickable ${String(selectedItem?.id || "") === String(row.id || "") ? "selected" : ""}`}
+                      onClick={() => setSelectedVulnerabilityId(String(row.id || ""))}
+                    >
+                      <td>
+                        <div>{row.cve || "-"}</div>
+                        <div className="meta-line">{row.title || "-"}</div>
+                        <div className="meta-line">
+                          {deriveIndicators(row).join(" | ") || "No special indicators derived"}
+                        </div>
+                      </td>
+                      <td>
+                        <span className={`status-pill ${severityClass(row.severity)}`}>
+                          {titleCase(row.severity)}
+                        </span>
+                        {row.score !== null && row.score !== undefined ? (
+                          <div className="meta-line">CVSS {row.score}</div>
+                        ) : null}
+                      </td>
+                      <td>
+                        <div>{toDisplay(row.package?.name)}</div>
+                        <div className="meta-line">
+                          {toDisplay(row.package?.version)} | {toDisplay(row.package?.source)}
+                        </div>
+                        <div className="meta-line">{toDisplay(row.package?.condition)}</div>
+                      </td>
+                      <td>
+                        <div>{row.affected_count || 0} agent(s)</div>
+                        <div className="meta-line">
+                          {compactList(
+                            (row.affected_agents || []).map((agent) =>
+                              `${agent.id}${agent.name ? `:${agent.name}` : ""}`
+                            ),
+                            4
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        <div>{toDisplay(row.status)}</div>
+                        <div className="meta-line">
+                          {toDisplay(row.classification)} | {toDisplay(row.type)}
+                        </div>
+                      </td>
+                      <td>
+                        <div>Published: {formatWazuhTimestamp(row.published)}</div>
+                        <div className="meta-line">Updated: {formatWazuhTimestamp(row.updated)}</div>
+                        <div className="meta-line">Last seen: {formatWazuhTimestamp(row.last_seen)}</div>
+                      </td>
+                      <td>
+                        {references.length ? (
+                          <a href={references[0]} target="_blank" rel="noreferrer">
+                            Open ({references.length})
+                          </a>
+                        ) : (
+                          <span className="muted">-</span>
+                        )}
+                        {row.scanner_reference ? (
+                          <div className="meta-line">{row.scanner_reference}</div>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <Pager
+          total={filteredItems.length}
+          page={feedPage}
+          pageSize={feedPageSize}
+          onPageChange={setFeedPage}
+          onPageSizeChange={(size) => {
+            setFeedPageSize(size);
+            setFeedPage(1);
+          }}
+          pageSizeOptions={[25, 50, 100]}
+          label="vulnerabilities"
+        />
+      </div>
+
       <div className="grid-2">
         <div className="card">
           <div className="card-header">
@@ -688,126 +805,12 @@ export default function Vulnerabilities() {
                 <p className="muted">Raw analyst-facing payload for the selected vulnerability after aggregation.</p>
               </div>
             </div>
-            <pre className="code-block">{wazuhDetailJson}</pre>
+            <details className="ticketing-detail-section" open>
+              <summary>View Technical JSON</summary>
+              <pre className="code-block">{wazuhDetailJson}</pre>
+            </details>
           </div>
         </div>
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <h3>Vulnerability Feed</h3>
-            <p className="muted">
-              Source: {source}. Unique vulnerabilities: {summary.total}. Records scanned: {summary.records}. Affected agents: {summary.affected_agents}.
-            </p>
-          </div>
-        </div>
-
-        <div className="table-scroll">
-          <table className="table readable compact">
-            <thead>
-              <tr>
-                <th>Vulnerability</th>
-                <th>Severity</th>
-                <th>Package</th>
-                <th>Affected</th>
-                <th>Status</th>
-                <th>Timeline</th>
-                <th>References</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pagedItems.length === 0 ? (
-                <tr>
-                  <td colSpan="7" className="muted">
-                    No vulnerabilities in this scope/filter.
-                  </td>
-                </tr>
-              ) : (
-                pagedItems.map((row) => {
-                  const references = Array.isArray(row.references) ? row.references : [];
-                  return (
-                    <tr
-                      key={row.id}
-                      className={`clickable ${String(selectedItem?.id || "") === String(row.id || "") ? "selected" : ""}`}
-                      onClick={() => setSelectedVulnerabilityId(String(row.id || ""))}
-                    >
-                      <td>
-                        <div>{row.cve || "-"}</div>
-                        <div className="meta-line">{row.title || "-"}</div>
-                        <div className="meta-line">
-                          {deriveIndicators(row).join(" | ") || "No special indicators derived"}
-                        </div>
-                      </td>
-                      <td>
-                        <span className={`status-pill ${severityClass(row.severity)}`}>
-                          {titleCase(row.severity)}
-                        </span>
-                        {row.score !== null && row.score !== undefined ? (
-                          <div className="meta-line">CVSS {row.score}</div>
-                        ) : null}
-                      </td>
-                      <td>
-                        <div>{toDisplay(row.package?.name)}</div>
-                        <div className="meta-line">
-                          {toDisplay(row.package?.version)} | {toDisplay(row.package?.source)}
-                        </div>
-                        <div className="meta-line">{toDisplay(row.package?.condition)}</div>
-                      </td>
-                      <td>
-                        <div>{row.affected_count || 0} agent(s)</div>
-                        <div className="meta-line">
-                          {compactList(
-                            (row.affected_agents || []).map((agent) =>
-                              `${agent.id}${agent.name ? `:${agent.name}` : ""}`
-                            ),
-                            4
-                          )}
-                        </div>
-                      </td>
-                      <td>
-                        <div>{toDisplay(row.status)}</div>
-                        <div className="meta-line">
-                          {toDisplay(row.classification)} | {toDisplay(row.type)}
-                        </div>
-                      </td>
-                      <td>
-                        <div>Published: {formatWazuhTimestamp(row.published)}</div>
-                        <div className="meta-line">Updated: {formatWazuhTimestamp(row.updated)}</div>
-                        <div className="meta-line">Last seen: {formatWazuhTimestamp(row.last_seen)}</div>
-                      </td>
-                      <td>
-                        {references.length ? (
-                          <a href={references[0]} target="_blank" rel="noreferrer">
-                            Open ({references.length})
-                          </a>
-                        ) : (
-                          <span className="muted">-</span>
-                        )}
-                        {row.scanner_reference ? (
-                          <div className="meta-line">{row.scanner_reference}</div>
-                        ) : null}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <Pager
-          total={filteredItems.length}
-          page={feedPage}
-          pageSize={feedPageSize}
-          onPageChange={setFeedPage}
-          onPageSizeChange={(size) => {
-            setFeedPageSize(size);
-            setFeedPage(1);
-          }}
-          pageSizeOptions={[25, 50, 100]}
-          label="vulnerabilities"
-        />
       </div>
     </div>
   );

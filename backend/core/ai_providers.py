@@ -151,11 +151,41 @@ def _clean_base_url(base_url: str) -> str:
     return _text(base_url).rstrip("/")
 
 
-def _normalize_gemini_model_name(model: str) -> str:
+def _normalize_model_name(model: str) -> str:
     value = _text(model)
-    if value.lower().startswith("models/"):
-        value = value.split("/", 1)[1]
-    return _text(value).lower()
+    lower = value.lower()
+    for prefix in ("models/", "model/"):
+        if lower.startswith(prefix):
+            value = value.split("/", 1)[1]
+            break
+    return _text(value)
+
+
+def _normalize_gemini_model_name(model: str) -> str:
+    return _normalize_model_name(model).lower()
+
+
+def _looks_like_gemini_base_url(base_url: str) -> bool:
+    return _clean_base_url(base_url).lower().startswith("https://generativelanguage.googleapis.com")
+
+
+def _looks_like_openai_base_url(base_url: str) -> bool:
+    return _clean_base_url(base_url).lower().startswith("https://api.openai.com")
+
+
+def _looks_like_gemini_model(model: str) -> bool:
+    text = _normalize_model_name(model).lower()
+    return text.startswith("gemini-")
+
+
+def _looks_like_openai_model(model: str) -> bool:
+    text = _normalize_model_name(model).lower()
+    return (
+        text.startswith("gpt-")
+        or text.startswith("o1")
+        or text.startswith("o3")
+        or text.startswith("text-embedding-")
+    )
 
 
 class AIProviderError(RuntimeError):
@@ -366,7 +396,7 @@ class OpenAIProvider(_OpenAICompatibleProvider):
     def __init__(self, config: Dict[str, Any]):
         merged = dict(config or {})
         merged["base_url"] = _clean_base_url(merged.get("base_url") or _DEFAULT_OPENAI_BASE_URL)
-        merged["model"] = _text(merged.get("model") or _DEFAULT_OPENAI_MODEL)
+        merged["model"] = _normalize_model_name(merged.get("model") or _DEFAULT_OPENAI_MODEL)
         super().__init__(merged)
         if not self.api_key:
             raise AIProviderError("OpenAI provider requires api_key")
@@ -667,15 +697,23 @@ class AIAdapter:
         effective_platform_enabled = bool(platform_enabled or runtime_enabled_override)
         local_enabled = _to_bool(pick("enabled", _LEGACY_AI_ENABLED_ENV, True), True)
         enabled = bool(effective_platform_enabled and local_enabled and bool(normalized_api_key))
-        resolved_model = _text(pick("model", "C2F_LLM_MODEL", default_model)) or default_model
+        resolved_model = _normalize_model_name(pick("model", "C2F_LLM_MODEL", default_model)) or _normalize_model_name(default_model)
         resolved_base_url = _text(pick("base_url", "C2F_LLM_BASE_URL", default_base)) or default_base
         if provider == "gemini":
             resolved_model = _normalize_gemini_model_name(resolved_model)
-            if not resolved_model or resolved_model.lower().startswith("gpt-"):
+            if not resolved_model or _looks_like_openai_model(resolved_model):
                 resolved_model = _DEFAULT_GEMINI_MODEL
             resolved_base_url = _clean_base_url(resolved_base_url or _DEFAULT_GEMINI_BASE_URL)
-            if not resolved_base_url or resolved_base_url.lower().startswith("https://api.openai.com"):
+            if not resolved_base_url or _looks_like_openai_base_url(resolved_base_url):
                 resolved_base_url = _DEFAULT_GEMINI_BASE_URL
+        elif provider == "openai":
+            if not resolved_model or _looks_like_gemini_model(resolved_model):
+                resolved_model = _DEFAULT_OPENAI_MODEL
+            resolved_base_url = _clean_base_url(resolved_base_url or _DEFAULT_OPENAI_BASE_URL)
+            if not resolved_base_url or _looks_like_gemini_base_url(resolved_base_url):
+                resolved_base_url = _DEFAULT_OPENAI_BASE_URL
+        else:
+            resolved_base_url = _clean_base_url(resolved_base_url)
         return {
             "enabled": enabled,
             "provider": provider,

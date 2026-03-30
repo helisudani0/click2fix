@@ -81,6 +81,51 @@ def test_ai_adapter_replaces_openai_base_url_for_gemini_provider():
     assert adapter.config["base_url"] == "https://generativelanguage.googleapis.com/v1beta"
 
 
+def test_ai_adapter_normalizes_model_prefix_for_openai_provider():
+    adapter = AIAdapter(
+        config={
+            "provider": "openai",
+            "api_key": "test-key",
+            "model": "models/gpt-4.1-mini",
+            "enabled": True,
+        },
+        settings_config={},
+    )
+
+    assert adapter.config["model"] == "gpt-4.1-mini"
+
+
+def test_ai_adapter_replaces_gemini_base_url_for_openai_provider():
+    adapter = AIAdapter(
+        config={
+            "provider": "openai",
+            "api_key": "test-key",
+            "base_url": "https://generativelanguage.googleapis.com/v1beta",
+            "model": "gpt-4.1-mini",
+            "enabled": True,
+        },
+        settings_config={},
+    )
+
+    assert adapter.config["base_url"] == "https://api.openai.com/v1"
+
+
+def test_ai_adapter_normalizes_model_prefix_for_openai_compatible_provider():
+    adapter = AIAdapter(
+        config={
+            "provider": "openrouter",
+            "api_key": "test-key",
+            "base_url": "https://openrouter.ai/api/v1",
+            "model": "models/openai/gpt-4.1-mini",
+            "enabled": True,
+        },
+        settings_config={},
+    )
+
+    assert adapter.config["provider"] == "openrouter"
+    assert adapter.config["model"] == "openai/gpt-4.1-mini"
+
+
 def test_actions_accepts_gemini_provider_config():
     parsed = _coerce_ai_provider_config({"provider": "gemini", "api_key": "test-key"}, source="request")
 

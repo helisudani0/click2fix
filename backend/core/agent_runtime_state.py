@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from sqlalchemy import text
@@ -14,6 +15,8 @@ STATE_HEALTH = "health"
 STATE_ISOLATION = "isolation"
 STATE_NETWORK_PATH = "network_path"
 STATE_SCA_BASELINE = "sca_baseline"
+
+logger = logging.getLogger(__name__)
 
 
 def _tenant_scope(tenant_id: int | None) -> int:
@@ -41,6 +44,14 @@ def _json_loads(value: Any) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _is_missing_state_table_error(exc: Exception) -> bool:
+    message = str(exc or "").lower()
+    return (
+        ("agent_runtime_state" in message and "does not exist" in message)
+        or ("no such table" in message and "agent_runtime_state" in message)
+    )
+
+
 def get_agent_state(*, state_kind: str, agent_id: str, tenant_id: int | None) -> dict[str, Any] | None:
     db = connect()
     try:
@@ -62,6 +73,11 @@ def get_agent_state(*, state_kind: str, agent_id: str, tenant_id: int | None) ->
             },
         ).fetchone()
         return _json_loads(row[0] if row else None)
+    except Exception as exc:
+        if _is_missing_state_table_error(exc):
+            logger.warning("agent_runtime_state table missing while reading state; returning empty state.")
+            return None
+        raise
     finally:
         db.close()
 
@@ -86,6 +102,11 @@ def find_any_agent_state(*, state_kind: str, agent_id: str) -> dict[str, Any] | 
             },
         ).fetchone()
         return _json_loads(row[0] if row else None)
+    except Exception as exc:
+        if _is_missing_state_table_error(exc):
+            logger.warning("agent_runtime_state table missing while reading fallback state; returning empty state.")
+            return None
+        raise
     finally:
         db.close()
 
@@ -125,6 +146,11 @@ def upsert_agent_state(
         )
         db.commit()
         return payload
+    except Exception as exc:
+        if _is_missing_state_table_error(exc):
+            logger.warning("agent_runtime_state table missing while writing state; skipping write.")
+            return payload
+        raise
     finally:
         db.close()
 
@@ -152,5 +178,10 @@ def clear_agent_runtime_state(
     try:
         db.execute(text(f"DELETE FROM agent_runtime_state {where_sql}"), params)
         db.commit()
+    except Exception as exc:
+        if _is_missing_state_table_error(exc):
+            logger.warning("agent_runtime_state table missing while clearing state; skipping clear.")
+            return
+        raise
     finally:
         db.close()

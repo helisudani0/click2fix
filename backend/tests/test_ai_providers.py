@@ -335,3 +335,17 @@ def test_gemini_provider_falls_back_to_supported_model_when_configured_model_is_
     assert provider.model == "gemini-2.5-flash"
     assert calls["post"] == 2
     assert calls["get"] >= 1
+
+
+def test_gemini_response_schema_covers_playbook_prompt_shape():
+    schema = ai_providers._gemini_response_json_schema(
+        "Return strict JSON only with keys: name, description, analysis, confidence, steps."
+    )
+
+    assert isinstance(schema, dict)
+    assert "steps" in (schema.get("required") or [])
+    steps = ((schema.get("properties") or {}).get("steps") or {})
+    assert steps.get("type") == "array"
+    step_item = (steps.get("items") or {})
+    assert step_item.get("type") == "object"
+    assert "action" in (step_item.get("required") or [])

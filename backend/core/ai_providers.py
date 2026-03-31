@@ -109,6 +109,35 @@ def _extract_gemini_text(node: Dict[str, Any]) -> str:
 
 def _gemini_response_json_schema(system_prompt: str) -> Dict[str, Any] | None:
     prompt = _text(system_prompt).lower()
+    if "keys: name, description, analysis, confidence, steps" in prompt:
+        return {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "description": {"type": "string"},
+                "analysis": {"type": "string"},
+                "confidence": {"type": "string"},
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "action": {"type": "string"},
+                            "args": {
+                                "type": "object",
+                                "additionalProperties": True,
+                            },
+                            "reason": {"type": "string"},
+                        },
+                        "required": ["action"],
+                        "additionalProperties": True,
+                    },
+                },
+            },
+            "required": ["steps"],
+            "additionalProperties": True,
+        }
     if "keys: analysis, decision, commands" in prompt:
         return {
             "type": "object",

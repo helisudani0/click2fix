@@ -89,7 +89,9 @@ _MAX_REQUEST_BYTES = int(_SECURITY.get("max_request_body_bytes", 10 * 1024 * 102
 _UPLOAD_LIMIT_BYTES = int(_SECURITY.get("max_upload_body_bytes", 25 * 1024 * 1024))
 
 _RATE_RULES = [
-    RateLimitRule(path_prefix="/api/auth/login", requests=8, window_seconds=300),
+    # Login has stricter per-user/IP lockout in api/auth.py.
+    # Keep this global limiter permissive to avoid premature client lockouts.
+    RateLimitRule(path_prefix="/api/auth/login", requests=120, window_seconds=60),
     RateLimitRule(path_prefix="/api/auth/oidc/callback", requests=20, window_seconds=300),
     RateLimitRule(path_prefix="/api/actions/global-shell", requests=20, window_seconds=60),
     RateLimitRule(path_prefix="/api/actions/run", requests=40, window_seconds=60),

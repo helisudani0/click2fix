@@ -96,13 +96,21 @@ const statusToneFromText = (value) => {
   return "pending";
 };
 
-const connectorSummary = (status, error) => {
-  if (status?.status) {
-    const label = String(status.status).replace(/[_-]+/g, " ").trim();
-    return label ? label.replace(/\b\w/g, (part) => part.toUpperCase()) : "Connected";
-  }
+const connectorSummary = (status, error, loaded) => {
   if (error) return "Degraded";
-  return "Checking";
+  if (!loaded) return "Checking";
+  const connectors = status?.connectors && typeof status.connectors === "object" ? status.connectors : status;
+  if (!connectors || typeof connectors !== "object") return "Unavailable";
+  const connectorList = Object.values(connectors).filter(
+    (connector) => connector && typeof connector === "object" && "enabled" in connector
+  );
+  if (!connectorList.length) return "Unavailable";
+  const enabledConnectors = connectorList.filter((connector) => connector.enabled !== false);
+  if (!enabledConnectors.length) return "Disabled";
+  const configuredCount = enabledConnectors.filter((connector) => connector.credentials_configured === true).length;
+  if (configuredCount === enabledConnectors.length) return "Connected";
+  if (configuredCount > 0) return "Partial";
+  return "Needs Setup";
 };
 
 const buildActionHints = (action) => {
@@ -140,6 +148,7 @@ const MaskedAgentId = ({ value }) => {
 
 export default function Actions() {
   const resizeRef = useRef(null);
+  const executionPlanRef = useRef(null);
   const [actions, setActions] = useState([]);
   const [actionSearch, setActionSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
@@ -154,6 +163,7 @@ export default function Actions() {
   const [targetAgentIds, setTargetAgentIds] = useState([]);
   const [connectorStatus, setConnectorStatus] = useState(null);
   const [connectorError, setConnectorError] = useState("");
+  const [connectorLoaded, setConnectorLoaded] = useState(false);
   const [isActionRunning, setIsActionRunning] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     if (typeof window === "undefined") return DEFAULT_ACTIONS_SIDEBAR_WIDTH;
@@ -235,7 +245,7 @@ export default function Actions() {
     );
   }, [selectedAction, targetAgentIds, actionId, actionInputs, effectiveJustification]);
 
-  const connectorLabel = connectorSummary(connectorStatus, connectorError);
+  const connectorLabel = connectorSummary(connectorStatus, connectorError, connectorLoaded);
   const connectorTone = statusToneFromText(connectorStatus?.status || connectorError || connectorLabel);
   const actionStatusTone = statusToneFromText(actionStatus);
   const missingRequiredInput = actionInputsList.some((field) => field.required && !String(actionInputs?.[field.name] ?? "").trim());
@@ -282,6 +292,8 @@ export default function Actions() {
     } catch (error) {
       setConnectorStatus(null);
       setConnectorError(error?.response?.data?.detail || error?.message || "Connector status unavailable");
+    } finally {
+      setConnectorLoaded(true);
     }
   }, []);
 
@@ -348,6 +360,11 @@ export default function Actions() {
     if (!nextId) return;
     setActionId(nextId);
     setActionStatus("");
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        executionPlanRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
   }, []);
 
   const handleToggleAgent = useCallback((agentId) => {
@@ -419,7 +436,7 @@ export default function Actions() {
           <h2>Actions Workspace</h2>
           <p className="muted">Select a response action, target the right agents, and dispatch without leaving the console shell.</p>
         </div>
-        <div className="page-actions">
+        <div className="page-actions actions-header-actions">
           <span className={`status-pill ${connectorTone}`}>Connector {connectorLabel}</span>
           <button type="button" className="btn secondary" onClick={() => void loadConnectorStatus()}>
             Refresh Connector
@@ -474,35 +491,31 @@ export default function Actions() {
             </select>
           </div>
           <div className="meta-line">{filteredActions.length} visible actions. Drag the divider to resize the catalog.</div>
-          <div className="table-scroll actions-catalog-scroll">
-            <table className="table compact readable actions-catalog-table">
-              <thead>
-                <tr>
-                  <th>Action</th>
-                  <th>Category</th>
-                  <th>ID</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredActions.length ? filteredActions.map((action) => {
+          <div className="actions-catalog-scroll">
+            {filteredActions.length ? (
+              <div className="actions-catalog-list">
+                {filteredActions.map((action) => {
                   const selected = String(action?.id || "") === String(actionId);
                   return (
-                    <tr key={action.id} className={`clickable${selected ? " selected" : ""}`} onClick={() => handleActionSelect(action)}>
-                      <td>
-                        <div className="actions-row-name">{actionLabel(action)}</div>
-                        <div className="meta-line">{toDisplay(action?.description, "No description available.")}</div>
-                      </td>
-                      <td>{actionCategory(action)}</td>
-                      <td><code>{String(action?.id || "-")}</code></td>
-                    </tr>
+                    <button
+                      key={String(action?.id || actionLabel(action))}
+                      type="button"
+                      className={`actions-catalog-item${selected ? " selected" : ""}`}
+                      onClick={() => handleActionSelect(action)}
+                    >
+                      <div className="actions-catalog-item-title">{actionLabel(action)}</div>
+                      <div className="actions-catalog-item-desc">{toDisplay(action?.description, "No description available.")}</div>
+                      <div className="actions-catalog-item-meta">
+                        <span className="actions-catalog-item-category">{actionCategory(action)}</span>
+                        <code>{String(action?.id || "-")}</code>
+                      </div>
+                    </button>
                   );
-                }) : (
-                  <tr>
-                    <td colSpan={3}><div className="empty-state">No actions match the current filters.</div></td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                })}
+              </div>
+            ) : (
+              <div className="empty-state">No actions match the current filters.</div>
+            )}
           </div>
         </div>
 
@@ -584,7 +597,7 @@ export default function Actions() {
               </div>
             </div>
 
-            <div className="card">
+            <div ref={executionPlanRef} className="card">
               <div className="card-header">
                 <div>
                   <h3>Execution Plan</h3>
@@ -668,33 +681,6 @@ export default function Actions() {
                 <summary>View Technical Payload</summary>
                 <pre className="code-block">{payloadPreview || "Select an action to generate the request payload preview."}</pre>
               </details>
-            </div>
-
-            <div className="card">
-              <div className="card-header">
-                <div>
-                  <h3>Connector Health</h3>
-                  <p className="muted">The workspace stays operational even when connector status is still being resolved.</p>
-                </div>
-              </div>
-              <div className="actions-help-list">
-                <div className="list-item split readable">
-                  <div className="stack-col gap-6">
-                    <div className="mission-label">Connector State</div>
-                    <div className="actions-row-name">{connectorLabel}</div>
-                    <div className="meta-line">{connectorError || toDisplay(connectorStatus?.message || connectorStatus?.detail, "Status loaded from the connector health endpoint.")}</div>
-                  </div>
-                  <span className={`status-pill ${connectorTone}`}>{connectorLabel}</span>
-                </div>
-                <div className="list-item readable">
-                  <div className="mission-label">Workspace Notes</div>
-                  <div className="meta-line">All tables expand fluidly with the shell. No fixed-position search bars or page-local shell chrome are used here anymore.</div>
-                </div>
-                <div className="list-item readable">
-                  <div className="mission-label">Execution Routing</div>
-                  <div className="meta-line">Dispatch continues to use the existing backend API contract with <code>agent_ids</code>, <code>action_id</code>, <code>args</code>, and <code>justification</code>.</div>
-                </div>
-              </div>
             </div>
           </div>
 

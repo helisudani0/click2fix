@@ -4,6 +4,7 @@ import api from "../api/client";
 import { executionSocket } from "../api/socket";
 import { getAlerts, retryFailedExecution } from "../api/wazuh";
 import RelativeTimestamp from "./RelativeTimestamp";
+import Pager from "./Pager";
 import { nowUtcIso, parseWazuhTimestamp } from "../utils/time";
 import { buildHumanReadableOutput, normalizeOutputText } from "../utils/output";
 
@@ -17,6 +18,11 @@ const UPDATE_ACTION_IDS = new Set([
 ]);
 const SCAN_ACTION_IDS = new Set(["ioc-scan", "toc-scan", "yara-scan", "collect-forensics", "collect-memory", "malware-scan", "threat-hunt-persistence"]);
 const FLEET_TARGET_IDS = new Set(["all", "*", "fleet", "all-active"]);
+const MAX_STREAM_EVENTS = 600;
+const MAX_RENDERED_EVENTS = 180;
+const MAX_STEP_OUTPUT_CHARS = 16000;
+const TARGET_LOG_BUFFER_FLUSH_MS = 250;
+const TARGET_LOG_MAX_LINES = 800;
 
 const getExecutionDetailRequest = (executionId) => api.get(`/executions/${executionId}`);
 
@@ -51,18 +57,23 @@ const resolveTargetStatus = (target, isUpdateAction) => {
 };
 
 const normalizeStep = (row) => {
+  const clamp = (value) => {
+    const text = String(value || "");
+    if (text.length <= MAX_STEP_OUTPUT_CHARS) return text;
+    return `...[truncated ${text.length - MAX_STEP_OUTPUT_CHARS} chars]\n${text.slice(-MAX_STEP_OUTPUT_CHARS)}`;
+  };
   if (Array.isArray(row)) {
     return {
       step: row[0],
-      stdout: row[1],
-      stderr: row[2],
+      stdout: clamp(row[1]),
+      stderr: clamp(row[2]),
       status: row[3],
     };
   }
   return {
     step: row?.step || "step",
-    stdout: row?.stdout || "",
-    stderr: row?.stderr || "",
+    stdout: clamp(row?.stdout),
+    stderr: clamp(row?.stderr),
     status: row?.status || "UNKNOWN",
   };
 };
@@ -954,11 +965,30 @@ export default function ExecutionStream({ executionId }) {
   const [evidenceAlerts, setEvidenceAlerts] = useState([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState("");
+  const [evidencePage, setEvidencePage] = useState(1);
+  const [evidencePageSize, setEvidencePageSize] = useState(10);
   const [controlBusy, setControlBusy] = useState(false);
   const [retryBusy, setRetryBusy] = useState(false);
   const [controlError, setControlError] = useState("");
   const [controlMessage, setControlMessage] = useState("");
   const autoStreamRef = useRef(null);
+  const eventSeqRef = useRef(0);
+
+  const toStreamEvent = (row) => {
+    eventSeqRef.current += 1;
+    return {
+      ...normalizeStep(row),
+      _event_id: eventSeqRef.current,
+    };
+  };
+
+  const appendEvent = (row) => {
+    setEvents((prev) => {
+      const next = [...prev, toStreamEvent(row)];
+      if (next.length <= MAX_STREAM_EVENTS) return next;
+      return next.slice(next.length - MAX_STREAM_EVENTS);
+    });
+  };
 
   useEffect(() => {
     if (!executionId) return;
@@ -967,11 +997,15 @@ export default function ExecutionStream({ executionId }) {
     setControlError("");
     setControlMessage("");
     autoStreamRef.current = null;
+    eventSeqRef.current = 0;
     getExecutionDetailRequest(executionId)
       .then((res) => {
         const payload = res.data || {};
         const items = Array.isArray(payload.steps) ? payload.steps : [];
-        setEvents(items.map(normalizeStep));
+        const normalizedItems = items
+          .map((item) => toStreamEvent(item))
+          .slice(-MAX_STREAM_EVENTS);
+        setEvents(normalizedItems);
         const rawTargets = Array.isArray(payload.targets) ? payload.targets : [];
         const normalizedTargets = rawTargets.map(normalizeTarget);
         setTargets(normalizedTargets);
@@ -1014,7 +1048,7 @@ export default function ExecutionStream({ executionId }) {
     let cancelled = false;
     setEvidenceLoading(true);
 
-    getAlerts("", 25, {
+    getAlerts("", 250, {
       agentId: selectedTargetId,
       agentOnly: true,
       start: startedAt.toISOString(),
@@ -1043,17 +1077,66 @@ export default function ExecutionStream({ executionId }) {
   }, [executionId, meta?.execution, selectedTargetId]);
 
   useEffect(() => {
+    setEvidencePage(1);
+  }, [selectedTargetId, evidencePageSize, evidenceAlerts.length]);
+
+  useEffect(() => {
     if (!executionId || !streamEnabled) return;
 
     let activeSocket = null;
     let closedByClient = false;
     let reconnectTimer = null;
     let reconnectAttempts = 0;
+    let targetLogFlushTimer = null;
+    const targetLogBuffer = new Map();
 
     const clearReconnectTimer = () => {
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
+      }
+    };
+
+    const flushTargetLogs = () => {
+      targetLogFlushTimer = null;
+      if (!targetLogBuffer.size) return;
+      const buffered = Array.from(targetLogBuffer.entries());
+      targetLogBuffer.clear();
+      setTargets((prev) => {
+        let next = Array.isArray(prev) ? [...prev] : [];
+        buffered.forEach(([agentId, chunk]) => {
+          const index = next.findIndex((target) => target.agent_id === agentId);
+          const existing = index >= 0 ? next[index] : null;
+          const safeChunk = String(chunk || "").trim();
+          if (!safeChunk) return;
+          const baseStdout = existing?.stdout ? `${existing.stdout}\n${safeChunk}` : safeChunk;
+          const lines = baseStdout.split(/\r?\n/);
+          const trimmedStdout = lines.length > TARGET_LOG_MAX_LINES
+            ? lines.slice(lines.length - TARGET_LOG_MAX_LINES).join("\n")
+            : baseStdout;
+          const updated = {
+            ...(existing || {}),
+            agent_id: agentId,
+            stdout: trimmedStdout,
+          };
+          if (index >= 0) next[index] = updated;
+          else next = [updated, ...next];
+        });
+        return next;
+      });
+    };
+
+    const queueTargetLog = (agentId, chunk) => {
+      const normalizedAgent = String(agentId || "").trim();
+      const normalizedChunk = String(chunk || "").trim();
+      if (!normalizedAgent || !normalizedChunk) return;
+      const current = targetLogBuffer.get(normalizedAgent);
+      targetLogBuffer.set(
+        normalizedAgent,
+        current ? `${current}\n${normalizedChunk}` : normalizedChunk
+      );
+      if (!targetLogFlushTimer) {
+        targetLogFlushTimer = setTimeout(flushTargetLogs, TARGET_LOG_BUFFER_FLUSH_MS);
       }
     };
 
@@ -1069,7 +1152,7 @@ export default function ExecutionStream({ executionId }) {
         try {
           const msg = JSON.parse(e.data);
           if (msg && typeof msg === "object" && msg.type === "heartbeat") return;
-          setEvents((prev) => [...prev, normalizeStep(msg)]);
+          appendEvent(msg);
           if (msg && typeof msg === "object" && msg.type === "execution_progress") {
             let progress = null;
             try {
@@ -1124,6 +1207,7 @@ export default function ExecutionStream({ executionId }) {
             const agentId = msg.step.split(":", 2)[1] || "";
             if (!agentId) return;
             const ok = String(msg.status || "").toUpperCase() === "SUCCESS";
+            targetLogBuffer.delete(agentId);
             setTargets((prev) => {
               const existing = prev.find((t) => t.agent_id === agentId);
               const updated = {
@@ -1147,19 +1231,7 @@ export default function ExecutionStream({ executionId }) {
             const agentId = msg.step.split(":", 2)[1] || "";
             const chunk = String(msg.stdout || "");
             if (!agentId || !chunk) return;
-            setTargets((prev) => {
-              const existing = prev.find((t) => t.agent_id === agentId);
-              const base = existing?.stdout ? `${existing.stdout}\n${chunk}` : chunk;
-              const lines = base.split(/\r?\n/);
-              const trimmed = lines.length > 800 ? lines.slice(-800).join("\n") : base;
-              const updated = {
-                ...(existing || {}),
-                agent_id: agentId,
-                stdout: trimmed,
-              };
-              if (!existing) return [updated, ...prev];
-              return prev.map((t) => (t.agent_id === agentId ? updated : t));
-            });
+            queueTargetLog(agentId, chunk);
           }
         } catch {
           // Ignore malformed stream messages.
@@ -1194,6 +1266,11 @@ export default function ExecutionStream({ executionId }) {
     return () => {
       closedByClient = true;
       clearReconnectTimer();
+      if (targetLogFlushTimer) {
+        clearTimeout(targetLogFlushTimer);
+        targetLogFlushTimer = null;
+      }
+      targetLogBuffer.clear();
       if (activeSocket && activeSocket.readyState <= WebSocket.OPEN) {
         activeSocket.close(1000, "stream disabled");
       }
@@ -1266,6 +1343,14 @@ export default function ExecutionStream({ executionId }) {
     () => buildShellPrefill(execution, commandMeta, selectedTarget),
     [execution, commandMeta, selectedTarget]
   );
+  const pagedEvidenceAlerts = useMemo(() => {
+    const start = (Math.max(1, evidencePage) - 1) * Math.max(1, evidencePageSize);
+    return evidenceAlerts.slice(start, start + Math.max(1, evidencePageSize));
+  }, [evidenceAlerts, evidencePage, evidencePageSize]);
+  const visibleEvents = useMemo(() => {
+    if (events.length <= MAX_RENDERED_EVENTS) return events;
+    return events.slice(events.length - MAX_RENDERED_EVENTS);
+  }, [events]);
 
   const endpointIssues = useMemo(
     () => (targets || [])
@@ -1346,15 +1431,12 @@ export default function ExecutionStream({ executionId }) {
           };
         });
       }
-      setEvents((prev) => [
-        ...prev,
-        normalizeStep({
-          step: "execution_control",
-          status: "SUCCESS",
-          stdout: `operator command=${normalized}`,
-          stderr: "",
-        }),
-      ]);
+      appendEvent({
+        step: "execution_control",
+        status: "SUCCESS",
+        stdout: `operator command=${normalized}`,
+        stderr: "",
+      });
       setControlMessage(
         normalized === "kill"
           ? "Kill command sent."
@@ -1365,15 +1447,12 @@ export default function ExecutionStream({ executionId }) {
     } catch (err) {
       const message = err.response?.data?.detail || err.message || "Failed to control execution";
       setControlError(String(message));
-      setEvents((prev) => [
-        ...prev,
-        normalizeStep({
-          step: "execution_control",
-          status: "FAILED",
-          stdout: "",
-          stderr: String(message),
-        }),
-      ]);
+      appendEvent({
+        step: "execution_control",
+        status: "FAILED",
+        stdout: "",
+        stderr: String(message),
+      });
     } finally {
       setControlBusy(false);
     }
@@ -1838,43 +1917,6 @@ export default function ExecutionStream({ executionId }) {
 		                    ) : null}
 		                  </div>
 		                ) : null}
-			                <div className="mt-12">
-			                  <div className="muted">Related Alerts (Since Execution Start)</div>
-	                  {evidenceLoading ? (
-	                    <div className="empty-state">Loading alerts...</div>
-	                  ) : evidenceError ? (
-	                    <div className="empty-state">{evidenceError}</div>
-	                  ) : evidenceAlerts.length === 0 ? (
-	                    <div className="meta-line">No alerts observed in this window.</div>
-		                  ) : (
-                    <div className="table-scroll h-240 mt-8 execution-related-alerts-scroll">
-                      <table className="table compact readable execution-related-alerts-table">
-	                        <thead>
-	                          <tr>
-	                            <th>ID</th>
-	                            <th>Rule</th>
-	                            <th>Sev</th>
-	                            <th>Time</th>
-	                          </tr>
-	                        </thead>
-	                        <tbody>
-	                          {evidenceAlerts.map((a) => (
-	                            <tr key={`ev-${executionId}-${selectedTarget.agent_id}-${a.id}`}>
-	                              <td>{a.id}</td>
-		                              <td className="ws-normal">{a.rule}</td>
-		                              <td>
-	                                <span className={`status-pill ${severityClass(a.level)}`}>
-	                                  {a.level}
-	                                </span>
-	                              </td>
-	                              <td><RelativeTimestamp value={a.timestampRaw} /></td>
-	                            </tr>
-	                          ))}
-	                        </tbody>
-	                      </table>
-	                    </div>
-	                  )}
-	                </div>
 		              </div>
 		              <div className="list-item readable">
 		                <div className="muted">Clean Output (Human-readable)</div>
@@ -1885,6 +1927,57 @@ export default function ExecutionStream({ executionId }) {
 		                    </button>
 		                  </div>
 		                ) : null}
+		                <div className="mt-12">
+		                  <div className="muted">Related Alerts (Since Execution Start)</div>
+	                  {evidenceLoading ? (
+	                    <div className="empty-state">Loading alerts...</div>
+	                  ) : evidenceError ? (
+	                    <div className="empty-state">{evidenceError}</div>
+	                  ) : evidenceAlerts.length === 0 ? (
+	                    <div className="meta-line">No alerts observed in this window.</div>
+		                  ) : (
+                    <>
+                      <div className="table-scroll h-240 mt-8 execution-related-alerts-scroll">
+                        <table className="table compact readable execution-related-alerts-table">
+	                          <thead>
+	                            <tr>
+	                              <th>ID</th>
+	                              <th>Rule</th>
+	                              <th>Sev</th>
+	                              <th>Time</th>
+	                            </tr>
+	                          </thead>
+	                          <tbody>
+	                            {pagedEvidenceAlerts.map((a) => (
+	                              <tr key={`ev-${executionId}-${selectedTarget.agent_id}-${a.id}`}>
+	                                <td>{a.id}</td>
+		                                <td className="ws-normal">{a.rule}</td>
+		                                <td>
+	                                  <span className={`status-pill ${severityClass(a.level)}`}>
+	                                    {a.level}
+	                                  </span>
+	                                </td>
+	                                <td><RelativeTimestamp value={a.timestampRaw} /></td>
+	                              </tr>
+	                            ))}
+	                          </tbody>
+	                        </table>
+	                      </div>
+                      <Pager
+                        total={evidenceAlerts.length}
+                        page={evidencePage}
+                        pageSize={evidencePageSize}
+                        onPageChange={setEvidencePage}
+                        onPageSizeChange={(size) => {
+                          setEvidencePageSize(size);
+                          setEvidencePage(1);
+                        }}
+                        pageSizeOptions={[10, 25, 50]}
+                        label="related alerts"
+                      />
+                    </>
+	                  )}
+	                </div>
 		                <pre className="code-block">{selectedTargetCleanOutput || "-"}</pre>
 		                <div className="muted mt-10">Raw Output</div>
 		                <div className="muted">stdout</div>
@@ -1907,10 +2000,15 @@ export default function ExecutionStream({ executionId }) {
               <p className="muted">Execution trace and connector output.</p>
             </div>
           </div>
+          {events.length > MAX_RENDERED_EVENTS ? (
+            <div className="meta-line ws-normal">
+              Showing latest {MAX_RENDERED_EVENTS} events out of {events.length}. Older events are retained but collapsed for performance.
+            </div>
+          ) : null}
           <div className="list-scroll tall">
             <div className="list">
-              {events.map((e, i) => (
-                <div key={`${executionId}-${e.step}-${i}`} className="list-item readable">
+              {visibleEvents.map((e, i) => (
+                <div key={`${executionId}-${e._event_id || `${e.step}-${i}`}`} className="list-item readable">
                   <div className="page-actions justify-between">
                     <strong>{e.step || "-"}</strong>
                     <div className="page-actions">

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   executePlaybook,
   generatePlaybook,
@@ -7,11 +8,11 @@ import {
   getAgentGroups,
   getPlaybook,
   getPlaybooks,
+  getSystemAiConfig,
   requestApproval,
   savePlaybook,
   seedDefaultPlaybooks,
 } from "../api/wazuh";
-import ExecutionStream from "../components/ExecutionStream";
 import PlaybookEditor from "../components/PlaybookEditor";
 import { formatApiError } from "../utils/httpErrors";
 
@@ -137,12 +138,14 @@ const parseExcludeIds = (value) =>
   );
 
 export default function Playbooks() {
+  const navigate = useNavigate();
   const [playbooks, setPlaybooks] = useState([]);
   const [actions, setActions] = useState([]);
   const [agents, setAgents] = useState([]);
   const [groups, setGroups] = useState([]);
   const [draft, setDraft] = useState(blankPlaybook());
   const [selectedPlaybookName, setSelectedPlaybookName] = useState("");
+  const [editorOpened, setEditorOpened] = useState(false);
 
   const [alertId, setAlertId] = useState("");
   const [caseId, setCaseId] = useState("");
@@ -159,17 +162,29 @@ export default function Playbooks() {
   const [dryRun, setDryRun] = useState(false);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
-  const [activeExecutionId, setActiveExecutionId] = useState(null);
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiDisabledReason, setAiDisabledReason] = useState(
+    "AI is disabled. Enable it in Org Admin / Platform AI Configuration."
+  );
+  const builderRef = useRef(null);
+
+  const openBuilder = useCallback(() => {
+    setEditorOpened(true);
+    window.setTimeout(() => {
+      builderRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 40);
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
       await seedDefaultPlaybooks({ force: false }).catch(() => null);
-      const [playbookRes, actionRes, agentRes, groupRes] = await Promise.all([
+      const [playbookRes, actionRes, agentRes, groupRes, aiCfgRes] = await Promise.all([
         getPlaybooks(),
         getActions().catch(() => ({ data: [] })),
         getAgents(undefined, { limit: 5000 }).catch(() => ({ data: [] })),
         getAgentGroups().catch(() => ({ data: [] })),
+        getSystemAiConfig().catch(() => ({ data: { ai_config: { enabled: false } } })),
       ]);
       setPlaybooks(Array.isArray(playbookRes?.data) ? playbookRes.data : []);
       setActions(mergePlaybookActions(Array.isArray(actionRes?.data) ? actionRes.data : []));
@@ -193,6 +208,17 @@ export default function Playbooks() {
           .map((group) => String(group.name || group.id || group).trim())
           .filter(Boolean)
       );
+      const aiConfig = aiCfgRes?.data?.ai_config || {};
+      const enabled = Boolean(aiConfig?.enabled);
+      setAiEnabled(enabled);
+      setAiDisabledReason(
+        enabled
+          ? ""
+          : "AI is disabled. Enable it in Org Admin / Platform AI Configuration."
+      );
+      if (!enabled) {
+        setUseAiGeneration(false);
+      }
     } catch (err) {
       setStatus(formatApiError(err, "Failed to refresh playbook catalogs."));
     } finally {
@@ -274,7 +300,7 @@ export default function Playbooks() {
       }
       setDraft(normalized);
       setSelectedPlaybookName(name);
-      setActiveExecutionId(null);
+      openBuilder();
       setStatus("Playbook loaded into the editor.");
     } catch (err) {
       setStatus(formatApiError(err, "Failed to load playbook."));
@@ -284,14 +310,17 @@ export default function Playbooks() {
   const handleNewManual = () => {
     setDraft(blankPlaybook());
     setSelectedPlaybookName("");
-    setActiveExecutionId(null);
+    openBuilder();
     setStatus("Manual playbook builder is ready.");
   };
 
   const handleGenerate = async () => {
+    if (useAiGeneration && !aiEnabled) {
+      setStatus(aiDisabledReason || "AI is disabled. Enable it in Org Admin / Platform AI Configuration.");
+      return;
+    }
     setStatus("");
     setSelectedPlaybookName("");
-    setActiveExecutionId(null);
     try {
       const parsedCaseId = Number(caseId);
       const response = await generatePlaybook({
@@ -306,6 +335,7 @@ export default function Playbooks() {
         return;
       }
       setDraft(normalized);
+      openBuilder();
       const agent = normalized.source?.agent_id || "";
       if (agent) {
         setTargetType("agent");
@@ -335,6 +365,10 @@ export default function Playbooks() {
   };
 
   const handleGenerateFromAiGoal = async () => {
+    if (!aiEnabled) {
+      setStatus(aiDisabledReason || "AI is disabled. Enable it in Org Admin / Platform AI Configuration.");
+      return;
+    }
     const prompt = String(aiGoalPrompt || "").trim();
     if (!prompt) {
       setStatus("Describe the playbook goal first, then generate.");
@@ -342,7 +376,6 @@ export default function Playbooks() {
     }
     setStatus("");
     setSelectedPlaybookName("");
-    setActiveExecutionId(null);
     try {
       const response = await generatePlaybook({
         use_ai: true,
@@ -356,6 +389,7 @@ export default function Playbooks() {
         return;
       }
       setDraft(normalized);
+      openBuilder();
       const unmapped = Array.isArray(response?.data?.source?.unmapped_actions)
         ? response.data.source.unmapped_actions.filter(Boolean)
         : [];
@@ -464,17 +498,17 @@ export default function Playbooks() {
         justification: justification || undefined,
       });
       if (response?.data?.dry_run || response?.data?.status === "SIMULATED") {
-        setActiveExecutionId(null);
         setStatus("Playbook simulation completed. Review the resolved plan before live execution.");
         return;
       }
       const executionId = response?.data?.execution_id;
-      setActiveExecutionId(executionId || null);
-      setStatus(
-        executionId
-          ? `Playbook execution submitted (run #${executionId}).`
-          : "Playbook execution submitted."
-      );
+      if (executionId) {
+        navigate(`/executions?run=${encodeURIComponent(String(executionId))}`, {
+          state: { prefillExecutionId: executionId, source: "playbooks" },
+        });
+        return;
+      }
+      setStatus("Playbook execution submitted.");
     } catch (err) {
       setStatus(formatApiError(err, "Failed to execute playbook."));
     }
@@ -505,91 +539,8 @@ export default function Playbooks() {
 
       {status ? <div className="empty-state">{status}</div> : null}
 
-      <div className="grid-2">
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h3>Generate From Alert or Case</h3>
-              <p className="muted">Keep the existing generator, but land the result in the same manual editor.</p>
-            </div>
-          </div>
-          <div className="page-actions">
-            <input
-              className="input"
-              placeholder="Alert ID"
-              value={alertId}
-              onChange={(event) => setAlertId(event.target.value)}
-            />
-            <input
-              className="input"
-              placeholder="Case ID"
-              value={caseId}
-              onChange={(event) => setCaseId(event.target.value)}
-            />
-            <button className="btn" onClick={handleGenerate}>
-              Generate
-            </button>
-          </div>
-          <div className="list mt-10">
-            <div className="list-item readable">
-              <label className="inline-check">
-                <input
-                  type="checkbox"
-                  checked={useAiGeneration}
-                  onChange={(event) => setUseAiGeneration(event.target.checked)}
-                />
-                <span>Use AI Assist for higher-precision steps</span>
-              </label>
-            </div>
-            {useAiGeneration ? (
-              <div className="list-item readable">
-                <div className="muted">AI Instructions (optional)</div>
-                <textarea
-                  className="input mt-8"
-                  rows={3}
-                  value={aiPrompt}
-                  onChange={(event) => setAiPrompt(event.target.value)}
-                  placeholder="Example: prioritize containment first, keep user impact low, avoid reboot actions."
-                />
-                <div className="meta-line mt-8">
-                  AI setup: use Org Admin / Platform AI Configuration, or set `C2F_AI_FEATURES_ENABLED=true` with `C2F_LLM_API_KEY` in `.env.appliance`.
-                </div>
-              </div>
-            ) : null}
-          </div>
-          <div className="meta-line">
-            Generated playbooks are editable. You can still save, modify, or replace every step before execution.
-          </div>
-
-          <div className="list mt-12">
-            <div className="list-item readable">
-              <div className="muted">AI Playbook Generator</div>
-              <div className="meta-line mt-8">
-                Describe the response plan you need. AI will generate steps into the same manual editor.
-              </div>
-              <textarea
-                className="input mt-8"
-                rows={4}
-                value={aiGoalPrompt}
-                onChange={(event) => setAiGoalPrompt(event.target.value)}
-                placeholder="Example: isolate endpoint, block suspicious outbound IPs, collect memory+forensics, then run SCA rescan."
-              />
-              <div className="page-actions mt-10">
-                <button className="btn" onClick={handleGenerateFromAiGoal}>
-                  Generate From AI Goal
-                </button>
-              </div>
-              <div className="meta-line mt-8">
-                AI setup: use Org Admin / Platform AI Configuration, or set `C2F_AI_FEATURES_ENABLED=true` with `C2F_LLM_API_KEY` in `.env.appliance`.
-              </div>
-              <div className="meta-line mt-8">
-                Prompt mode can include non-catalog action IDs in JSON when needed. Map or edit those steps before execution.
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
+      <div className="grid-2 playbooks-source-grid">
+        <div className="card playbooks-saved-card">
           <div className="card-header">
             <div>
               <h3>Saved Playbooks</h3>
@@ -623,36 +574,172 @@ export default function Playbooks() {
             </div>
           )}
         </div>
-      </div>
 
-      <div className="grid-2">
-        <div className="card">
+        <div className="card playbooks-generate-card">
           <div className="card-header">
             <div>
-              <h3>Playbook Builder</h3>
-              <p className="muted">Manually author the workflow or edit a generated/saved playbook step by step.</p>
+              <h3>Generate From Alert or Case</h3>
+              <p className="muted">Keep the existing generator, but land the result in the same manual editor.</p>
             </div>
           </div>
-          <PlaybookEditor playbook={draft} onChange={setDraft} actions={actions} />
-        </div>
 
-        <div className="stack-col gap-18">
+          <div className="playbook-generate-row">
+            <div className="playbook-generate-fields">
+              <input
+                className="input"
+                placeholder="Alert ID"
+                value={alertId}
+                onChange={(event) => setAlertId(event.target.value)}
+              />
+              <input
+                className="input"
+                placeholder="Case ID"
+                value={caseId}
+                onChange={(event) => setCaseId(event.target.value)}
+              />
+            </div>
+            <div className="playbook-generate-action">
+              <button className="btn" onClick={handleGenerate}>
+                Generate
+              </button>
+            </div>
+          </div>
+
+          <div className="list mt-10">
+            <div className="list-item readable">
+              <label className="inline-check">
+                <input
+                  type="checkbox"
+                  checked={useAiGeneration}
+                  disabled={!aiEnabled}
+                  onChange={(event) => setUseAiGeneration(event.target.checked)}
+                />
+                <span>Use AI Assist for higher-precision steps</span>
+              </label>
+            </div>
+            {useAiGeneration ? (
+              <div className="list-item readable">
+                <div className="muted">AI Instructions (optional)</div>
+                <textarea
+                  className="input mt-8"
+                  rows={3}
+                  value={aiPrompt}
+                  disabled={!aiEnabled}
+                  onChange={(event) => setAiPrompt(event.target.value)}
+                  placeholder="Example: prioritize containment first, keep user impact low, avoid reboot actions."
+                />
+                <div className="meta-line mt-8">
+                  {aiEnabled
+                    ? "AI is enabled from Org Admin / Platform AI Configuration."
+                    : (aiDisabledReason || "AI is disabled. Enable it in Org Admin / Platform AI Configuration.")}
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <div className="meta-line">
+            Generated playbooks are editable. You can still save, modify, or replace every step before execution.
+          </div>
+        </div>
+      </div>
+
+      <div className="card playbooks-ai-card">
+        <div className="list-item readable">
+          <div className="muted">AI Playbook Generator</div>
+          <div className="meta-line mt-8">
+            Describe the response plan you need. AI will generate steps into the same manual editor.
+          </div>
+          <textarea
+            className="input mt-8"
+            rows={4}
+            value={aiGoalPrompt}
+            disabled={!aiEnabled}
+            onChange={(event) => setAiGoalPrompt(event.target.value)}
+            placeholder="Example: isolate endpoint, block suspicious outbound IPs, collect memory+forensics, then run SCA rescan."
+          />
+          <div className="page-actions mt-10">
+            <button className="btn" onClick={handleGenerateFromAiGoal} disabled={!aiEnabled}>
+              Generate From AI Goal
+            </button>
+          </div>
+          <div className="meta-line mt-8">
+            {aiEnabled
+              ? "AI is enabled from Org Admin / Platform AI Configuration."
+              : (aiDisabledReason || "AI is disabled. Enable it in Org Admin / Platform AI Configuration.")}
+          </div>
+          <div className="meta-line mt-8">
+            Prompt mode can include non-catalog action IDs in JSON when needed. Map or edit those steps before execution.
+          </div>
+        </div>
+      </div>
+
+      {editorOpened ? (
+        <div className="playbook-builder-stack" ref={builderRef}>
           <div className="card">
             <div className="card-header">
               <div>
-                <h3>Execution Targeting</h3>
-                <p className="muted">Use the same single, multi, group, and fleet targeting model used elsewhere in the console.</p>
+                <h3>Playbook Builder</h3>
+                <p className="muted">Manually author the workflow or edit a generated/saved playbook step by step.</p>
+              </div>
+            </div>
+            <PlaybookEditor playbook={draft} onChange={setDraft} actions={actions} />
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h3>Playbook JSON Preview</h3>
+                <p className="muted">Raw payload that will be saved or executed.</p>
+              </div>
+            </div>
+            <pre className="code-block">{playbookJson}</pre>
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h3>Save and Execute</h3>
+                <p className="muted">Save draft first, choose target scope, then request approval or execute live.</p>
+              </div>
+            </div>
+
+            <div className="stat-grid">
+              <div className="stat-card">
+                <div className="stat-label">Steps</div>
+                <div className="stat-value">{Array.isArray(draft?.steps) ? draft.steps.length : 0}</div>
+                <div className="stat-sub">{draft?.name || "manual-playbook"}</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Targets</div>
+                <div className="stat-value">{previewTargets.length}</div>
+                <div className="stat-sub">{toDisplay(targetType)}</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Source</div>
+                <div className="stat-value">{draft?.source?.mode === "manual" ? "Manual" : "Generated"}</div>
+                <div className="stat-sub">
+                  Alert {draft?.source?.alert_id || alertId || "n/a"} | Case {draft?.source?.case_id || caseId || "n/a"}
+                </div>
               </div>
             </div>
 
             <div className="list">
               <div className="list-item readable">
-                <div className="muted">Target Scope</div>
+                <div className="muted">1. Save Draft</div>
+                <div className="page-actions mt-8">
+                  <button className="btn secondary" onClick={handleSave}>
+                    Save Playbook
+                  </button>
+                  <span className="meta-line">Persist current builder edits before targeting/execution.</span>
+                </div>
+              </div>
+
+              <div className="list-item readable">
+                <div className="muted">2. Target Scope</div>
                 <div className="page-actions mt-8">
                   <select className="input" value={targetType} onChange={(event) => setTargetType(event.target.value)}>
                     <option value="agent">Single agent</option>
                     <option value="multi">Multiple agents</option>
-                    <option value="group">Agent group</option>
+                    <option value="group">Specific group</option>
                     <option value="fleet">Fleet (all)</option>
                   </select>
                 </div>
@@ -796,38 +883,7 @@ export default function Playbooks() {
                   <div className="meta-line mt-8">Preview limited to the first 120 agents.</div>
                 ) : null}
               </div>
-            </div>
-          </div>
 
-          <div className="card">
-            <div className="card-header">
-              <div>
-                <h3>Save and Execute</h3>
-                <p className="muted">Persist the current draft or send it for approval/execution against the selected scope.</p>
-              </div>
-            </div>
-
-            <div className="stat-grid">
-              <div className="stat-card">
-                <div className="stat-label">Steps</div>
-                <div className="stat-value">{Array.isArray(draft?.steps) ? draft.steps.length : 0}</div>
-                <div className="stat-sub">{draft?.name || "manual-playbook"}</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-label">Targets</div>
-                <div className="stat-value">{previewTargets.length}</div>
-                <div className="stat-sub">{toDisplay(targetType)}</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-label">Source</div>
-                <div className="stat-value">{draft?.source?.mode === "manual" ? "Manual" : "Generated"}</div>
-                <div className="stat-sub">
-                  Alert {draft?.source?.alert_id || alertId || "n/a"} | Case {draft?.source?.case_id || caseId || "n/a"}
-                </div>
-              </div>
-            </div>
-
-            <div className="list">
               <div className="list-item readable">
                 <div className="muted">Justification (optional)</div>
                 <input
@@ -850,9 +906,6 @@ export default function Playbooks() {
             </div>
 
             <div className="page-actions">
-              <button className="btn secondary" onClick={handleSave}>
-                Save Playbook
-              </button>
               <button className="btn secondary" onClick={handleRequestApprovals}>
                 Request Approvals
               </button>
@@ -862,19 +915,11 @@ export default function Playbooks() {
             </div>
           </div>
         </div>
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <h3>Playbook JSON Preview</h3>
-            <p className="muted">Raw payload that will be saved or executed.</p>
-          </div>
+      ) : (
+        <div className="empty-state">
+          Generate from Alert/Case, generate from AI prompt, load a saved playbook, or start a new manual playbook to open the builder.
         </div>
-        <pre className="code-block">{playbookJson}</pre>
-      </div>
-
-      {activeExecutionId ? <ExecutionStream executionId={activeExecutionId} title={`Playbook Run #${activeExecutionId}`} /> : null}
+      )}
     </div>
   );
 }

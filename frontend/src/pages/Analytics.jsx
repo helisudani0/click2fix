@@ -7,6 +7,7 @@ import {
   getHourlyVolume,
   getEventTimeSeriesV2,
   getEventCorrelationV2,
+  getSystemAiConfig,
 } from "../api/wazuh";
 import { formatWazuhTimestamp, parseWazuhTimestamp } from "../utils/time";
 
@@ -65,6 +66,10 @@ export default function Analytics() {
   const [aiInsightPrompt, setAiInsightPrompt] = useState("");
   const [loadingAiInsight, setLoadingAiInsight] = useState(false);
   const [aiInsight, setAiInsight] = useState(null);
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiDisabledReason, setAiDisabledReason] = useState(
+    "AI is disabled. Enable it in Org Admin / Platform AI Configuration."
+  );
 
   const refreshOverview = () => {
     setLoading(true);
@@ -185,10 +190,29 @@ export default function Analytics() {
       .finally(() => setLoadingDataLayer(false));
   };
 
+  const refreshAiAvailability = () => {
+    getSystemAiConfig()
+      .then((response) => {
+        const node = response?.data?.ai_config || {};
+        const enabled = Boolean(node?.enabled);
+        setAiEnabled(enabled);
+        setAiDisabledReason(
+          enabled
+            ? ""
+            : "AI is disabled. Enable it in Org Admin / Platform AI Configuration."
+        );
+      })
+      .catch(() => {
+        setAiEnabled(false);
+        setAiDisabledReason("AI status unavailable. Configure AI in Org Admin / Platform AI Configuration.");
+      });
+  };
+
   useEffect(() => {
     refreshOverview();
     refreshKillChain();
     refreshDataLayer();
+    refreshAiAvailability();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -212,6 +236,15 @@ export default function Analytics() {
   };
 
   const handleAiInsight = () => {
+    if (!aiEnabled) {
+      setAiInsight({
+        mode: "disabled",
+        summary: aiDisabledReason || "AI is disabled. Enable it in Org Admin / Platform AI Configuration.",
+        priority_findings: [],
+        recommended_actions: [],
+      });
+      return;
+    }
     setLoadingAiInsight(true);
     getAnalyticsAiInsights({
       hours: 72,
@@ -389,14 +422,17 @@ export default function Analytics() {
             className="input w-320"
             placeholder="Optional instruction (example: focus on containment)"
             value={aiInsightPrompt}
+            disabled={!aiEnabled}
             onChange={(event) => setAiInsightPrompt(event.target.value)}
           />
-          <button className="btn secondary" onClick={handleAiInsight} disabled={loadingAiInsight}>
+          <button className="btn secondary" onClick={handleAiInsight} disabled={loadingAiInsight || !aiEnabled}>
             {loadingAiInsight ? "Generating..." : "Generate Insight"}
           </button>
         </div>
         <div className="meta-line mb-12">
-          AI setup: use Org Admin / Platform AI Configuration, or set `C2F_AI_FEATURES_ENABLED=true` with `C2F_LLM_API_KEY` in `.env.appliance`.
+          {aiEnabled
+            ? "AI is enabled from Org Admin / Platform AI Configuration."
+            : (aiDisabledReason || "AI is disabled. Enable it in Org Admin / Platform AI Configuration.")}
         </div>
         {!aiInsight ? (
           <div className="empty-state">No AI insight generated yet.</div>

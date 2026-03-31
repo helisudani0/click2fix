@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getExecutions } from "../api/wazuh";
+import { useLocation } from "react-router-dom";
+import { getExecutionDetail, getExecutions } from "../api/wazuh";
 import ExecutionStream from "../components/ExecutionStream";
 import Pager from "../components/Pager";
 import RelativeTimestamp from "../components/RelativeTimestamp";
 import { parseWazuhTimestamp } from "../utils/time";
+
+const EXECUTION_FETCH_LIMIT = 250;
 
 const executionRow = (row) => {
   if (Array.isArray(row)) {
@@ -111,8 +114,10 @@ const summarizeTarget = (value) => {
 };
 
 export default function Executions() {
+  const location = useLocation();
   const [runs, setRuns] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [detailMode, setDetailMode] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [executionSearch, setExecutionSearch] = useState("");
@@ -120,18 +125,26 @@ export default function Executions() {
   const [queuePage, setQueuePage] = useState(1);
   const [queuePageSize, setQueuePageSize] = useState(15);
 
+  const prefillExecutionId = useMemo(() => {
+    const fromState = location?.state?.prefillExecutionId;
+    const fromQuery = new URLSearchParams(location?.search || "").get("run");
+    const raw = fromState ?? fromQuery;
+    const parsed = Number(String(raw || "").trim());
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, [location?.search, location?.state]);
+
   const initialLoadRef = useRef(true);
   const load = useCallback((force = false) => {
     if (initialLoadRef.current) setLoading(true);
-    getExecutions({ limit: 400 }, { force })
+    getExecutions({ limit: EXECUTION_FETCH_LIMIT }, { force })
       .then((r) => {
-        const data = Array.isArray(r.data) ? r.data : [];
+        const data = (Array.isArray(r.data) ? r.data : []).map((row) => executionRow(row));
         setRuns(data);
         setSelected((prev) => {
-          if (prev && data.some((row) => Number(executionRow(row).id) === Number(prev))) {
+          if (prev && data.some((row) => Number(row.id) === Number(prev))) {
             return prev;
           }
-          const first = data.length ? executionRow(data[0]) : null;
+          const first = data.length ? data[0] : null;
           return first?.id || null;
         });
         if (initialLoadRef.current) {
@@ -153,13 +166,68 @@ export default function Executions() {
   }, [load]);
 
   useEffect(() => {
+    if (!prefillExecutionId) return;
+    setExecutionSearch("");
+    setStatusFilter("");
+    setQueuePage(1);
+    setSelected(prefillExecutionId);
+  }, [prefillExecutionId]);
+
+  useEffect(() => {
+    if (!prefillExecutionId) return;
+    let attempts = 0;
+    const maxAttempts = 10;
+    const timer = window.setInterval(() => {
+      attempts += 1;
+      load(true);
+      if (attempts >= maxAttempts) {
+        window.clearInterval(timer);
+      }
+    }, 1200);
+    load(true);
+    return () => window.clearInterval(timer);
+  }, [load, prefillExecutionId]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       load(true);
     }, 8000);
     return () => window.clearInterval(timer);
   }, [load]);
 
-  const parsedRuns = useMemo(() => runs.map((row) => executionRow(row)), [runs]);
+  const parsedRuns = useMemo(() => runs, [runs]);
+
+  useEffect(() => {
+    if (!prefillExecutionId) return;
+    if (!parsedRuns.some((run) => Number(run.id) === Number(prefillExecutionId))) return;
+    setSelected(prefillExecutionId);
+  }, [prefillExecutionId, parsedRuns]);
+
+  useEffect(() => {
+    if (!prefillExecutionId) return;
+    if (parsedRuns.some((run) => Number(run.id) === Number(prefillExecutionId))) return;
+    let active = true;
+    getExecutionDetail(prefillExecutionId)
+      .then((res) => {
+        if (!active) return;
+        const detail = res?.data?.execution;
+        if (!detail || typeof detail !== "object") return;
+        const normalizedDetail = executionRow(detail);
+        setRuns((current) => {
+          if (current.some((row) => Number(row.id) === Number(prefillExecutionId))) {
+            return current;
+          }
+          return [normalizedDetail, ...current];
+        });
+        setSelected(prefillExecutionId);
+      })
+      .catch(() => {
+        // Ignore and wait for the next queue refresh cycle.
+      });
+    return () => {
+      active = false;
+    };
+  }, [parsedRuns, prefillExecutionId]);
 
   const filteredRuns = useMemo(() => {
     const query = executionSearch.trim().toLowerCase();
@@ -191,6 +259,16 @@ export default function Executions() {
     () => filteredRuns.find((run) => Number(run.id) === Number(selected)) || parsedRuns.find((run) => Number(run.id) === Number(selected)) || null,
     [filteredRuns, parsedRuns, selected]
   );
+
+  useEffect(() => {
+    if (!selectedRun) setDetailMode(false);
+  }, [selectedRun]);
+
+  useEffect(() => {
+    if (!prefillExecutionId || !selectedRun) return;
+    if (Number(selectedRun.id) !== Number(prefillExecutionId)) return;
+    setDetailMode(true);
+  }, [prefillExecutionId, selectedRun]);
 
   const summary = useMemo(() => {
     const totals = {
@@ -270,158 +348,160 @@ export default function Executions() {
         </div>
       </div>
 
-      <div className="ticketing-layout">
-        <div className="ticketing-main">
-          <div className="card ticketing-table-card">
-            <div className="card-header">
-              <div>
-                <h3>Execution Queue</h3>
-                <p className="muted">Select a run for live stream and forensic detail.</p>
-              </div>
-              <div className="page-actions">
-                <span className="muted">{filteredRuns.length} visible runs</span>
-              </div>
+      {detailMode && selectedRun ? (
+        <div className="card ticketing-detail-full">
+          <div className="ticketing-detail-header">
+            <div>
+              <h3>Execution #{selectedRun.id}</h3>
+              <p className="muted">{selectedRun.action || "-"} | {selectedRun.agent || "-"}</p>
             </div>
-            <div className="table-scroll execution-queue-scroll">
-              <table className="table compact readable execution-queue-table">
-                <thead>
-                  <tr>
-                    <th className="execution-col-id">ID</th>
-                    <th className="execution-col-status">Status</th>
-                    <th className="execution-col-action">Action</th>
-                    <th className="execution-col-target">Target</th>
-                    <th className="execution-col-approver">Approved By</th>
-                    <th className="execution-col-time">Started</th>
-                    <th className="execution-col-time">Finished</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRuns.length === 0 ? (
-                    <tr>
-                      <td colSpan="7" className="text-center">
-                        No executions found.
-                      </td>
-                    </tr>
-                  ) : (
-                    pagedRuns.map((run) => {
-                      const summaryState = progressSummary(run);
-                      const lagging = isLaggingRun(run);
-                      return (
-                        <tr
-                          key={run.id}
-                          onClick={() => {
-                            setSelected(run.id);
-                          }}
-                          className={`clickable ${Number(selected) === Number(run.id) ? "selected" : ""}`}
-                        >
-                          <td className="execution-col-id">{run.id}</td>
-                          <td className="execution-col-status">
-                            <div className="execution-status-stack">
-                              <span className={`status-pill ${statusTone(run.status)}${lagging ? " lagging" : ""}`}>{run.status || "-"}</span>
-                              {summaryState.show ? (
-                                <div className="fraction-progress">
-                                  <div className="fraction-progress-bar">
-                                    <span className="fraction-progress-segment success" style={{ width: `${summaryState.total ? (summaryState.success / summaryState.total) * 100 : 0}%` }} />
-                                    <span className="fraction-progress-segment failed" style={{ width: `${summaryState.total ? (summaryState.failed / summaryState.total) * 100 : 0}%` }} />
-                                    <span className="fraction-progress-segment remaining" style={{ width: `${summaryState.total ? (summaryState.remaining / summaryState.total) * 100 : 0}%` }} />
-                                  </div>
-                                  <div className="fraction-progress-meta">
-                                    <span>{summaryState.label} passed</span>
-                                    <span>{summaryState.percentComplete}% complete</span>
-                                  </div>
-                                </div>
-                              ) : null}
-                              {lagging ? <span className="lag-indicator">Lagging, platform alive</span> : null}
-                            </div>
-                          </td>
-                          <td className="execution-col-action" title={run.action || "-"}>
-                            <span className="execution-cell-text execution-action-text">{run.action || "-"}</span>
-                          </td>
-                          <td className="execution-col-target" title={run.agent || "-"}>
-                            <span className="execution-cell-text execution-target-text">{summarizeTarget(run.agent || "-")}</span>
-                          </td>
-                          <td className="execution-col-approver" title={run.approvedBy || "-"}>
-                            <span className="execution-cell-text">{run.approvedBy || "-"}</span>
-                          </td>
-                          <td className="execution-col-time"><RelativeTimestamp value={run.startedAt} /></td>
-                          <td className="execution-col-time"><RelativeTimestamp value={run.finishedAt} /></td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+            <div className="ticketing-detail-actions">
+              <button className="btn secondary" onClick={() => setDetailMode(false)}>
+                Back to Queue
+              </button>
+              <button className="btn secondary" onClick={() => load(true)}>
+                Refresh
+              </button>
             </div>
-            <Pager
-              total={filteredRuns.length}
-              page={queuePage}
-              pageSize={queuePageSize}
-              onPageChange={setQueuePage}
-              onPageSizeChange={(size) => {
-                setQueuePageSize(size);
-                setQueuePage(1);
-              }}
-              pageSizeOptions={[15, 25, 50]}
-              label="executions"
-            />
           </div>
+          <div className="kv-grid">
+            <div className="kv-row">
+              <span className="kv-key">Execution ID</span>
+              <span className="kv-value">{selectedRun.id}</span>
+            </div>
+            <div className="kv-row">
+              <span className="kv-key">Status</span>
+              <span className="kv-value">
+                <span className={`status-pill ${statusTone(selectedRun.status)}`}>{selectedRun.status || "-"}</span>
+              </span>
+            </div>
+            <div className="kv-row">
+              <span className="kv-key">Action</span>
+              <span className="kv-value">{selectedRun.action || "-"}</span>
+            </div>
+            <div className="kv-row">
+              <span className="kv-key">Target</span>
+              <span className="kv-value">{selectedRun.agent || "-"}</span>
+            </div>
+            <div className="kv-row">
+              <span className="kv-key">Approved By</span>
+              <span className="kv-value">{selectedRun.approvedBy || "-"}</span>
+            </div>
+            <div className="kv-row">
+              <span className="kv-key">Started At</span>
+              <span className="kv-value"><RelativeTimestamp value={selectedRun.startedAt} /></span>
+            </div>
+            <div className="kv-row">
+              <span className="kv-key">Finished At</span>
+              <span className="kv-value"><RelativeTimestamp value={selectedRun.finishedAt} /></span>
+            </div>
+            <div className="kv-row">
+              <span className="kv-key">Runtime</span>
+              <span className="kv-value">{formatDuration(selectedRun.startedAt, selectedRun.finishedAt)}</span>
+            </div>
+          </div>
+          <details className="ticketing-detail-section" open>
+            <summary>Execution Stream</summary>
+            <ExecutionStream executionId={selectedRun.id} />
+          </details>
         </div>
-
-        <aside className="card ticketing-details">
-          {selectedRun ? (
-            <>
-              <div className="ticketing-detail-header">
-                <div>
-                  <h3>Execution #{selectedRun.id}</h3>
-                  <p className="muted">{selectedRun.action || "-"} | {selectedRun.agent || "-"}</p>
-                </div>
-              </div>
-              <div className="kv-grid">
-                <div className="kv-row">
-                  <span className="kv-key">Execution ID</span>
-                  <span className="kv-value">{selectedRun.id}</span>
-                </div>
-                <div className="kv-row">
-                  <span className="kv-key">Status</span>
-                  <span className="kv-value">
-                    <span className={`status-pill ${statusTone(selectedRun.status)}`}>{selectedRun.status || "-"}</span>
-                  </span>
-                </div>
-                <div className="kv-row">
-                  <span className="kv-key">Action</span>
-                  <span className="kv-value">{selectedRun.action || "-"}</span>
-                </div>
-                <div className="kv-row">
-                  <span className="kv-key">Target</span>
-                  <span className="kv-value">{selectedRun.agent || "-"}</span>
-                </div>
-                <div className="kv-row">
-                  <span className="kv-key">Approved By</span>
-                  <span className="kv-value">{selectedRun.approvedBy || "-"}</span>
-                </div>
-                <div className="kv-row">
-                  <span className="kv-key">Started At</span>
-                  <span className="kv-value"><RelativeTimestamp value={selectedRun.startedAt} /></span>
-                </div>
-                <div className="kv-row">
-                  <span className="kv-key">Finished At</span>
-                  <span className="kv-value"><RelativeTimestamp value={selectedRun.finishedAt} /></span>
-                </div>
-                <div className="kv-row">
-                  <span className="kv-key">Runtime</span>
-                  <span className="kv-value">{formatDuration(selectedRun.startedAt, selectedRun.finishedAt)}</span>
-                </div>
-              </div>
-              <details className="ticketing-detail-section" open>
-                <summary>Execution Stream</summary>
-                <ExecutionStream executionId={selectedRun.id} />
-              </details>
-            </>
-          ) : (
-            <div className="empty-state">Select an execution to inspect output and step telemetry.</div>
-          )}
-        </aside>
-      </div>
+      ) : (
+        <div className="card ticketing-table-card">
+          <div className="card-header">
+            <div>
+              <h3>Execution Queue</h3>
+              <p className="muted">Select a run for live stream and forensic detail.</p>
+            </div>
+            <div className="page-actions">
+              <span className="muted">{filteredRuns.length} visible runs</span>
+            </div>
+          </div>
+          <div className="table-scroll execution-queue-scroll">
+            <table className="table compact readable execution-queue-table">
+              <thead>
+                <tr>
+                  <th className="execution-col-id">ID</th>
+                  <th className="execution-col-status">Status</th>
+                  <th className="execution-col-action">Action</th>
+                  <th className="execution-col-target">Target</th>
+                  <th className="execution-col-approver">Approved By</th>
+                  <th className="execution-col-time">Started</th>
+                  <th className="execution-col-time">Finished</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRuns.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" className="text-center">
+                      No executions found.
+                    </td>
+                  </tr>
+                ) : (
+                  pagedRuns.map((run) => {
+                    const summaryState = progressSummary(run);
+                    const lagging = isLaggingRun(run);
+                    return (
+                      <tr
+                        key={run.id}
+                        onClick={() => {
+                          setSelected(run.id);
+                          setDetailMode(true);
+                        }}
+                        className={`clickable ${Number(selected) === Number(run.id) ? "selected" : ""}`}
+                      >
+                        <td className="execution-col-id">{run.id}</td>
+                        <td className="execution-col-status">
+                          <div className="execution-status-stack">
+                            <span className={`status-pill ${statusTone(run.status)}${lagging ? " lagging" : ""}`}>{run.status || "-"}</span>
+                            {summaryState.show ? (
+                              <div className="fraction-progress">
+                                <div className="fraction-progress-bar">
+                                  <span className="fraction-progress-segment success" style={{ width: `${summaryState.total ? (summaryState.success / summaryState.total) * 100 : 0}%` }} />
+                                  <span className="fraction-progress-segment failed" style={{ width: `${summaryState.total ? (summaryState.failed / summaryState.total) * 100 : 0}%` }} />
+                                  <span className="fraction-progress-segment remaining" style={{ width: `${summaryState.total ? (summaryState.remaining / summaryState.total) * 100 : 0}%` }} />
+                                </div>
+                                <div className="fraction-progress-meta">
+                                  <span>{summaryState.success}/{summaryState.total} success</span>
+                                  <span>{summaryState.failed} failed</span>
+                                  <span>{summaryState.percentComplete}% processed</span>
+                                </div>
+                              </div>
+                            ) : null}
+                            {lagging ? <span className="lag-indicator">Lagging, platform alive</span> : null}
+                          </div>
+                        </td>
+                        <td className="execution-col-action" title={run.action || "-"}>
+                          <span className="execution-cell-text execution-action-text">{run.action || "-"}</span>
+                        </td>
+                        <td className="execution-col-target" title={run.agent || "-"}>
+                          <span className="execution-cell-text execution-target-text">{summarizeTarget(run.agent || "-")}</span>
+                        </td>
+                        <td className="execution-col-approver" title={run.approvedBy || "-"}>
+                          <span className="execution-cell-text">{run.approvedBy || "-"}</span>
+                        </td>
+                        <td className="execution-col-time"><RelativeTimestamp value={run.startedAt} /></td>
+                        <td className="execution-col-time"><RelativeTimestamp value={run.finishedAt} /></td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+          <Pager
+            total={filteredRuns.length}
+            page={queuePage}
+            pageSize={queuePageSize}
+            onPageChange={setQueuePage}
+            onPageSizeChange={(size) => {
+              setQueuePageSize(size);
+              setQueuePage(1);
+            }}
+            pageSizeOptions={[15, 25, 50]}
+            label="executions"
+          />
+        </div>
+      )}
     </div>
   );
 }

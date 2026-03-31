@@ -19,7 +19,7 @@ const FLEET_TARGETS = new Set(["all", "*", "fleet", "all-active"]);
 const TARGET_MODE_LABELS = {
   agent: "Single agent",
   multi: "Multiple agents",
-  group: "Agent group",
+  group: "Specific group",
   fleet: "Fleet",
 };
 const asFlag = (value, defaultValue) => {
@@ -291,7 +291,6 @@ const statusTone = (status) => {
 export default function GlobalShell() {
   const location = useLocation();
   const prefillAppliedRef = useRef("");
-  const assistantAutoloadRef = useRef("");
   const [agents, setAgents] = useState([]);
   const [agentsError, setAgentsError] = useState("");
   const [agentsLoading, setAgentsLoading] = useState(true);
@@ -314,7 +313,7 @@ export default function GlobalShell() {
   const [targetMode, setTargetMode] = useState("fleet");
   const [targetValue, setTargetValue] = useState("");
   const [targetAgentIds, setTargetAgentIds] = useState([]);
-  const [targetSearch, setTargetSearch] = useState("");
+  const [multiPickAgentId, setMultiPickAgentId] = useState("");
   const [excludeIdsText, setExcludeIdsText] = useState("");
   const [justification, setJustification] = useState("");
 
@@ -429,6 +428,11 @@ export default function GlobalShell() {
     [targetAgentIds]
   );
 
+  const selectedMultiAgents = useMemo(
+    () => connectedWindows.filter((agent) => selectedAgentSet.has(agent.id)),
+    [connectedWindows, selectedAgentSet]
+  );
+
   useEffect(() => {
     if (connectedWindows.length === 0) return;
     setTargetAgentIds((prev) => {
@@ -437,6 +441,10 @@ export default function GlobalShell() {
       return next.length === prev.length ? prev : next;
     });
   }, [connectedWindows]);
+
+  useEffect(() => {
+    if (targetMode !== "multi") setMultiPickAgentId("");
+  }, [targetMode]);
 
   useEffect(() => {
     const state = location?.state && typeof location.state === "object" ? location.state : null;
@@ -523,18 +531,6 @@ export default function GlobalShell() {
     }
     setStatus("Loaded prefilled Global Shell context.");
   }, [location]);
-
-  const targetPickList = useMemo(() => {
-    const q = targetSearch.trim().toLowerCase();
-    if (!q) return connectedWindows.slice(0, 120);
-    return connectedWindows
-      .filter((agent) =>
-        agent.id.toLowerCase().includes(q)
-        || String(agent.name || "").toLowerCase().includes(q)
-        || String(agent.groupText || "").toLowerCase().includes(q)
-      )
-      .slice(0, 120);
-  }, [connectedWindows, targetSearch]);
 
   const normalizedTargetValue = useMemo(() => formatAgentId(targetValue), [targetValue]);
   const normalizedGroupValue = useMemo(() => String(targetValue || "").trim(), [targetValue]);
@@ -692,20 +688,6 @@ export default function GlobalShell() {
   }, [assistantDisabledReason, assistantEnabled, assistantPrompt, refreshAssistantAvailability, shell, vulnerabilityContext, verifyKb, verifyMinBuild]);
 
   useEffect(() => {
-    if (!assistantEnabled) return;
-    const prompt = assistantPrompt.trim();
-    if (!prompt) return;
-    const fingerprint = JSON.stringify({
-      prompt,
-      shell,
-      vulnerabilityContext: vulnerabilityContext || null,
-    });
-    if (assistantAutoloadRef.current === fingerprint) return;
-    assistantAutoloadRef.current = fingerprint;
-    void generateAssistantCommand();
-  }, [assistantEnabled, assistantPrompt, command, generateAssistantCommand, shell, vulnerabilityContext]);
-
-  useEffect(() => {
     if (assistantEnabled) return;
     setAutoRemediate(false);
   }, [assistantEnabled]);
@@ -838,8 +820,59 @@ export default function GlobalShell() {
         </div>
       </div>
 
-      <div className="split-view">
-        <div className="card">
+      <div className="split-view global-shell-workspace">
+        <div className="card global-shell-target-card" data-tour-id="global-shell-drawer">
+          <div className="card-header">
+            <div>
+              <h3>Target Preview</h3>
+              <p className="muted">Connected Windows endpoints selected for execution.</p>
+            </div>
+          </div>
+          <div className="table-scroll h-36vh">
+            <table className="table compact readable">
+              <thead>
+                <tr>
+                  <th>Agent ID</th>
+                  <th>Name</th>
+                  <th>Group</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {previewTargets.length === 0 ? (
+                  <tr>
+                    <td colSpan="4" className="text-center">
+                      No targets available.
+                    </td>
+                  </tr>
+                ) : (
+                  pagedTargets.map((agent) => (
+                    <tr key={`target-${agent.id}`} data-agent-id={agent.id}>
+                      <td>{agent.id}</td>
+                      <td>{agent.name || "-"}</td>
+                      <td>{agent.groupText || "-"}</td>
+                      <td>{agent.status || "-"}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          <Pager
+            total={previewTargets.length}
+            page={targetPage}
+            pageSize={targetPageSize}
+            onPageChange={setTargetPage}
+            onPageSizeChange={(size) => {
+              setTargetPageSize(size);
+              setTargetPage(1);
+            }}
+            pageSizeOptions={[25, 50, 100]}
+            label="targets"
+          />
+        </div>
+
+        <div className="card global-shell-builder-card">
           <div className="card-header">
             <div>
               <h3>Command Builder</h3>
@@ -859,28 +892,49 @@ export default function GlobalShell() {
                     setTargetPage(1);
                   }}
                 >
-                  <option value="agent">Single agent</option>
-                  <option value="multi">Multiple agents</option>
-                  <option value="group">Agent group</option>
                   <option value="fleet">Fleet (all connected Windows)</option>
+                  <option value="multi">Multiple agents</option>
+                  <option value="agent">Single agent</option>
+                  <option value="group">Specific group</option>
                 </select>
               </div>
 
               {targetMode === "multi" ? (
                 <div className="mt-10">
                   <div className="page-actions">
-                    <input
+                    <select
                       className="input"
-                      value={targetSearch}
-                      onChange={(e) => setTargetSearch(e.target.value)}
-                      placeholder="Search connected Windows agents..."
-                    />
+                      value={multiPickAgentId}
+                      onChange={(e) => setMultiPickAgentId(formatAgentId(e.target.value))}
+                    >
+                      <option value="">Select connected agent</option>
+                      {connectedWindows.map((agent) => (
+                        <option key={`multi-agent-${agent.id}`} value={agent.id}>
+                          {agent.id} - {agent.name || "-"}{agent.groupText ? ` (${agent.groupText})` : ""}
+                        </option>
+                      ))}
+                    </select>
                     <button
                       className="btn secondary"
                       type="button"
-                      onClick={() => setTargetAgentIds(connectedWindows.map((a) => a.id))}
+                      onClick={() => {
+                        if (!multiPickAgentId) return;
+                        setTargetAgentIds((prev) => {
+                          const ids = new Set(prev.map((id) => formatAgentId(id)).filter(Boolean));
+                          ids.add(multiPickAgentId);
+                          return Array.from(ids);
+                        });
+                      }}
+                      disabled={!multiPickAgentId}
                     >
-                      Select All
+                      Add
+                    </button>
+                    <button
+                      className="btn secondary"
+                      type="button"
+                      onClick={() => setTargetAgentIds(connectedWindows.map((agent) => agent.id))}
+                    >
+                      All
                     </button>
                     <button
                       className="btn secondary"
@@ -891,39 +945,34 @@ export default function GlobalShell() {
                     </button>
                   </div>
                   <div className="meta-line mt-6">Selected: {selectedAgentSet.size}</div>
-                  <div className="list-scroll mt-10 h-240">
-                    <div className="list">
-                      {targetPickList.length === 0 ? (
-                        <div className="empty-state">No connected Windows agents match your search.</div>
-                      ) : (
-	                        targetPickList.map((agent) => {
-	                          const checked = selectedAgentSet.has(agent.id);
-	                          return (
-	                            <label
-	                              key={`target-${agent.id}`}
-	                              className="list-item clickable readable"
-	                              data-agent-id={agent.id}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                data-agent-id={agent.id}
-                                onChange={(e) => {
-                                  const next = e.target.checked;
-                                  setTargetAgentIds((prev) => {
-                                    const current = new Set(prev.map((id) => formatAgentId(id)).filter(Boolean));
-                                    if (next) current.add(agent.id);
-                                    else current.delete(agent.id);
-                                    return Array.from(current);
-                                  });
-                                }}
-                                className="mr-10"
-                              />
-                              {agent.name || agent.id} ({agent.id}){agent.groupText ? ` - ${agent.groupText}` : ""}
-                            </label>
-                          );
-                        })
-                      )}
+                  <div className="list mt-10">
+                    {selectedMultiAgents.length === 0 ? (
+                      <div className="empty-state">No agents selected yet.</div>
+                    ) : (
+                      selectedMultiAgents.map((agent) => (
+                        <div key={`selected-agent-${agent.id}`} className="list-item split readable" data-agent-id={agent.id}>
+                          <span>{agent.id} - {agent.name || "-"}</span>
+                          <button
+                            className="btn secondary"
+                            type="button"
+                            onClick={() => {
+                              setTargetAgentIds((prev) =>
+                                prev
+                                  .map((id) => formatAgentId(id))
+                                  .filter((id) => id && id !== agent.id)
+                              );
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))
+                    )}
+                    {connectedWindows.length === 0 ? (
+                      <div className="meta-line">No connected Windows agents available.</div>
+                    ) : null}
+                    <div className="meta-line">
+                      Tip: Use "All" for quick fleet subset, then remove specific endpoints.
                     </div>
                   </div>
                 </div>
@@ -938,21 +987,18 @@ export default function GlobalShell() {
                 </div>
               ) : targetMode === "agent" ? (
                 <div className="page-actions mt-10">
-                  <input
+                  <select
                     className="input"
                     value={targetValue}
                     onChange={(e) => setTargetValue(e.target.value)}
-                    placeholder="Agent ID (example: 004)"
-                    list="globalShellAgentIds"
-                    data-agent-id={normalizedTargetValue || ""}
-                  />
-                  <datalist id="globalShellAgentIds">
-                    {connectedWindows.slice(0, 150).map((agent) => (
-                      <option key={`agent-${agent.id}`} value={agent.id}>
-                        {agent.name}
+                  >
+                    <option value="">Select agent</option>
+                    {connectedWindows.map((agent) => (
+                      <option key={`single-agent-${agent.id}`} value={agent.id}>
+                        {agent.id} - {agent.name || "-"}{agent.groupText ? ` (${agent.groupText})` : ""}
                       </option>
                     ))}
-                  </datalist>
+                  </select>
                 </div>
               ) : null}
             </div>
@@ -1135,154 +1181,102 @@ export default function GlobalShell() {
           </div>
         </div>
 
-        <div className="panel-stack">
-          <div className="card" data-tour-id="global-shell-drawer">
-            <div className="card-header">
-              <div>
-                <h3>Target Preview</h3>
-                <p className="muted">Connected Windows endpoints selected for execution.</p>
-              </div>
-            </div>
-            <div className="table-scroll h-36vh">
-              <table className="table compact readable">
-                <thead>
-                  <tr>
-                    <th>Agent ID</th>
-                    <th>Name</th>
-                    <th>Group</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {previewTargets.length === 0 ? (
-                    <tr>
-                      <td colSpan="4" className="text-center">
-                        No targets available.
-                      </td>
-                    </tr>
-                  ) : (
-                    pagedTargets.map((agent) => (
-                      <tr key={`target-${agent.id}`} data-agent-id={agent.id}>
-                        <td>{agent.id}</td>
-                        <td>{agent.name || "-"}</td>
-                        <td>{agent.groupText || "-"}</td>
-                        <td>{agent.status || "-"}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <Pager
-              total={previewTargets.length}
-              page={targetPage}
-              pageSize={targetPageSize}
-              onPageChange={setTargetPage}
-              onPageSizeChange={(size) => {
-                setTargetPageSize(size);
-                setTargetPage(1);
-              }}
-              pageSizeOptions={[25, 50, 100]}
-              label="targets"
-            />
-          </div>
+      </div>
 
-          <div className="card">
-            <div className="card-header">
-              <div>
-                <h3>Shell Execution History</h3>
-                <p className="muted">Recent global shell runs with command and output previews.</p>
-              </div>
-            </div>
-            <div className="table-scroll h-44vh">
-              <table className="table compact readable global-shell-history-table">
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Status</th>
-                    <th>Targets</th>
-                    <th>Shell</th>
-                    <th>Command</th>
-                    <th>Latest Output</th>
-                    <th>Started</th>
-                    <th>Finished</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.length === 0 ? (
-                    <tr>
-                      <td colSpan="8" className="text-center">
-                        No shell execution history yet.
-                      </td>
-                    </tr>
-                  ) : (
-                    pagedHistory.map((row) => (
-                      <tr
-                        key={`hist-${row.id}`}
-                        className={`clickable ${Number(activeExecutionId) === Number(row.id) ? "selected" : ""}`}
-                        onClick={() => setActiveExecutionId(row.id)}
-                      >
-                        <td>{row.id}</td>
-                        <td>
-                          <span className={`status-pill ${statusTone(row.status)}`}>
-                            {row.status || "-"}
-                          </span>
-                        </td>
-                        <td className="ws-normal">
-                          <div className="global-shell-agent-cell">
-                            <span className="agent-count">{row.targetLabel || row.agent || "-"}</span>
-                            {formatTargetHealth(row) ? (
-                              <span className="agent-id">{formatTargetHealth(row)}</span>
-                            ) : null}
-                          </div>
-                        </td>
-                        <td>
-                          <span
-                            className={`shell-type-pill ${String(row.shell || "")
-                              .toLowerCase()
-                              .includes("cmd")
-                              ? "cmd"
-                              : String(row.shell || "")
-                                  .toLowerCase()
-                                  .includes("bash") || String(row.shell || "").toLowerCase().includes("sh")
-                                ? "bash"
-                                : String(row.shell || "").toLowerCase().includes("power")
-                                  ? "ps"
-                                  : ""}`}
-                          >
-                            {row.shell || "-"}
-                          </span>
-                        </td>
-                        <td className="ws-normal" title={row.command || "-"}>
-                          {row.command || "-"}
-                        </td>
-                        <td className="ws-normal" title={row.outputPreview || "-"}>
-                          <span className="shell-output-preview">
-                            {row.outputPreview || "-"}
-                          </span>
-                        </td>
-                        <td><RelativeTimestamp value={row.startedAt} /></td>
-                        <td><RelativeTimestamp value={row.finishedAt} /></td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <Pager
-              total={history.length}
-              page={historyPage}
-              pageSize={historyPageSize}
-              onPageChange={setHistoryPage}
-              onPageSizeChange={(size) => {
-                setHistoryPageSize(size);
-                setHistoryPage(1);
-              }}
-              pageSizeOptions={[10, 25, 50]}
-              label="shell runs"
-            />
+      <div className="card global-shell-history-card">
+        <div className="card-header">
+          <div>
+            <h3>Shell Execution History</h3>
+            <p className="muted">Recent global shell runs with command and output previews.</p>
           </div>
         </div>
+        <div className="table-scroll h-44vh global-shell-history-scroll">
+          <table className="table compact readable global-shell-history-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Targets</th>
+                <th>Shell</th>
+                <th>Command</th>
+                <th>Latest Output</th>
+                <th>Started</th>
+                <th>Finished</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.length === 0 ? (
+                <tr>
+                  <td colSpan="8" className="text-center">
+                    No shell execution history yet.
+                  </td>
+                </tr>
+              ) : (
+                pagedHistory.map((row) => (
+                  <tr
+                    key={`hist-${row.id}`}
+                    className={`clickable ${Number(activeExecutionId) === Number(row.id) ? "selected" : ""}`}
+                    onClick={() => setActiveExecutionId(row.id)}
+                  >
+                    <td>{row.id}</td>
+                    <td>
+                      <span className={`status-pill ${statusTone(row.status)}`}>
+                        {row.status || "-"}
+                      </span>
+                    </td>
+                    <td className="ws-normal">
+                      <div className="global-shell-agent-cell">
+                        <span className="agent-count">{row.targetLabel || row.agent || "-"}</span>
+                        {formatTargetHealth(row) ? (
+                          <span className="agent-id">{formatTargetHealth(row)}</span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td>
+                      <span
+                        className={`shell-type-pill ${String(row.shell || "")
+                          .toLowerCase()
+                          .includes("cmd")
+                          ? "cmd"
+                          : String(row.shell || "")
+                              .toLowerCase()
+                              .includes("bash") || String(row.shell || "").toLowerCase().includes("sh")
+                            ? "bash"
+                            : String(row.shell || "").toLowerCase().includes("power")
+                              ? "ps"
+                              : ""}`}
+                      >
+                        {row.shell || "-"}
+                      </span>
+                    </td>
+                    <td className="ws-normal" title={row.command || "-"}>
+                      {row.command || "-"}
+                    </td>
+                    <td className="ws-normal" title={row.outputPreview || "-"}>
+                      <span className="shell-output-preview">
+                        {row.outputPreview || "-"}
+                      </span>
+                    </td>
+                    <td><RelativeTimestamp value={row.startedAt} /></td>
+                    <td><RelativeTimestamp value={row.finishedAt} /></td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <Pager
+          total={history.length}
+          page={historyPage}
+          pageSize={historyPageSize}
+          onPageChange={setHistoryPage}
+          onPageSizeChange={(size) => {
+            setHistoryPageSize(size);
+            setHistoryPage(1);
+          }}
+          pageSizeOptions={[10, 25, 50]}
+          label="shell runs"
+        />
       </div>
 
       {!selectedHistory ? (
@@ -1305,7 +1299,7 @@ export default function GlobalShell() {
                   <p className="muted">Shell context and sanitized preview for rapid debugging.</p>
                 </div>
               </div>
-              <div className="kv-grid run-meta-grid">
+              <div className="run-meta-grid">
                 <div className="kv-row">
                   <span className="kv-key run-meta-label">Shell</span>
                   <span className="kv-value run-meta-value">{selectedHistory.shell || "-"}</span>

@@ -38,9 +38,6 @@ export default function Login() {
         }
         if (statusCode === 401) {
           clearLegacyToken();
-          void api.get("/auth/session/reset").catch(() => {
-            // Ignore best-effort session reset during stale session cleanup.
-          });
         }
       });
     return () => {
@@ -120,7 +117,7 @@ export default function Login() {
           </div>
         </div>
 
-        <h2>Sign in</h2>
+        <h2>Log in</h2>
         <p className="muted">Use your SOC credentials to access the console.</p>
 
         <form className="login-form" onSubmit={handleSubmit}>
@@ -145,7 +142,7 @@ export default function Login() {
           </label>
           {error && <div className="empty-state">{error}</div>}
           <button className="btn" type="submit" disabled={loading}>
-            {loading ? "Signing in..." : "Sign In"}
+            {loading ? "Logging in..." : "Log In"}
           </button>
         </form>
 
@@ -170,7 +167,7 @@ export default function Login() {
             }
           }}
         >
-          {ssoLoading ? "Redirecting..." : "Login with SSO"}
+          {ssoLoading ? "Redirecting..." : "Log in with SSO"}
         </button>
 
         <div className="login-hint">

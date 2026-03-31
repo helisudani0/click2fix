@@ -39,6 +39,8 @@ def test_session_reset_clears_auth_cookie_variants():
     )
     cookies = response.headers.getlist("set-cookie")
     assert cookies
+    # Keep header size small enough for common reverse proxy defaults.
+    assert len(cookies) <= 12
 
     def has_delete_header(name: str, path: str) -> bool:
         name_prefix = f"{name}="
@@ -91,5 +93,18 @@ def test_cookie_secure_override_string_false():
         security_cfg["cookie_secure"] = "false"
         cfg = auth._cookie_config(_make_request(method="POST", path="/api/auth/token", scheme="https"))
         assert cfg["secure"] is False
+    finally:
+        security_cfg["cookie_secure"] = original
+
+
+def test_cookie_secure_env_placeholder_uses_auto_mode():
+    security_cfg = auth.SETTINGS.setdefault("security", {})
+    original = security_cfg.get("cookie_secure")
+    try:
+        security_cfg["cookie_secure"] = "env://C2F_COOKIE_SECURE"
+        cfg_http = auth._cookie_config(_make_request(method="POST", path="/api/auth/token", scheme="http"))
+        cfg_https = auth._cookie_config(_make_request(method="POST", path="/api/auth/token", scheme="https"))
+        assert cfg_http["secure"] is False
+        assert cfg_https["secure"] is True
     finally:
         security_cfg["cookie_secure"] = original

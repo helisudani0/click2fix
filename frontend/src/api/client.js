@@ -52,6 +52,7 @@ const isAuthMaintenancePath = (url) => {
   const value = String(url || "");
   return (
     value.includes("/auth/login") ||
+    value.includes("/auth/me") ||
     value.includes("/auth/logout") ||
     value.includes("/auth/session/reset")
   );

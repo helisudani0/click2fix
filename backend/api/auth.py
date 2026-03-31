@@ -96,9 +96,12 @@ def _request_scheme(request: Request) -> str:
 def _cookie_config(request: Request):
     security_cfg = SETTINGS.get("security", {}) if isinstance(SETTINGS, dict) else {}
     secure_from_cfg = security_cfg.get("cookie_secure")
-    use_auto_mode = secure_from_cfg is None or (
-        isinstance(secure_from_cfg, str) and not secure_from_cfg.strip()
-    )
+    use_auto_mode = secure_from_cfg is None
+    if isinstance(secure_from_cfg, str):
+        normalized_secure = secure_from_cfg.strip().lower()
+        if not normalized_secure or normalized_secure.startswith("env://"):
+            # Treat unresolved env placeholders as "auto" to avoid forcing secure cookies on HTTP.
+            use_auto_mode = True
     if use_auto_mode:
         secure = _request_scheme(request) == "https"
     else:
@@ -147,11 +150,9 @@ def _normalize_cookie_path(path_value: str | None) -> str:
 
 def _clear_cookie_for_common_paths(response: Response, key: str, paths: list[str]) -> None:
     for path in paths:
-        for secure in (False, True):
-            response.delete_cookie(key=key, path=path, secure=secure)
-            response.delete_cookie(key=key, path=path, secure=secure, samesite="lax")
-            response.delete_cookie(key=key, path=path, secure=secure, samesite="strict")
-            response.delete_cookie(key=key, path=path, secure=secure, samesite="none")
+        # Keep cookie reset headers small for reverse proxies (nginx 502 can occur if headers are oversized).
+        # Deletion matching is based on name/path/domain, so a single delete per path is sufficient.
+        response.delete_cookie(key=key, path=path)
 
 
 def _clear_auth_cookie(response: Response, request: Request):

@@ -49,6 +49,13 @@ const AI_PROVIDER_MODEL_OPTIONS = {
 const defaultModelForProvider = (provider) => AI_PROVIDER_DEFAULT_MODEL[normalizeKey(provider)] || "";
 const defaultBaseUrlForProvider = (provider) => AI_PROVIDER_DEFAULT_BASE_URL[normalizeKey(provider)] || "";
 const modelOptionsForProvider = (provider) => AI_PROVIDER_MODEL_OPTIONS[normalizeKey(provider)] || [];
+const hostFromUrl = (value) => {
+  try {
+    return new URL(String(value || "")).host.toLowerCase();
+  } catch {
+    return "";
+  }
+};
 const matchingModelOption = (provider, model) => {
   const options = modelOptionsForProvider(provider);
   const key = normalizeKey(model);
@@ -56,22 +63,23 @@ const matchingModelOption = (provider, model) => {
   return options.find((option) => normalizeKey(option) === key) || "";
 };
 const isLikelyModelMismatch = (provider, model) => {
-  const p = normalizeKey(provider);
   const m = normalizeKey(model);
   if (!m) return true;
-  if (p === "gemini") return m.startsWith("gpt-");
-  if (p === "openai") return m.startsWith("gemini-");
-  return false;
+  const options = modelOptionsForProvider(provider);
+  if (!options.length) return false;
+  return !options.some((option) => normalizeKey(option) === m);
 };
 const isLikelyBaseUrlMismatch = (provider, baseUrl) => {
   const p = normalizeKey(provider);
-  const base = normalizeKey(baseUrl);
-  if (!base) return false;
-  if (p === "gemini") return base.includes("api.openai.com");
-  if (p === "openai") return base.includes("generativelanguage.googleapis.com");
-  return false;
+  if (!normalizeText(baseUrl)) return false;
+  if (p === "ollama") return false;
+  const expected = defaultBaseUrlForProvider(p);
+  if (!expected) return false;
+  const currentHost = hostFromUrl(baseUrl);
+  const expectedHost = hostFromUrl(expected);
+  if (!currentHost || !expectedHost) return false;
+  return currentHost !== expectedHost;
 };
-
 const createRetentionForm = (overrides = {}) => ({
   data_class: "events",
   storage_backend: "event_indexer",

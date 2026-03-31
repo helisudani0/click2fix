@@ -693,6 +693,7 @@ body.console-redesign-v4 textarea.input:focus {
   background: rgba(4,8,14,0.9);
 }
 
+body.console-redesign-v4 .page-route-org-admin select.input,
 body.console-redesign-v4 .page-route-orgs select.input {
   cursor: pointer;
   appearance: auto;
@@ -760,7 +761,7 @@ body.console-redesign-v4 .table td {
   padding: 10px 13px;
   vertical-align: middle; line-height: 1.4;
   color: var(--c-text); border-right: none;
-  overflow-wrap: anywhere; word-break: break-word;
+  overflow-wrap: anywhere; word-break: normal;
 }
 
 body.console-redesign-v4 table thead th,
@@ -798,7 +799,7 @@ body.console-redesign-v4 table th:first-child {
 }
 
 /* ============================================================
-   GLOBAL SHELL — cap output cell height
+   GLOBAL SHELL - cap output cell height
    ============================================================ */
 body.console-redesign-v4 .page-route-global-shell .table,
 body.console-redesign-v4 .page-route-global-shell .global-shell-history-table {
@@ -826,8 +827,11 @@ body.console-redesign-v4 .page-route-global-shell .table td:nth-child(8) {
   text-align: right;
   white-space: nowrap;
 }
-body.console-redesign-v4 .page-route-global-shell .table td,
-body.console-redesign-v4 .page-route-global-shell .table th { white-space: normal; word-break: break-word; }
+body.console-redesign-v4 .page-route-global-shell .table td {
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
 body.console-redesign-v4 .page-route-global-shell .table th {
   white-space: nowrap;
   word-break: normal;
@@ -921,7 +925,8 @@ body.console-redesign-v4 .shell-run-command-block {
   font-size: 0.82rem;
   color: #c7e0ff;
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: normal;
+  overflow-wrap: anywhere;
   line-height: 1.6;
 }
 
@@ -945,7 +950,8 @@ body.console-redesign-v4 .shell-run-output {
   line-height: 1.65;
   color: #b0cfe8;
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: normal;
+  overflow-wrap: anywhere;
   tab-size: 2;
   background-image: repeating-linear-gradient(
     0deg,
@@ -959,7 +965,7 @@ body.console-redesign-v4 .shell-run-output {
 body.console-redesign-v4 .shell-output-block:empty::before,
 body.console-redesign-v4 [class*="clean-output"]:empty::before,
 body.console-redesign-v4 [class*="raw-output"]:empty::before {
-  content: "— no output captured —";
+  content: "-- no output captured --";
   color: var(--c-hint);
   font-style: italic;
   font-size: 0.75rem;
@@ -1013,7 +1019,8 @@ body.console-redesign-v4 .shell-step-detail {
   font-size: 0.7rem;
   color: var(--c-muted);
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: normal;
+  overflow-wrap: anywhere;
 }
 
 body.console-redesign-v4 .run-meta-grid {
@@ -1052,7 +1059,7 @@ body.console-redesign-v4 .code-block {
   padding: 11px 13px;
   font-family: "IBM Plex Mono", monospace; font-size: 0.76rem;
   color: #94a3b8; line-height: 1.6;
-  white-space: pre-wrap; word-break: break-all;
+  white-space: pre-wrap; word-break: normal; overflow-wrap: anywhere;
   max-height: 360px;
 }
 
@@ -1070,7 +1077,7 @@ body.console-redesign-v4 .list-item {
 
 body.console-redesign-v4 .list-item.split { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 body.console-redesign-v4 .meta-line { font-size: 0.78rem; color: var(--c-muted); font-weight: 500; }
-body.console-redesign-v4 .table-wrap-cell { display: block; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+body.console-redesign-v4 .table-wrap-cell { display: block; white-space: normal; overflow-wrap: anywhere; word-break: normal; }
 
 /* ============================================================
    EMPTY STATE
@@ -1310,7 +1317,7 @@ body.console-redesign-v4 .actions-catalog-table th,
 body.console-redesign-v4 .actions-catalog-table td,
 body.console-redesign-v4 .actions-target-table th,
 body.console-redesign-v4 .actions-target-table td {
-  white-space: normal; word-break: break-word; overflow-wrap: anywhere; min-width: 70px;
+  white-space: normal; word-break: normal; overflow-wrap: anywhere; min-width: 70px;
 }
 
 body.console-redesign-v4 .actions-catalog-table td:first-child,
@@ -1318,7 +1325,7 @@ body.console-redesign-v4 .actions-catalog-table th:first-child { min-width: 110p
 
 body.console-redesign-v4 .actions-catalog-table code {
   font-family: "IBM Plex Mono", monospace; font-size: 0.7rem;
-  background: rgba(59,130,246,0.1); padding: 1px 5px; border-radius: 4px; word-break: break-all;
+  background: rgba(59,130,246,0.1); padding: 1px 5px; border-radius: 4px; word-break: normal; overflow-wrap: anywhere;
 }
 
 body.console-redesign-v4 .actions-catalog-scroll .table,
@@ -1521,14 +1528,17 @@ body.console-redesign-v4 .panel-collapse-btn:disabled { opacity: 0.35; cursor: n
 }
 
 /* ============================================================
-   READABILITY SAFETY OVERRIDES (TABLES + DETAILS)
+   FINAL READABILITY + LAYOUT STABILITY OVERRIDES
    ============================================================ */
 body.console-redesign-v4 .table-scroll {
+  min-width: 0;
   overflow-x: auto;
+  overflow-y: auto;
 }
 
 body.console-redesign-v4 .table-scroll table {
   min-width: 720px;
+  width: max-content;
 }
 
 body.console-redesign-v4 .table-scroll table thead th,
@@ -1542,6 +1552,7 @@ body.console-redesign-v4 .table-wrap-cell {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  max-width: 100%;
 }
 
 body.console-redesign-v4 details > summary {
@@ -1552,7 +1563,7 @@ body.console-redesign-v4 details > summary {
 }
 
 body.console-redesign-v4 details > summary::after {
-  content: "▾";
+  content: "v";
   margin-left: auto;
   color: var(--c-hint);
   font-size: 0.8rem;
@@ -1564,29 +1575,57 @@ body.console-redesign-v4 details[open] > summary::after {
 }
 
 /* ============================================================
-   EXECUTIONS TABLE - WIDTHS + WRAP CONTROL
+   EXECUTIONS TABLE - DB-TUNED WIDTHS + SAFE WRAP
    ============================================================ */
 body.console-redesign-v4 .page-route-executions .execution-queue-scroll table {
-  min-width: 980px;
+  min-width: 1180px;
 }
 
-body.console-redesign-v4 .page-route-executions .execution-col-action,
-body.console-redesign-v4 .page-route-executions .execution-col-target {
-  white-space: normal;
+body.console-redesign-v4 .page-route-executions .execution-col-id { width: 72px; min-width: 72px; }
+body.console-redesign-v4 .page-route-executions .execution-col-status { width: 220px; min-width: 220px; }
+body.console-redesign-v4 .page-route-executions .execution-col-action { width: 220px; min-width: 220px; }
+body.console-redesign-v4 .page-route-executions .execution-col-target { width: 250px; min-width: 250px; }
+body.console-redesign-v4 .page-route-executions .execution-col-approver { width: 140px; min-width: 140px; }
+body.console-redesign-v4 .page-route-executions .execution-col-time { width: 140px; min-width: 140px; white-space: nowrap; }
+
+body.console-redesign-v4 .page-route-executions .execution-status-stack {
+  min-width: 200px;
 }
 
 body.console-redesign-v4 .page-route-executions .execution-action-text,
 body.console-redesign-v4 .page-route-executions .execution-target-text {
   word-break: normal;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 /* ============================================================
-   GLOBAL SHELL TABLE - PREVENT VERTICAL STACKING
+   GLOBAL SHELL TABLE - PREVENT STACKING + KEEP OUTPUT READABLE
    ============================================================ */
 body.console-redesign-v4 .page-route-global-shell .global-shell-history-table {
-  min-width: 980px;
+  min-width: 1160px;
+  table-layout: fixed;
 }
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(1),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(1) { width: 58px; }
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(2),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(2) { width: 110px; }
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(3),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(3) { width: 190px; }
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(4),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(4) { width: 108px; }
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(5),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(5) { width: 300px; }
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(6),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(6) { width: auto; min-width: 320px; }
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(7),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(7),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(8),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(8) { width: 130px; }
 
 body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td,
 body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th {
@@ -1604,32 +1643,178 @@ body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td
   white-space: nowrap;
 }
 
-/* ============================================================
-   RUN DETAIL KV GRID - CLEAN WRAP
-   ============================================================ */
-body.console-redesign-v4 .kv-grid .kv-row {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(5) {
+  line-height: 1.35;
 }
 
-body.console-redesign-v4 .kv-grid .kv-key {
-  min-width: 110px;
-  flex-shrink: 0;
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(5) {
+  white-space: normal;
 }
 
-body.console-redesign-v4 .kv-grid .kv-value {
+body.console-redesign-v4 .page-route-global-shell .shell-output-preview {
+  max-height: 72px;
+  overflow: hidden;
   word-break: normal;
   overflow-wrap: anywhere;
 }
 
-body.console-redesign-v4 .kv-grid:not(.run-meta-grid) .kv-row {
+/* ============================================================
+   ALERTS TABLE - DB-TUNED WIDTHS + CLAMPED TEXT
+   ============================================================ */
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll table {
+  min-width: 1220px;
+  table-layout: fixed;
+}
+
+body.console-redesign-v4 .page-route-alerts th:nth-child(1),
+body.console-redesign-v4 .page-route-alerts td:nth-child(1) { width: 176px; }
+body.console-redesign-v4 .page-route-alerts th:nth-child(2),
+body.console-redesign-v4 .page-route-alerts td:nth-child(2) { width: 96px; }
+body.console-redesign-v4 .page-route-alerts th:nth-child(3),
+body.console-redesign-v4 .page-route-alerts td:nth-child(3) { width: 360px; }
+body.console-redesign-v4 .page-route-alerts th:nth-child(4),
+body.console-redesign-v4 .page-route-alerts td:nth-child(4) { width: 160px; }
+body.console-redesign-v4 .page-route-alerts th:nth-child(5),
+body.console-redesign-v4 .page-route-alerts td:nth-child(5) { width: auto; }
+body.console-redesign-v4 .page-route-alerts th:nth-child(6),
+body.console-redesign-v4 .page-route-alerts td:nth-child(6) { width: 136px; white-space: nowrap; }
+
+body.console-redesign-v4 .page-route-alerts .alerts-col-rule .table-wrap-cell {
+  -webkit-line-clamp: 2;
+}
+
+body.console-redesign-v4 .page-route-alerts .alerts-col-groups .table-wrap-cell {
+  -webkit-line-clamp: 2;
+}
+
+/* ============================================================
+   EXECUTION DETAIL TABLES (ExecutionStream) - DB-TUNED
+   ============================================================ */
+body.console-redesign-v4 .execution-target-scroll {
+  max-height: min(46vh, 460px);
+}
+
+body.console-redesign-v4 .execution-target-table {
+  min-width: 860px;
+  table-layout: fixed;
+}
+
+body.console-redesign-v4 .execution-target-table th:nth-child(1),
+body.console-redesign-v4 .execution-target-table td:nth-child(1) { width: 190px; }
+body.console-redesign-v4 .execution-target-table th:nth-child(2),
+body.console-redesign-v4 .execution-target-table td:nth-child(2) { width: 120px; white-space: nowrap; }
+body.console-redesign-v4 .execution-target-table th:nth-child(3),
+body.console-redesign-v4 .execution-target-table td:nth-child(3) { width: 96px; white-space: nowrap; }
+body.console-redesign-v4 .execution-target-table th:nth-child(4),
+body.console-redesign-v4 .execution-target-table td:nth-child(4) { width: 120px; }
+body.console-redesign-v4 .execution-target-table th:nth-child(5),
+body.console-redesign-v4 .execution-target-table td:nth-child(5) { width: auto; }
+
+body.console-redesign-v4 .execution-target-table td {
+  vertical-align: middle;
+}
+
+body.console-redesign-v4 .execution-target-table .evidence-cell {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+body.console-redesign-v4 .execution-target-table .evidence-cell:hover {
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  background: var(--c-surface-3);
+  border-radius: var(--r-sm);
+  padding: 4px;
+}
+
+body.console-redesign-v4 .execution-issues-scroll {
+  max-height: min(36vh, 320px);
+}
+
+body.console-redesign-v4 .execution-issues-table {
+  min-width: 980px;
+  table-layout: fixed;
+}
+
+body.console-redesign-v4 .execution-issues-table th:nth-child(1),
+body.console-redesign-v4 .execution-issues-table td:nth-child(1) { width: 200px; }
+body.console-redesign-v4 .execution-issues-table th:nth-child(2),
+body.console-redesign-v4 .execution-issues-table td:nth-child(2) { width: 120px; }
+body.console-redesign-v4 .execution-issues-table th:nth-child(3),
+body.console-redesign-v4 .execution-issues-table td:nth-child(3) { width: 260px; }
+body.console-redesign-v4 .execution-issues-table th:nth-child(4),
+body.console-redesign-v4 .execution-issues-table td:nth-child(4) { width: auto; }
+
+body.console-redesign-v4 .execution-update-scroll,
+body.console-redesign-v4 .execution-scan-hits-scroll,
+body.console-redesign-v4 .execution-scan-artifacts-scroll,
+body.console-redesign-v4 .execution-related-alerts-scroll {
+  max-height: min(34vh, 280px);
+}
+
+body.console-redesign-v4 .execution-update-table {
+  min-width: 900px;
+  table-layout: fixed;
+}
+
+body.console-redesign-v4 .execution-update-table th:nth-child(1),
+body.console-redesign-v4 .execution-update-table td:nth-child(1) { width: 120px; }
+body.console-redesign-v4 .execution-update-table th:nth-child(2),
+body.console-redesign-v4 .execution-update-table td:nth-child(2) { width: 320px; }
+body.console-redesign-v4 .execution-update-table th:nth-child(3),
+body.console-redesign-v4 .execution-update-table td:nth-child(3) { width: auto; }
+
+body.console-redesign-v4 .execution-related-alerts-table {
+  min-width: 820px;
+  table-layout: fixed;
+}
+
+body.console-redesign-v4 .execution-related-alerts-table th:nth-child(1),
+body.console-redesign-v4 .execution-related-alerts-table td:nth-child(1) { width: 180px; }
+body.console-redesign-v4 .execution-related-alerts-table th:nth-child(2),
+body.console-redesign-v4 .execution-related-alerts-table td:nth-child(2) { width: auto; }
+body.console-redesign-v4 .execution-related-alerts-table th:nth-child(3),
+body.console-redesign-v4 .execution-related-alerts-table td:nth-child(3) { width: 90px; }
+body.console-redesign-v4 .execution-related-alerts-table th:nth-child(4),
+body.console-redesign-v4 .execution-related-alerts-table td:nth-child(4) { width: 140px; white-space: nowrap; }
+
+/* ============================================================
+   DETAIL KV PANES - UNIFIED GRID
+   ============================================================ */
+body.console-redesign-v4 .kv-grid .kv-row {
   display: grid;
   grid-template-columns: 140px 1fr;
   gap: 12px;
   align-items: baseline;
 }
 
-body.console-redesign-v4 .kv-grid:not(.run-meta-grid) .kv-key {
+body.console-redesign-v4 .kv-grid .kv-key {
   min-width: 140px;
+  flex-shrink: 0;
+}
+
+body.console-redesign-v4 .kv-grid .kv-value {
+  word-break: normal;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+body.console-redesign-v4 .run-meta-grid {
+  grid-template-columns: 140px 1fr;
+}
+
+/* ============================================================
+   ORG ADMIN PROVIDER SELECT - RELIABLE INTERACTION
+   ============================================================ */
+body.console-redesign-v4 .page-route-org-admin select.input {
+  appearance: auto;
+  cursor: pointer;
+  pointer-events: auto;
+  position: relative;
+  z-index: 1;
 }

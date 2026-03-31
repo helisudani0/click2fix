@@ -1587,8 +1587,8 @@ export default function ExecutionStream({ executionId }) {
               <p className="muted">Per-endpoint output captured from the connector.</p>
             </div>
           </div>
-          <div className="table-scroll">
-            <table className="table compact readable">
+          <div className="table-scroll execution-target-scroll">
+            <table className="table compact readable execution-target-table">
               <thead>
                 <tr>
                   <th>Agent</th>
@@ -1615,7 +1615,9 @@ export default function ExecutionStream({ executionId }) {
                         {targetStatus.label}
                       </span>
                     </td>
-                    <td>{extractEvidenceSummary(t.stdout) || "-"}</td>
+                    <td>
+                      <span className="evidence-cell">{extractEvidenceSummary(t.stdout) || "-"}</span>
+                    </td>
                   </tr>
                   );
                 })}
@@ -1628,8 +1630,8 @@ export default function ExecutionStream({ executionId }) {
               <div className="meta-line ws-normal">
                 Consolidated error/problem details across targets to speed up analyst triage.
               </div>
-              <div className="table-scroll h-260 mt-8">
-                <table className="table compact readable">
+              <div className="table-scroll h-260 mt-8 execution-issues-scroll">
+                <table className="table compact readable execution-issues-table">
                   <thead>
                     <tr>
                       <th>Agent</th>
@@ -1716,8 +1718,8 @@ export default function ExecutionStream({ executionId }) {
 			                      </div>
 			                    </div>
 				                    {updateRows.length ? (
-				                      <div className="table-scroll h-240 mt-8">
-				                        <table className="table compact readable">
+                      <div className="table-scroll h-240 mt-8 execution-update-scroll">
+                        <table className="table compact readable execution-update-table">
 		                          <thead>
 		                            <tr>
 		                              <th>State</th>
@@ -1787,8 +1789,8 @@ export default function ExecutionStream({ executionId }) {
 				                      </pre>
 				                    ) : null}
 				                    {selectedScanReport?.hits?.length ? (
-			                      <div className="table-scroll h-240 mt-8">
-				                        <table className="table compact readable">
+                      <div className="table-scroll h-240 mt-8 execution-scan-hits-scroll">
+                        <table className="table compact readable execution-scan-hits-table">
 			                          <thead>
 			                            <tr>
 			                              <th>Category</th>
@@ -1813,8 +1815,8 @@ export default function ExecutionStream({ executionId }) {
 			                      <div className="meta-line mt-8">No scan hits reported.</div>
 			                    )}
 			                    {selectedScanReport?.artifacts?.length ? (
-			                      <div className="table-scroll h-180 mt-8">
-			                        <table className="table compact readable">
+                      <div className="table-scroll h-180 mt-8 execution-scan-artifacts-scroll">
+                        <table className="table compact readable execution-scan-artifacts-table">
 		                          <thead>
 		                            <tr>
 		                              <th>Artifact</th>
@@ -1845,8 +1847,8 @@ export default function ExecutionStream({ executionId }) {
 	                  ) : evidenceAlerts.length === 0 ? (
 	                    <div className="meta-line">No alerts observed in this window.</div>
 		                  ) : (
-		                    <div className="table-scroll h-240 mt-8">
-		                      <table className="table compact readable">
+                    <div className="table-scroll h-240 mt-8 execution-related-alerts-scroll">
+                      <table className="table compact readable execution-related-alerts-table">
 	                        <thead>
 	                          <tr>
 	                            <th>ID</th>

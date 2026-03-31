@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api/client";
 import { executionSocket } from "../api/socket";
@@ -22,7 +22,7 @@ const MAX_STREAM_EVENTS = 600;
 const MAX_RENDERED_EVENTS = 180;
 const MAX_STEP_OUTPUT_CHARS = 16000;
 const TARGET_LOG_BUFFER_FLUSH_MS = 250;
-const TARGET_LOG_MAX_LINES = 800;
+const TARGET_LOG_MAX_LINES = 300;
 
 const getExecutionDetailRequest = (executionId) => api.get(`/executions/${executionId}`);
 
@@ -1278,12 +1278,13 @@ export default function ExecutionStream({ executionId }) {
 
   }, [executionId, streamEnabled]);
 
-  const selectedTarget = targets.find((t) => t.agent_id === selectedTargetId) || null;
+  const deferredTargets = useDeferredValue(targets);
+  const selectedTarget = deferredTargets.find((t) => t.agent_id === selectedTargetId) || null;
   const execution = meta?.execution || null;
   const executionStatus = String(execution?.status || "").toUpperCase();
   const summary = useMemo(
-    () => executionProgressSummary(execution, meta?.summary, targets),
-    [execution, meta?.summary, targets]
+    () => executionProgressSummary(execution, meta?.summary, deferredTargets),
+    [execution, meta?.summary, deferredTargets]
   );
   const laggingExecution = isLaggingExecution(execution, summary);
   const canPauseExecution = executionStatus === "RUNNING" || (executionStatus === "PARTIAL" && !execution?.finished_at);
@@ -1351,9 +1352,16 @@ export default function ExecutionStream({ executionId }) {
     if (events.length <= MAX_RENDERED_EVENTS) return events;
     return events.slice(events.length - MAX_RENDERED_EVENTS);
   }, [events]);
+  const targetEvidenceById = useMemo(() => {
+    const out = new Map();
+    (deferredTargets || []).forEach((target) => {
+      out.set(target.agent_id, extractEvidenceSummary(target.stdout));
+    });
+    return out;
+  }, [deferredTargets]);
 
   const endpointIssues = useMemo(
-    () => (targets || [])
+    () => (deferredTargets || [])
       .map((target) => {
         const issue = extractTargetIssue(target, { isUpdateAction, isScanAction });
         if (!issue) return null;
@@ -1389,7 +1397,7 @@ export default function ExecutionStream({ executionId }) {
         };
       })
       .filter(Boolean),
-    [targets, isScanAction, isUpdateAction]
+    [deferredTargets, isScanAction, isUpdateAction]
   );
 
   const severityClass = (level) => {
@@ -1658,7 +1666,7 @@ export default function ExecutionStream({ executionId }) {
         </div>
       )}
 
-      {loading || error || targets.length === 0 ? null : (
+      {loading || error || deferredTargets.length === 0 ? null : (
         <>
           <div className="card-header mb-0">
             <div>
@@ -1678,7 +1686,7 @@ export default function ExecutionStream({ executionId }) {
                 </tr>
               </thead>
               <tbody>
-                {targets.map((t) => {
+                {deferredTargets.map((t) => {
                   const targetStatus = resolveTargetStatus(t, isUpdateAction);
                   return (
                   <tr
@@ -1695,7 +1703,7 @@ export default function ExecutionStream({ executionId }) {
                       </span>
                     </td>
                     <td>
-                      <span className="evidence-cell">{extractEvidenceSummary(t.stdout) || "-"}</span>
+                      <span className="evidence-cell">{targetEvidenceById.get(t.agent_id) || "-"}</span>
                     </td>
                   </tr>
                   );
@@ -1729,12 +1737,12 @@ export default function ExecutionStream({ executionId }) {
 		                          <span className={`status-pill ${targetStatus.tone}`}>
 		                            {targetStatus.label}
 		                          </span>
-		                        </td>
-		                        <td className="ws-normal">{t.issue || "-"}</td>
-		                        <td className="ws-normal">{t.context || extractEvidenceSummary(t.stdout) || "-"}</td>
-		                      </tr>
+			                        </td>
+			                        <td className="ws-normal">{t.issue || "-"}</td>
+			                        <td className="ws-normal">{t.context || targetEvidenceById.get(t.agent_id) || "-"}</td>
+			                      </tr>
                             );
-			                    })}
+				                    })}
                   </tbody>
                 </table>
               </div>

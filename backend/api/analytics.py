@@ -8,7 +8,7 @@ from core.active_defense import predict_alert_storm
 from core.analytics import overview, kill_chain, alert_summary, hourly_volume
 from core.ai_providers import AIAdapter, AIProviderError
 from core.security import current_user
-from core.tenant_ai_config import coerce_ai_provider_config, load_active_tenant_ai_config
+from core.tenant_ai_config import load_active_tenant_ai_config
 
 
 router = APIRouter(prefix="/analytics")
@@ -33,14 +33,6 @@ def _to_bool(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
     return bool(value)
-
-
-def _coerce_ai_config(value: Any) -> dict[str, Any]:
-    return coerce_ai_provider_config(
-        value,
-        source_label="request body",
-        status_code=400,
-    )
 
 
 def _fallback_ai_insight(
@@ -142,9 +134,7 @@ async def analytics_ai_insights(request: Request, user=Depends(current_user)):
     hours = max(1, min(_to_int(body.get("hours"), 72), 720))
     alert_id = _to_text(body.get("alert_id"))
     prompt = _to_text(body.get("prompt") or body.get("ai_prompt") or body.get("instructions"))
-    ai_config = _coerce_ai_config(body.get("ai_config"))
-    if not ai_config and isinstance(user, dict):
-        ai_config = load_active_tenant_ai_config(user.get("org_id"))
+    ai_config = load_active_tenant_ai_config(user.get("org_id")) if isinstance(user, dict) else {}
 
     overview_payload = overview()
     hourly_series = hourly_volume(hours)

@@ -441,12 +441,27 @@ def _extract_ai_config_node(node: Any) -> dict[str, Any]:
     return {}
 
 
+def _ensure_tenant_config_store_best_effort() -> None:
+    try:
+        from db import database as db_database
+
+        table = getattr(db_database, "tenant_config_revisions", None)
+        engine = getattr(db_database, "engine", None)
+        if table is None or engine is None:
+            return
+        table.create(bind=engine, checkfirst=True)
+    except Exception as exc:
+        logger.debug("tenant config store ensure failed: %s", exc)
+
+
 def _load_active_tenant_ai_config(org_id: Any) -> dict[str, Any]:
     tenant_id = _to_int(org_id, 0)
     if tenant_id < 1:
         return {}
-    db = connect()
+    row = None
+    db = None
     try:
+        db = connect()
         row = db.execute(
             text(
                 """
@@ -462,15 +477,47 @@ def _load_active_tenant_ai_config(org_id: Any) -> dict[str, Any]:
             {"tenant_id": tenant_id, "config_key": _AI_REMEDIATION_CONFIG_KEY},
         ).fetchone()
     except Exception as exc:
-        logger.warning(
-            "Tenant AI config lookup unavailable for org_id=%s; using env/request fallback (%s)",
-            tenant_id,
-            exc.__class__.__name__,
-        )
-        return {}
+        _ensure_tenant_config_store_best_effort()
+        try:
+            if db is not None:
+                db.close()
+        except Exception:
+            pass
+        retry_db = None
+        try:
+            retry_db = connect()
+            row = retry_db.execute(
+                text(
+                    """
+                    SELECT config_json
+                    FROM tenant_config_revisions
+                    WHERE org_id=:tenant_id
+                      AND config_key=:config_key
+                      AND LOWER(COALESCE(status, 'draft'))='active'
+                    ORDER BY version DESC, id DESC
+                    LIMIT 1
+                    """
+                ),
+                {"tenant_id": tenant_id, "config_key": _AI_REMEDIATION_CONFIG_KEY},
+            ).fetchone()
+        except Exception as retry_exc:
+            logger.warning(
+                "Tenant AI config lookup unavailable for org_id=%s; using env/request fallback (%s, retry=%s)",
+                tenant_id,
+                exc.__class__.__name__,
+                retry_exc.__class__.__name__,
+            )
+            return {}
+        finally:
+            try:
+                if retry_db is not None:
+                    retry_db.close()
+            except Exception:
+                pass
     finally:
         try:
-            db.close()
+            if db is not None:
+                db.close()
         except Exception:
             pass
     if not row:
@@ -501,17 +548,21 @@ def _load_active_tenant_ai_config(org_id: Any) -> dict[str, Any]:
         return {}
 
 
-def _resolve_ai_provider_config(*, body: dict[str, Any], user: Any) -> dict[str, Any] | None:
-    if "ai_config" in body and body.get("ai_config") is not None and not isinstance(body.get("ai_config"), dict):
-        raise HTTPException(status_code=400, detail="ai_config must be a JSON object")
-    request_cfg = _coerce_ai_provider_config(body.get("ai_config"), source="request")
-    if request_cfg:
-        return request_cfg
-    shorthand_cfg = _coerce_ai_provider_config(_coerce_ai_shorthand_config(body), source="request")
-    if shorthand_cfg:
-        return shorthand_cfg
+def _resolve_ai_provider_config(*, user: Any, require_enabled: bool = False) -> dict[str, Any] | None:
     tenant_cfg = _load_active_tenant_ai_config((user or {}).get("org_id") if isinstance(user, dict) else None)
-    return tenant_cfg or None
+    if not tenant_cfg:
+        if require_enabled:
+            raise HTTPException(
+                status_code=503,
+                detail="AI assistant is disabled. Enable it in Org Admin / Platform AI Configuration.",
+            )
+        return None
+    if require_enabled and not _to_bool(tenant_cfg.get("enabled"), False):
+        raise HTTPException(
+            status_code=503,
+            detail="AI assistant is disabled. Enable it in Org Admin / Platform AI Configuration.",
+        )
+    return tenant_cfg
 
 
 def _build_global_shell_dispatch(
@@ -1395,7 +1446,7 @@ async def global_shell_assist(request: Request, user=Depends(require_role("analy
     vulnerability_context = _coerce_vulnerability_context(
         body.get("vulnerability_context") or body.get("vulnerability")
     )
-    ai_config = _resolve_ai_provider_config(body=body if isinstance(body, dict) else {}, user=user)
+    ai_config = _resolve_ai_provider_config(user=user, require_enabled=True)
     if not prompt and not vulnerability_context:
         raise HTTPException(
             status_code=400,
@@ -1455,7 +1506,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         3 if auto_remediate else 1,
     )
     raw_command = str(body.get("command") or "").strip()
-    ai_config = _resolve_ai_provider_config(body=body if isinstance(body, dict) else {}, user=user)
+    ai_config = None
 
     run_as_system_explicit = body.get("run_as_system")
     run_as_system = _to_bool(run_as_system_explicit, False)
@@ -1553,8 +1604,9 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
     assistant_generated_command = False
     assistant_plan_error = ""
 
-    should_build_plan = bool(assistant_prompt or effective_context) or not raw_command
+    should_build_plan = bool(assistant_prompt or effective_context) or not raw_command or bool(auto_remediate)
     if should_build_plan:
+        ai_config = _resolve_ai_provider_config(user=user, require_enabled=True)
         planning_prompt = assistant_prompt
         if not planning_prompt:
             planning_prompt = (

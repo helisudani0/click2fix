@@ -300,7 +300,6 @@ export default function GlobalShell() {
   const [runAsSystem, setRunAsSystem] = useState(false);
   const [assistantPrompt, setAssistantPrompt] = useState("");
   const [assistantLoading, setAssistantLoading] = useState(false);
-  const [assistantPlan, setAssistantPlan] = useState(null);
   const [assistantEnabled, setAssistantEnabled] = useState(ASSIST_ENV_ENABLED);
   const [assistantDisabledReason, setAssistantDisabledReason] = useState("");
   const [autoRemediate, setAutoRemediate] = useState(false);
@@ -322,8 +321,6 @@ export default function GlobalShell() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [history, setHistory] = useState([]);
   const [activeExecutionId, setActiveExecutionId] = useState(null);
-  const [targetPage, setTargetPage] = useState(1);
-  const [targetPageSize, setTargetPageSize] = useState(50);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyPageSize, setHistoryPageSize] = useState(25);
 
@@ -562,23 +559,11 @@ export default function GlobalShell() {
   );
 
   useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(previewTargets.length / targetPageSize));
-    if (targetPage > totalPages) {
-      setTargetPage(totalPages);
-    }
-  }, [previewTargets.length, targetPage, targetPageSize]);
-
-  useEffect(() => {
     const totalPages = Math.max(1, Math.ceil(history.length / historyPageSize));
     if (historyPage > totalPages) {
       setHistoryPage(totalPages);
     }
   }, [history.length, historyPage, historyPageSize]);
-
-  const pagedTargets = useMemo(() => {
-    const start = (targetPage - 1) * targetPageSize;
-    return previewTargets.slice(start, start + targetPageSize);
-  }, [previewTargets, targetPage, targetPageSize]);
 
   const pagedHistory = useMemo(() => {
     const start = (historyPage - 1) * historyPageSize;
@@ -653,7 +638,6 @@ export default function GlobalShell() {
       const recommended = data?.recommended && typeof data.recommended === "object"
         ? data.recommended
         : (plan?.recommended && typeof plan.recommended === "object" ? plan.recommended : null);
-      setAssistantPlan(plan);
       if (recommended?.command) {
         setCommand(String(recommended.command));
         if (typeof recommended.run_as_system === "boolean") {
@@ -678,7 +662,6 @@ export default function GlobalShell() {
       if (statusCode === 503 || looksLikeAssistantUnavailable(detailText || err.message)) {
         setAssistantEnabled(false);
         setAutoRemediate(false);
-        setAssistantPlan(null);
         setAssistantDisabledReason(detailText || "AI assistant is currently unavailable.");
       }
       setStatus(formatApiError(err, detailText || "Failed to generate assistant command."));
@@ -820,59 +803,8 @@ export default function GlobalShell() {
         </div>
       </div>
 
-      <div className="split-view global-shell-workspace">
-        <div className="card global-shell-target-card" data-tour-id="global-shell-drawer">
-          <div className="card-header">
-            <div>
-              <h3>Target Preview</h3>
-              <p className="muted">Connected Windows endpoints selected for execution.</p>
-            </div>
-          </div>
-          <div className="table-scroll h-36vh">
-            <table className="table compact readable">
-              <thead>
-                <tr>
-                  <th>Agent ID</th>
-                  <th>Name</th>
-                  <th>Group</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {previewTargets.length === 0 ? (
-                  <tr>
-                    <td colSpan="4" className="text-center">
-                      No targets available.
-                    </td>
-                  </tr>
-                ) : (
-                  pagedTargets.map((agent) => (
-                    <tr key={`target-${agent.id}`} data-agent-id={agent.id}>
-                      <td>{agent.id}</td>
-                      <td>{agent.name || "-"}</td>
-                      <td>{agent.groupText || "-"}</td>
-                      <td>{agent.status || "-"}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-          <Pager
-            total={previewTargets.length}
-            page={targetPage}
-            pageSize={targetPageSize}
-            onPageChange={setTargetPage}
-            onPageSizeChange={(size) => {
-              setTargetPageSize(size);
-              setTargetPage(1);
-            }}
-            pageSizeOptions={[25, 50, 100]}
-            label="targets"
-          />
-        </div>
-
-        <div className="card global-shell-builder-card">
+      <div className="global-shell-builder-grid">
+        <div className="card global-shell-builder-card global-shell-scope-card">
           <div className="card-header">
             <div>
               <h3>Command Builder</h3>
@@ -889,7 +821,6 @@ export default function GlobalShell() {
                   value={targetMode}
                   onChange={(e) => {
                     setTargetMode(e.target.value);
-                    setTargetPage(1);
                   }}
                 >
                   <option value="fleet">Fleet (all connected Windows)</option>
@@ -971,9 +902,6 @@ export default function GlobalShell() {
                     {connectedWindows.length === 0 ? (
                       <div className="meta-line">No connected Windows agents available.</div>
                     ) : null}
-                    <div className="meta-line">
-                      Tip: Use "All" for quick fleet subset, then remove specific endpoints.
-                    </div>
                   </div>
                 </div>
               ) : targetMode === "group" ? (
@@ -1020,11 +948,21 @@ export default function GlobalShell() {
                 <span className="muted">Run as SYSTEM (administrator context)</span>
               </label>
             </div>
+          </div>
+        </div>
 
+        <div className="card global-shell-builder-card global-shell-ai-card">
+          <div className="card-header">
+            <div>
+              <h3>AI Command Assistant</h3>
+              <p className="muted">Describe the task or vulnerability fix you want (example: Upgrade Google Chrome on affected endpoints).</p>
+            </div>
+          </div>
+
+          <div className="list">
             <div className="list-item readable">
-              <div className="muted">AI Command Assistant</div>
               <textarea
-                className="input mt-8"
+                className="input mono"
                 value={assistantPrompt}
                 onChange={(e) => setAssistantPrompt(e.target.value)}
                 rows={3}
@@ -1056,16 +994,6 @@ export default function GlobalShell() {
               <div className="meta-line mt-8">
                 AI setup: use Org Admin / Platform AI Configuration, or set `C2F_AI_FEATURES_ENABLED=true` with `C2F_LLM_API_KEY` in `.env.appliance`.
               </div>
-              {assistantPlan?.recommended?.reason ? (
-                <div className="meta-line mt-8">
-                  {String(assistantPlan.recommended.reason)}
-                </div>
-              ) : null}
-              {assistantPlan?.recommended?.strategy ? (
-                <div className="meta-line mt-8">
-                  Strategy: {String(assistantPlan.recommended.strategy)}
-                </div>
-              ) : null}
               <label className="mt-10 inline-check">
                 <input
                   type="checkbox"
@@ -1075,23 +1003,6 @@ export default function GlobalShell() {
                 />
                 <span className="muted">Auto-remediate loop (retry with fallback commands)</span>
               </label>
-              {assistantEnabled && autoRemediate ? (
-                <div className="page-actions mt-8">
-                  <input
-                    className="input"
-                    type="number"
-                    min={1}
-                    max={8}
-                    value={maxAttempts}
-                    onChange={(e) => {
-                      const parsed = Number.parseInt(e.target.value || "3", 10);
-                      if (Number.isNaN(parsed)) return;
-                      setMaxAttempts(Math.max(1, Math.min(8, parsed)));
-                    }}
-                  />
-                  <span className="muted">Max attempts (1-8)</span>
-                </div>
-              ) : null}
             </div>
 
             <div className="list-item readable">
@@ -1132,55 +1043,49 @@ export default function GlobalShell() {
                     : "Example: ipconfig /all"
                 }
               />
-              {asyncLaunchWarning ? (
-                <div className="meta-line mt-8">{asyncLaunchWarning}</div>
-              ) : null}
-            </div>
-
-            <div className="list-item readable">
-              <div className="muted">Effective Command</div>
-              <div className="meta-line ws-normal mt-8">
-                {effectiveCommand || "-"}
-              </div>
-              {(verifyKb || verifyMinBuild || verifyStdoutContains) ? (
-                <div className="meta-line mt-8">
-                  Verification checks: {verifyKb ? `KB ${verifyKb}` : ""}
-                  {verifyKb && verifyMinBuild ? " | " : ""}
-                  {verifyMinBuild ? `Min build ${verifyMinBuild}` : ""}
-                  {(verifyKb || verifyMinBuild) && verifyStdoutContains ? " | " : ""}
-                  {verifyStdoutContains ? `Stdout contains "${verifyStdoutContains}"` : ""}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="list-item readable">
-              <div className="muted">Exclude Agent IDs (optional)</div>
-              <input
-                className="input mt-8"
-                value={excludeIdsText}
-                onChange={(e) => setExcludeIdsText(e.target.value)}
-                placeholder="Example: 001,004,013"
-              />
-            </div>
-
-            <div className="list-item readable">
-              <div className="muted">Justification (optional)</div>
-              <input
-                className="input mt-8"
-                value={justification}
-                onChange={(e) => setJustification(e.target.value)}
-                placeholder="Reason for global command"
-              />
-            </div>
-
-            <div className="page-actions">
-              <button className="btn" onClick={runFleetCommand} disabled={submitting}>
-                {submitting ? "Queueing..." : "Run Global Command"}
-              </button>
             </div>
           </div>
         </div>
+      </div>
 
+      <div className="card global-shell-run-card">
+        <div className="list">
+          <div className="list-item readable">
+            <div className="muted">Effective Command</div>
+            <div className="meta-line ws-normal mt-8">
+              {effectiveCommand || "-"}
+            </div>
+            {asyncLaunchWarning ? (
+              <div className="meta-line mt-8">{asyncLaunchWarning}</div>
+            ) : null}
+          </div>
+
+          <div className="list-item readable">
+            <div className="muted">Exclude Agent IDs (optional)</div>
+            <input
+              className="input mt-8"
+              value={excludeIdsText}
+              onChange={(e) => setExcludeIdsText(e.target.value)}
+              placeholder="Example: 001,004,013"
+            />
+          </div>
+
+          <div className="list-item readable">
+            <div className="muted">Justification (optional)</div>
+            <input
+              className="input mt-8"
+              value={justification}
+              onChange={(e) => setJustification(e.target.value)}
+              placeholder="Reason for global command"
+            />
+          </div>
+
+          <div className="page-actions global-shell-run-actions">
+            <button className="btn" onClick={runFleetCommand} disabled={submitting}>
+              {submitting ? "Queueing..." : "Run Global Command"}
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="card global-shell-history-card">

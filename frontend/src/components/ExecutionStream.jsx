@@ -1755,11 +1755,62 @@ export default function ExecutionStream({ executionId }) {
 		                <pre className="code-block">
 		                  {extractEvidenceLines(selectedTarget.stdout).join("\n") || "-"}
 		                </pre>
-			                {actionId === "endpoint-healthcheck" ? (
-			                  <div className="mt-10">
-			                    <div className="muted">Healthcheck Result</div>
-			                    <pre className="code-block">
-			                      {JSON.stringify(parseHealthcheck(selectedTarget.stdout), null, 2)}
+		                <div className="mt-12">
+		                  <div className="muted">Related Alerts (Since Execution Start)</div>
+		                  {evidenceLoading ? (
+		                    <div className="empty-state">Loading alerts...</div>
+		                  ) : evidenceError ? (
+		                    <div className="empty-state">{evidenceError}</div>
+		                  ) : evidenceAlerts.length === 0 ? (
+		                    <div className="meta-line">No alerts observed in this window.</div>
+		                  ) : (
+		                    <>
+		                      <div className="table-scroll h-240 mt-8 execution-related-alerts-scroll">
+		                        <table className="table compact readable execution-related-alerts-table">
+		                          <thead>
+		                            <tr>
+		                              <th>ID</th>
+		                              <th>Rule</th>
+		                              <th>Sev</th>
+		                              <th>Time</th>
+		                            </tr>
+		                          </thead>
+		                          <tbody>
+		                            {pagedEvidenceAlerts.map((a) => (
+		                              <tr key={`ev-${executionId}-${selectedTarget.agent_id}-${a.id}`}>
+		                                <td>{a.id}</td>
+		                                <td className="ws-normal">{a.rule}</td>
+		                                <td>
+		                                  <span className={`status-pill ${severityClass(a.level)}`}>
+		                                    {a.level}
+		                                  </span>
+		                                </td>
+		                                <td><RelativeTimestamp value={a.timestampRaw} /></td>
+		                              </tr>
+		                            ))}
+		                          </tbody>
+		                        </table>
+		                      </div>
+		                      <Pager
+		                        total={evidenceAlerts.length}
+		                        page={evidencePage}
+		                        pageSize={evidencePageSize}
+		                        onPageChange={setEvidencePage}
+		                        onPageSizeChange={(size) => {
+		                          setEvidencePageSize(size);
+		                          setEvidencePage(1);
+		                        }}
+		                        pageSizeOptions={[10, 25, 50]}
+		                        label="related alerts"
+		                      />
+		                    </>
+		                  )}
+		                </div>
+				                {actionId === "endpoint-healthcheck" ? (
+				                  <div className="mt-10">
+				                    <div className="muted">Healthcheck Result</div>
+				                    <pre className="code-block">
+				                      {JSON.stringify(parseHealthcheck(selectedTarget.stdout), null, 2)}
 			                    </pre>
 			                  </div>
 			                ) : null}
@@ -1935,57 +1986,6 @@ export default function ExecutionStream({ executionId }) {
 		                    </button>
 		                  </div>
 		                ) : null}
-		                <div className="mt-12">
-		                  <div className="muted">Related Alerts (Since Execution Start)</div>
-	                  {evidenceLoading ? (
-	                    <div className="empty-state">Loading alerts...</div>
-	                  ) : evidenceError ? (
-	                    <div className="empty-state">{evidenceError}</div>
-	                  ) : evidenceAlerts.length === 0 ? (
-	                    <div className="meta-line">No alerts observed in this window.</div>
-		                  ) : (
-                    <>
-                      <div className="table-scroll h-240 mt-8 execution-related-alerts-scroll">
-                        <table className="table compact readable execution-related-alerts-table">
-	                          <thead>
-	                            <tr>
-	                              <th>ID</th>
-	                              <th>Rule</th>
-	                              <th>Sev</th>
-	                              <th>Time</th>
-	                            </tr>
-	                          </thead>
-	                          <tbody>
-	                            {pagedEvidenceAlerts.map((a) => (
-	                              <tr key={`ev-${executionId}-${selectedTarget.agent_id}-${a.id}`}>
-	                                <td>{a.id}</td>
-		                                <td className="ws-normal">{a.rule}</td>
-		                                <td>
-	                                  <span className={`status-pill ${severityClass(a.level)}`}>
-	                                    {a.level}
-	                                  </span>
-	                                </td>
-	                                <td><RelativeTimestamp value={a.timestampRaw} /></td>
-	                              </tr>
-	                            ))}
-	                          </tbody>
-	                        </table>
-	                      </div>
-                      <Pager
-                        total={evidenceAlerts.length}
-                        page={evidencePage}
-                        pageSize={evidencePageSize}
-                        onPageChange={setEvidencePage}
-                        onPageSizeChange={(size) => {
-                          setEvidencePageSize(size);
-                          setEvidencePage(1);
-                        }}
-                        pageSizeOptions={[10, 25, 50]}
-                        label="related alerts"
-                      />
-                    </>
-	                  )}
-	                </div>
 		                <pre className="code-block">{selectedTargetCleanOutput || "-"}</pre>
 		                <div className="muted mt-10">Raw Output</div>
 		                <div className="muted">stdout</div>

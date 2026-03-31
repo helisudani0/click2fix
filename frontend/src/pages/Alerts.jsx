@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getAgents, getAlerts } from "../api/wazuh";
 import IOCPanel from "../components/IOCPanel";
@@ -98,6 +98,7 @@ export default function Alerts() {
   const [detailMode, setDetailMode] = useState(false);
   const [queuePage, setQueuePage] = useState(1);
   const [queuePageSize, setQueuePageSize] = useState(50);
+  const tableScrollRef = useRef(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -181,6 +182,12 @@ export default function Alerts() {
   useEffect(() => {
     setQueuePage(1);
   }, [severityFilter]);
+
+  useEffect(() => {
+    const node = tableScrollRef.current;
+    if (!node) return;
+    node.scrollLeft = 0;
+  }, [agentFilter, agentOnly, detailMode, filteredAlerts.length, queuePage, queuePageSize, severityFilter]);
 
   const pagedAlerts = useMemo(() => {
     const start = (queuePage - 1) * queuePageSize;
@@ -382,7 +389,7 @@ export default function Alerts() {
             </button>
           </div>
 
-          <div className="table-scroll ticketing-table-scroll">
+          <div className="table-scroll ticketing-table-scroll" ref={tableScrollRef}>
             <table className="table readable">
               <thead>
                 <tr>

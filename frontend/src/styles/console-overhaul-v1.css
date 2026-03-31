@@ -1977,23 +1977,23 @@ body.console-redesign-v4 .lag-indicator {
    ============================================================ */
 body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll table {
   width: 100%;
-  min-width: 1220px;
-  max-width: none;
+  min-width: 0;
+  max-width: 100%;
   table-layout: fixed;
 }
 
 body.console-redesign-v4 .page-route-alerts th:nth-child(1),
-body.console-redesign-v4 .page-route-alerts td:nth-child(1) { width: 176px; }
+body.console-redesign-v4 .page-route-alerts td:nth-child(1) { width: 14%; }
 body.console-redesign-v4 .page-route-alerts th:nth-child(2),
-body.console-redesign-v4 .page-route-alerts td:nth-child(2) { width: 96px; }
+body.console-redesign-v4 .page-route-alerts td:nth-child(2) { width: 9%; }
 body.console-redesign-v4 .page-route-alerts th:nth-child(3),
-body.console-redesign-v4 .page-route-alerts td:nth-child(3) { width: 360px; }
+body.console-redesign-v4 .page-route-alerts td:nth-child(3) { width: 30%; }
 body.console-redesign-v4 .page-route-alerts th:nth-child(4),
-body.console-redesign-v4 .page-route-alerts td:nth-child(4) { width: 160px; }
+body.console-redesign-v4 .page-route-alerts td:nth-child(4) { width: 15%; }
 body.console-redesign-v4 .page-route-alerts th:nth-child(5),
-body.console-redesign-v4 .page-route-alerts td:nth-child(5) { width: 292px; }
+body.console-redesign-v4 .page-route-alerts td:nth-child(5) { width: 20%; }
 body.console-redesign-v4 .page-route-alerts th:nth-child(6),
-body.console-redesign-v4 .page-route-alerts td:nth-child(6) { width: 136px; white-space: nowrap; }
+body.console-redesign-v4 .page-route-alerts td:nth-child(6) { width: 12%; white-space: nowrap; }
 
 body.console-redesign-v4 .page-route-alerts .alerts-col-rule .table-wrap-cell {
   -webkit-line-clamp: 2;
@@ -2140,4 +2140,95 @@ body.console-redesign-v4 .page-route-org-admin select.input {
   pointer-events: auto;
   position: relative;
   z-index: 1;
+}
+
+/* ============================================================
+   GLOBAL SHELL - FINAL LAYOUT + HISTORY STABILITY
+   ============================================================ */
+body.console-redesign-v4 .page-route-global-shell .global-shell-builder-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-builder-card {
+  min-width: 0;
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-run-card {
+  margin-top: 14px;
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-run-actions {
+  width: 100%;
+  justify-content: flex-end;
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-card {
+  margin-top: 14px;
+  min-width: 0;
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-scroll {
+  overflow: auto;
+  max-height: min(58vh, 680px);
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-scroll .global-shell-history-table {
+  width: max-content;
+  min-width: 1600px;
+  table-layout: fixed;
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(1),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(1) { width: 70px; }
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(2),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(2) { width: 130px; }
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(3),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(3) { width: 230px; }
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(4),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(4) { width: 140px; }
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(5),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(5) { width: 360px; }
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(6),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(6) { width: 360px; }
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(7),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(7) { width: 155px; }
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th:nth-child(8),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(8) { width: 155px; }
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table th {
+  white-space: nowrap;
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(5),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(6) {
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  vertical-align: top;
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(7),
+body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td:nth-child(8) {
+  white-space: nowrap;
+  text-align: right;
+}
+
+body.console-redesign-v4 .page-route-global-shell .shell-output-preview {
+  display: block;
+  max-height: 78px;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+@media (max-width: 1200px) {
+  body.console-redesign-v4 .page-route-global-shell .global-shell-builder-grid {
+    grid-template-columns: 1fr;
+  }
 }

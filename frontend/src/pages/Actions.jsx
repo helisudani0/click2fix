@@ -9,6 +9,12 @@ const DEFAULT_ACTIONS_SIDEBAR_WIDTH = 440;
 const MIN_ACTIONS_SIDEBAR_WIDTH = 360;
 const MAX_ACTIONS_SIDEBAR_WIDTH = 640;
 const DEFAULT_ACTION_JUSTIFICATION = "Action execution requested from Actions workspace.";
+const TARGET_MODE_LABELS = {
+  agent: "Single agent",
+  multi: "Multiple agents",
+  group: "Specific group",
+  fleet: "Fleet",
+};
 
 const normalizeAgents = (data) => {
   if (Array.isArray(data)) return data;
@@ -23,6 +29,28 @@ const formatAgentId = (raw) => {
   if (typeof raw === "number") return String(raw).padStart(3, "0");
   const value = String(raw).trim();
   return /^[0-9]+$/.test(value) && value.length < 3 ? value.padStart(3, "0") : value;
+};
+
+const toAgentGroups = (agent) => {
+  const values = [];
+  const append = (value) => {
+    if (value === null || value === undefined) return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => append(item));
+      return;
+    }
+    const text = String(value).trim();
+    if (!text) return;
+    if (text.includes(",")) {
+      text.split(",").forEach((part) => append(part));
+      return;
+    }
+    values.push(text);
+  };
+  append(agent?.group);
+  append(agent?.groups);
+  append(agent?.group_name);
+  return Array.from(new Set(values));
 };
 
 const toDisplay = (value, fallback = "-") => {
@@ -72,11 +100,6 @@ const actionCategory = (action) => String(action?.category || action?.type || "U
 const isAgentConnected = (status) => {
   const value = String(status || "").trim().toLowerCase();
   return value.includes("active") || value.includes("connected") || value.includes("online");
-};
-
-const formatLatency = (value) => {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) && numeric > 0 ? `${numeric} ms` : "-";
 };
 
 const clampSidebarWidth = (value) => {
@@ -158,9 +181,11 @@ export default function Actions() {
   const [activeExecutionId, setActiveExecutionId] = useState(null);
   const [justification, setJustification] = useState("");
   const [agents, setAgents] = useState([]);
-  const [targetSearch, setTargetSearch] = useState("");
-  const [targetStatusFilter, setTargetStatusFilter] = useState("all");
+  const [targetMode, setTargetMode] = useState("fleet");
+  const [singleTargetId, setSingleTargetId] = useState("");
+  const [groupTarget, setGroupTarget] = useState("");
   const [targetAgentIds, setTargetAgentIds] = useState([]);
+  const [multiPickAgentId, setMultiPickAgentId] = useState("");
   const [connectorStatus, setConnectorStatus] = useState(null);
   const [connectorError, setConnectorError] = useState("");
   const [connectorLoaded, setConnectorLoaded] = useState(false);
@@ -191,32 +216,52 @@ export default function Actions() {
     });
   }, [actions, actionSearch, categoryFilter]);
 
-  const selectedAgents = useMemo(
-    () => targetAgentIds.map((agentId) => agents.find((agent) => agent.id === agentId)).filter(Boolean),
-    [agents, targetAgentIds]
+  const connectedAgents = useMemo(
+    () => agents.filter((agent) => isAgentConnected(agent.status)),
+    [agents]
   );
 
-  const filteredAgents = useMemo(() => {
-    const query = targetSearch.trim().toLowerCase();
-    const selectedIds = new Set(targetAgentIds);
-    return [...agents]
-      .filter((agent) => {
-        if (targetStatusFilter === "connected" && !isAgentConnected(agent.status)) return false;
-        if (targetStatusFilter === "disconnected" && isAgentConnected(agent.status)) return false;
-        if (!query) return true;
-        const haystack = [agent.id, agent.hostname, agent.os, agent.status].join(" ").toLowerCase();
-        return haystack.includes(query);
-      })
-      .sort((left, right) => {
-        const leftSelected = selectedIds.has(left.id);
-        const rightSelected = selectedIds.has(right.id);
-        if (leftSelected !== rightSelected) return leftSelected ? -1 : 1;
-        const leftConnected = isAgentConnected(left.status);
-        const rightConnected = isAgentConnected(right.status);
-        if (leftConnected !== rightConnected) return leftConnected ? -1 : 1;
-        return `${left.hostname} ${left.id}`.localeCompare(`${right.hostname} ${right.id}`);
+  const availableGroups = useMemo(() => {
+    const names = new Set();
+    connectedAgents.forEach((agent) => {
+      (agent.groups || []).forEach((group) => {
+        const value = String(group || "").trim();
+        if (value) names.add(value);
       });
-  }, [agents, targetAgentIds, targetSearch, targetStatusFilter]);
+    });
+    return Array.from(names).sort((left, right) => left.localeCompare(right));
+  }, [connectedAgents]);
+
+  const selectedMultiAgentSet = useMemo(
+    () => new Set(targetAgentIds.map((id) => formatAgentId(id)).filter(Boolean)),
+    [targetAgentIds]
+  );
+
+  const selectedMultiAgents = useMemo(
+    () => connectedAgents.filter((agent) => selectedMultiAgentSet.has(agent.id)),
+    [connectedAgents, selectedMultiAgentSet]
+  );
+
+  const scopedTargets = useMemo(() => {
+    if (targetMode === "agent") {
+      const match = connectedAgents.find((agent) => agent.id === formatAgentId(singleTargetId));
+      return match ? [match] : [];
+    }
+    if (targetMode === "multi") {
+      return connectedAgents.filter((agent) => selectedMultiAgentSet.has(agent.id));
+    }
+    if (targetMode === "group") {
+      const normalizedGroup = String(groupTarget || "").trim().toLowerCase();
+      if (!normalizedGroup) return [];
+      return connectedAgents.filter((agent) =>
+        (agent.groups || []).some((group) => String(group || "").trim().toLowerCase() === normalizedGroup)
+      );
+    }
+    return connectedAgents;
+  }, [connectedAgents, targetMode, singleTargetId, selectedMultiAgentSet, groupTarget]);
+
+  const selectedAgents = scopedTargets;
+  const resolvedTargetIds = useMemo(() => scopedTargets.map((agent) => agent.id), [scopedTargets]);
 
   const actionInputsList = useMemo(
     () => Array.isArray(selectedAction?.inputs) ? selectedAction.inputs.filter((field) => field && typeof field === "object" && field.name) : [],
@@ -224,7 +269,7 @@ export default function Actions() {
   );
 
   const actionHints = useMemo(() => buildActionHints(selectedAction), [selectedAction]);
-  const connectedAgentCount = useMemo(() => agents.filter((agent) => isAgentConnected(agent.status)).length, [agents]);
+  const connectedAgentCount = connectedAgents.length;
   const effectiveJustification = useMemo(
     () => (justification.trim() ? justification.trim() : DEFAULT_ACTION_JUSTIFICATION),
     [justification]
@@ -234,7 +279,7 @@ export default function Actions() {
     if (!selectedAction) return "";
     return JSON.stringify(
       {
-        agent_ids: targetAgentIds,
+        agent_ids: resolvedTargetIds,
         action_id: actionId,
         args: compactArgs(actionInputs),
         justification: effectiveJustification,
@@ -243,13 +288,13 @@ export default function Actions() {
       null,
       2
     );
-  }, [selectedAction, targetAgentIds, actionId, actionInputs, effectiveJustification]);
+  }, [selectedAction, resolvedTargetIds, actionId, actionInputs, effectiveJustification]);
 
   const connectorLabel = connectorSummary(connectorStatus, connectorError, connectorLoaded);
   const connectorTone = statusToneFromText(connectorStatus?.status || connectorError || connectorLabel);
   const actionStatusTone = statusToneFromText(actionStatus);
   const missingRequiredInput = actionInputsList.some((field) => field.required && !String(actionInputs?.[field.name] ?? "").trim());
-  const canExecute = Boolean(selectedAction) && targetAgentIds.length > 0 && !missingRequiredInput && !isActionRunning;
+  const canExecute = Boolean(selectedAction) && resolvedTargetIds.length > 0 && !missingRequiredInput && !isActionRunning;
 
   const loadActions = useCallback(async () => {
     try {
@@ -268,6 +313,7 @@ export default function Actions() {
           const id = formatAgentId(agent?.id || agent?.agent_id || "");
           if (!id) return null;
           const hostname = toDisplay(agent?.name || agent?.hostname || id, id);
+          const groups = toAgentGroups(agent);
           return {
             id,
             name: hostname,
@@ -275,6 +321,8 @@ export default function Actions() {
             status: toDisplay(agent?.status, "unknown"),
             os: toDisplay(agent?.os?.name || agent?.os || agent?.platform, "-"),
             latency: Number(agent?.latency_ms || agent?.latency || agent?.ping || 0) || 0,
+            groups,
+            groupText: groups.join(", "),
           };
         })
         .filter(Boolean);
@@ -318,8 +366,14 @@ export default function Actions() {
   }, [selectedAction]);
 
   useEffect(() => {
-    setTargetAgentIds((current) => current.filter((id) => agents.some((agent) => agent.id === id)));
-  }, [agents]);
+    setTargetAgentIds((current) => current.filter((id) => connectedAgents.some((agent) => agent.id === id)));
+  }, [connectedAgents]);
+
+  useEffect(() => {
+    if (targetMode !== "multi") setMultiPickAgentId("");
+    if (targetMode !== "agent") setSingleTargetId("");
+    if (targetMode !== "group") setGroupTarget("");
+  }, [targetMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -385,7 +439,7 @@ export default function Actions() {
   }, []);
 
   const handleExecuteAction = useCallback(async () => {
-    if (!selectedAction || targetAgentIds.length === 0) {
+    if (!selectedAction || resolvedTargetIds.length === 0) {
       setActionStatus("Select an action and at least one target agent.");
       return;
     }
@@ -401,7 +455,7 @@ export default function Actions() {
 
     try {
       const response = await runAction({
-        agent_ids: targetAgentIds,
+        agent_ids: resolvedTargetIds,
         action_id: actionId,
         args: compactArgs(actionInputs),
         justification: effectiveJustification,
@@ -415,19 +469,7 @@ export default function Actions() {
     } finally {
       setIsActionRunning(false);
     }
-  }, [selectedAction, targetAgentIds, missingRequiredInput, isActionRunning, actionId, actionInputs, effectiveJustification]);
-
-  const selectVisibleAgents = useCallback(() => {
-    setTargetAgentIds((current) => {
-      const merged = new Set(current);
-      filteredAgents.forEach((agent) => merged.add(agent.id));
-      return Array.from(merged);
-    });
-  }, [filteredAgents]);
-
-  const clearSelectedAgents = useCallback(() => {
-    setTargetAgentIds([]);
-  }, []);
+  }, [selectedAction, resolvedTargetIds, missingRequiredInput, isActionRunning, actionId, actionInputs, effectiveJustification]);
 
   return (
     <div className="page actions-page page-route-actions">
@@ -458,8 +500,10 @@ export default function Actions() {
         </div>
         <div className="mission-card">
           <div className="mission-label">Target Scope</div>
-          <div className="mission-value">{targetAgentIds.length}</div>
-          <div className="mission-meta">{selectedAgents.length === 1 ? "1 agent selected" : `${selectedAgents.length} agents selected`}</div>
+          <div className="mission-value">{resolvedTargetIds.length}</div>
+          <div className="mission-meta">
+            {TARGET_MODE_LABELS[targetMode]}{selectedAgents.length === 1 ? " • 1 agent selected" : ` • ${selectedAgents.length} agents selected`}
+          </div>
         </div>
         <div className="mission-card">
           <div className="mission-label">Connected Agents</div>
@@ -474,48 +518,195 @@ export default function Actions() {
       </div>
 
       <div className="actions-workspace" style={{ "--actions-sidebar-width": `${sidebarWidth}px` }}>
-        <div className="card actions-sidebar-pane" data-tour-id="action-catalog">
-          <div className="card-header">
-            <div>
-              <h3>Action Catalog</h3>
-              <p className="muted">Browse remediation and containment actions without leaving the workspace.</p>
+        <div className="actions-sidebar-pane" data-tour-id="action-catalog">
+          <div className="card actions-targeting-card">
+            <div className="card-header">
+              <div>
+                <h3>Target Selection</h3>
+                <p className="muted">Use fleet, multi, single, or group targeting before choosing and dispatching actions.</p>
+              </div>
             </div>
-          </div>
-          <div className="page-actions">
-            <input className="input" value={actionSearch} onChange={(event) => setActionSearch(event.target.value)} placeholder="Search action name, id, category, or description..." />
-            <select className="input" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
-              <option value="">All categories</option>
-              {actionCategories.map((category) => (
-                <option key={category} value={category}>{category}</option>
-              ))}
-            </select>
-          </div>
-          <div className="meta-line">{filteredActions.length} visible actions. Drag the divider to resize the catalog.</div>
-          <div className="actions-catalog-scroll">
-            {filteredActions.length ? (
-              <div className="actions-catalog-list">
-                {filteredActions.map((action) => {
-                  const selected = String(action?.id || "") === String(actionId);
-                  return (
-                    <button
-                      key={String(action?.id || actionLabel(action))}
-                      type="button"
-                      className={`actions-catalog-item${selected ? " selected" : ""}`}
-                      onClick={() => handleActionSelect(action)}
-                    >
-                      <div className="actions-catalog-item-title">{actionLabel(action)}</div>
-                      <div className="actions-catalog-item-desc">{toDisplay(action?.description, "No description available.")}</div>
-                      <div className="actions-catalog-item-meta">
-                        <span className="actions-catalog-item-category">{actionCategory(action)}</span>
-                        <code>{String(action?.id || "-")}</code>
-                      </div>
+
+            <div className="actions-field-block">
+              <label className="actions-field-label">Target Scope</label>
+              <select
+                className="input"
+                value={targetMode}
+                onChange={(event) => setTargetMode(event.target.value)}
+              >
+                <option value="fleet">Fleet (all connected agents)</option>
+                <option value="multi">Multiple agents</option>
+                <option value="agent">Single agent</option>
+                <option value="group">Specific group</option>
+              </select>
+            </div>
+
+            {targetMode === "multi" ? (
+              <div className="actions-field-block">
+                <label className="actions-field-label">Pick Agents</label>
+                <div className="page-actions">
+                  <select
+                    className="input"
+                    value={multiPickAgentId}
+                    onChange={(event) => setMultiPickAgentId(formatAgentId(event.target.value))}
+                  >
+                    <option value="">Select connected agent</option>
+                    {connectedAgents.map((agent) => (
+                      <option key={`multi-target-${agent.id}`} value={agent.id}>
+                        {agent.id} - {agent.hostname}{agent.groupText ? ` (${agent.groupText})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={() => {
+                      if (!multiPickAgentId) return;
+                      setTargetAgentIds((current) => {
+                        const ids = new Set(current.map((id) => formatAgentId(id)).filter(Boolean));
+                        ids.add(multiPickAgentId);
+                        return Array.from(ids);
+                      });
+                    }}
+                    disabled={!multiPickAgentId}
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={() => setTargetAgentIds(connectedAgents.map((agent) => agent.id))}
+                    disabled={!connectedAgents.length}
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    onClick={() => setTargetAgentIds([])}
+                    disabled={!targetAgentIds.length}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {targetMode === "agent" ? (
+              <div className="actions-field-block">
+                <label className="actions-field-label">Single Agent</label>
+                <select className="input" value={singleTargetId} onChange={(event) => setSingleTargetId(event.target.value)}>
+                  <option value="">Select agent</option>
+                  {connectedAgents.map((agent) => (
+                    <option key={`single-target-${agent.id}`} value={agent.id}>
+                      {agent.id} - {agent.hostname}{agent.groupText ? ` (${agent.groupText})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+
+            {targetMode === "group" ? (
+              <div className="actions-field-block">
+                <label className="actions-field-label">Target Group</label>
+                <select className="input" value={groupTarget} onChange={(event) => setGroupTarget(event.target.value)}>
+                  <option value="">Select group</option>
+                  {availableGroups.map((group) => (
+                    <option key={`group-target-${group}`} value={group}>{group}</option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+
+            {targetMode === "multi" ? (
+              <div className="actions-selection-strip">
+                {selectedMultiAgents.length ? selectedMultiAgents.map((agent) => (
+                  <span key={`selected-multi-${agent.id}`} className="chip">
+                    <MaskedAgentId value={agent.id} />
+                    <span>{agent.hostname}</span>
+                    <button type="button" className="panel-collapse-btn" onClick={() => handleToggleAgent(agent.id)} aria-label={`Remove ${agent.hostname}`}>
+                      x
                     </button>
-                  );
-                })}
+                  </span>
+                )) : <div className="meta-line">No agents selected yet.</div>}
               </div>
             ) : (
-              <div className="empty-state">No actions match the current filters.</div>
+              <div className="meta-line">{TARGET_MODE_LABELS[targetMode]} resolves to {resolvedTargetIds.length} target(s).</div>
             )}
+
+            <div className="table-scroll actions-target-scroll">
+              <table className="table compact readable actions-target-table actions-target-preview-table">
+                <thead>
+                  <tr>
+                    <th>Agent ID</th>
+                    <th>Host</th>
+                    <th>Group</th>
+                    <th>Status</th>
+                    <th>OS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {scopedTargets.length ? scopedTargets.map((agent) => (
+                    <tr key={`target-row-${agent.id}`}>
+                      <td><MaskedAgentId value={agent.id} /></td>
+                      <td>{agent.hostname}</td>
+                      <td>{agent.groupText || "-"}</td>
+                      <td><span className={`status-pill ${isAgentConnected(agent.status) ? "success" : "failed"}`}>{toDisplay(agent.status, "Unknown")}</span></td>
+                      <td>{agent.os}</td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td colSpan={5}><div className="empty-state">No agents match the current target scope.</div></td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card actions-catalog-card">
+            <div className="card-header">
+              <div>
+                <h3>Action Catalog</h3>
+                <p className="muted">Browse remediation and containment actions without leaving the workspace.</p>
+              </div>
+            </div>
+            <div className="page-actions">
+              <input className="input" value={actionSearch} onChange={(event) => setActionSearch(event.target.value)} placeholder="Search action name, id, category, or description..." />
+              <select className="input" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+                <option value="">All categories</option>
+                {actionCategories.map((category) => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+            </div>
+            <div className="meta-line">{filteredActions.length} visible actions. Drag the divider to resize the catalog.</div>
+            <div className="actions-catalog-scroll">
+              {filteredActions.length ? (
+                <div className="actions-catalog-list">
+                  {filteredActions.map((action) => {
+                    const selected = String(action?.id || "") === String(actionId);
+                    return (
+                      <button
+                        key={String(action?.id || actionLabel(action))}
+                        type="button"
+                        className={`actions-catalog-item${selected ? " selected" : ""}`}
+                        onClick={() => handleActionSelect(action)}
+                      >
+                        <div className="actions-catalog-item-title">{actionLabel(action)}</div>
+                        <div className="actions-catalog-item-desc">{toDisplay(action?.description, "No description available.")}</div>
+                        <div className="actions-catalog-item-meta">
+                          <span className="actions-catalog-item-category">{actionCategory(action)}</span>
+                          <code>{String(action?.id || "-")}</code>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="empty-state">No actions match the current filters.</div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -525,88 +716,11 @@ export default function Actions() {
 
         <div className="actions-main-pane">
           <div className="actions-console-grid">
-            <div className="card">
-              <div className="card-header">
-                <div>
-                  <h3>Target Selection</h3>
-                  <p className="muted">Filter agents, select the exact endpoint set, and keep the target list visible while triaging.</p>
-                </div>
-                <div className="page-actions">
-                  <button type="button" className="btn secondary" onClick={selectVisibleAgents}>Select Visible</button>
-                  <button type="button" className="btn secondary" onClick={clearSelectedAgents}>Clear Selection</button>
-                </div>
-              </div>
-
-              <div className="page-actions">
-                <input className="input" value={targetSearch} onChange={(event) => setTargetSearch(event.target.value)} placeholder="Search agent id, hostname, OS, or status..." />
-                <select className="input" value={targetStatusFilter} onChange={(event) => setTargetStatusFilter(event.target.value)}>
-                  <option value="all">All statuses</option>
-                  <option value="connected">Connected only</option>
-                  <option value="disconnected">Disconnected only</option>
-                </select>
-              </div>
-
-              <div className="actions-selection-strip">
-                {selectedAgents.length ? selectedAgents.map((agent) => (
-                  <span key={agent.id} className="selection-chip" data-agent-id={agent.id}>
-                    <MaskedAgentId value={agent.id} />
-                    <span>{agent.hostname}</span>
-                    <button type="button" className="actions-chip-dismiss" onClick={() => handleToggleAgent(agent.id)} aria-label={`Remove agent ${agent.hostname}`}>x</button>
-                  </span>
-                )) : <div className="meta-line">No target agents selected yet.</div>}
-              </div>
-
-              <div className="table-scroll actions-target-scroll">
-                <table className="table compact readable actions-target-table">
-                  <thead>
-                    <tr>
-                      <th>Pick</th>
-                      <th>Agent ID</th>
-                      <th>Host</th>
-                      <th>Status</th>
-                      <th>OS</th>
-                      <th>Latency</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredAgents.length ? filteredAgents.map((agent) => {
-                      const selected = targetAgentIds.includes(agent.id);
-                      const connected = isAgentConnected(agent.status);
-                      return (
-                        <tr key={agent.id} className={`clickable${selected ? " selected" : ""}`} onClick={() => handleToggleAgent(agent.id)} data-agent-id={agent.id}>
-                          <td>
-                            <input className="actions-table-checkbox" type="checkbox" checked={selected} onChange={() => handleToggleAgent(agent.id)} onClick={(event) => event.stopPropagation()} aria-label={`Select agent ${agent.hostname}`} />
-                          </td>
-                          <td><MaskedAgentId value={agent.id} /></td>
-                          <td>
-                            <div className="actions-row-name">{agent.hostname}</div>
-                            <div className="meta-line">{agent.name}</div>
-                          </td>
-                          <td><span className={`status-pill ${connected ? "success" : "failed"}`}>{connected ? "Connected" : toDisplay(agent.status, "Unknown")}</span></td>
-                          <td>{agent.os}</td>
-                          <td>{formatLatency(agent.latency)}</td>
-                        </tr>
-                      );
-                    }) : (
-                      <tr>
-                        <td colSpan={6}><div className="empty-state">No agents match the current target filters.</div></td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
             <div ref={executionPlanRef} className="card">
               <div className="card-header">
                 <div>
                   <h3>Execution Plan</h3>
                   <p className="muted">Review the selected action, preserve raw input text, and dispatch once the plan is ready.</p>
-                </div>
-                <div className="page-actions">
-                  <button type="button" className="btn" onClick={() => void handleExecuteAction()} disabled={!canExecute}>
-                    {isActionRunning ? "Running..." : "Run Action"}
-                  </button>
                 </div>
               </div>
 
@@ -625,8 +739,8 @@ export default function Actions() {
                     </div>
                     <div className="list-item readable">
                       <div className="mission-label">Targets</div>
-                      <div className="actions-row-name">{targetAgentIds.length}</div>
-                      <div className="meta-line">{targetAgentIds.length ? `${targetAgentIds.length} agents queued for dispatch.` : "Select target agents before dispatch."}</div>
+                      <div className="actions-row-name">{resolvedTargetIds.length}</div>
+                      <div className="meta-line">{resolvedTargetIds.length ? `${resolvedTargetIds.length} agents queued for dispatch.` : "Select target agents before dispatch."}</div>
                     </div>
                   </div>
 
@@ -654,8 +768,6 @@ export default function Actions() {
                     <textarea className="input" placeholder="State why this action is being executed." value={justification} onChange={(event) => setJustification(event.target.value)} disabled={isActionRunning} />
                     <div className="meta-line">Optional. If left blank, a default justification is attached automatically. Sidebar and panel resizing do not clear this field.</div>
                   </div>
-
-                  {actionStatus ? <div className={`actions-inline-status ${actionStatusTone}`}>{actionStatus}</div> : null}
                 </>
               ) : (
                 <div className="empty-state">No action selected. Pick an action from the catalog to build the execution plan.</div>
@@ -681,6 +793,16 @@ export default function Actions() {
                 <summary>View Technical Payload</summary>
                 <pre className="code-block">{payloadPreview || "Select an action to generate the request payload preview."}</pre>
               </details>
+              <div className="actions-run-footer">
+                {actionStatus ? (
+                  <div className={`actions-inline-status ${actionStatusTone}`}>{actionStatus}</div>
+                ) : (
+                  <div className="meta-line">Review the plan and payload, then dispatch.</div>
+                )}
+                <button type="button" className="btn" onClick={() => void handleExecuteAction()} disabled={!canExecute}>
+                  {isActionRunning ? "Running..." : "Run Command"}
+                </button>
+              </div>
             </div>
           </div>
 

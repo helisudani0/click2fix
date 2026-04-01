@@ -803,154 +803,154 @@ export default function GlobalShell() {
         </div>
       </div>
 
-      <div className="global-shell-builder-grid">
-        <div className="card global-shell-builder-card global-shell-scope-card">
-          <div className="card-header">
-            <div>
-              <h3>Command Builder</h3>
-              <p className="muted">Target scope, shell choice, and command plan.</p>
-            </div>
+      <div className="card global-shell-builder-card global-shell-scope-card">
+        <div className="card-header">
+          <div>
+            <h3>Target Scope & Shell</h3>
+            <p className="muted">Choose where the command runs and which shell/runtime to use.</p>
           </div>
+        </div>
 
-          <div className="list">
-            <div className="list-item readable">
-              <div className="muted">Targets</div>
-              <div className="page-actions mt-8">
-                <select
-                  className="input"
-                  value={targetMode}
-                  onChange={(e) => {
-                    setTargetMode(e.target.value);
-                  }}
-                >
-                  <option value="fleet">Fleet (all connected Windows)</option>
-                  <option value="multi">Multiple agents</option>
-                  <option value="agent">Single agent</option>
-                  <option value="group">Specific group</option>
-                </select>
-              </div>
+        <div className="global-shell-scope-grid">
+          <div className="list-item readable">
+            <div className="muted">Targets</div>
+            <div className="page-actions mt-8">
+              <select
+                className="input"
+                value={targetMode}
+                onChange={(e) => {
+                  setTargetMode(e.target.value);
+                }}
+              >
+                <option value="fleet">Fleet (all connected Windows)</option>
+                <option value="multi">Multiple agents</option>
+                <option value="agent">Single agent</option>
+                <option value="group">Specific group</option>
+              </select>
+            </div>
 
-              {targetMode === "multi" ? (
-                <div className="mt-10">
-                  <div className="page-actions">
-                    <select
-                      className="input"
-                      value={multiPickAgentId}
-                      onChange={(e) => setMultiPickAgentId(formatAgentId(e.target.value))}
-                    >
-                      <option value="">Select connected agent</option>
-                      {connectedWindows.map((agent) => (
-                        <option key={`multi-agent-${agent.id}`} value={agent.id}>
-                          {agent.id} - {agent.name || "-"}{agent.groupText ? ` (${agent.groupText})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="btn secondary"
-                      type="button"
-                      onClick={() => {
-                        if (!multiPickAgentId) return;
-                        setTargetAgentIds((prev) => {
-                          const ids = new Set(prev.map((id) => formatAgentId(id)).filter(Boolean));
-                          ids.add(multiPickAgentId);
-                          return Array.from(ids);
-                        });
-                      }}
-                      disabled={!multiPickAgentId}
-                    >
-                      Add
-                    </button>
-                    <button
-                      className="btn secondary"
-                      type="button"
-                      onClick={() => setTargetAgentIds(connectedWindows.map((agent) => agent.id))}
-                    >
-                      All
-                    </button>
-                    <button
-                      className="btn secondary"
-                      type="button"
-                      onClick={() => setTargetAgentIds([])}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                  <div className="meta-line mt-6">Selected: {selectedAgentSet.size}</div>
-                  <div className="list mt-10">
-                    {selectedMultiAgents.length === 0 ? (
-                      <div className="empty-state">No agents selected yet.</div>
-                    ) : (
-                      selectedMultiAgents.map((agent) => (
-                        <div key={`selected-agent-${agent.id}`} className="list-item split readable" data-agent-id={agent.id}>
-                          <span>{agent.id} - {agent.name || "-"}</span>
-                          <button
-                            className="btn secondary"
-                            type="button"
-                            onClick={() => {
-                              setTargetAgentIds((prev) =>
-                                prev
-                                  .map((id) => formatAgentId(id))
-                                  .filter((id) => id && id !== agent.id)
-                              );
-                            }}
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ))
-                    )}
-                    {connectedWindows.length === 0 ? (
-                      <div className="meta-line">No connected Windows agents available.</div>
-                    ) : null}
-                  </div>
-                </div>
-              ) : targetMode === "group" ? (
-                <div className="page-actions mt-10">
-                  <select className="input" value={targetValue} onChange={(e) => setTargetValue(e.target.value)}>
-                    <option value="">Select group</option>
-                    {availableGroups.map((group) => (
-                      <option key={group} value={group}>{group}</option>
-                    ))}
-                  </select>
-                </div>
-              ) : targetMode === "agent" ? (
-                <div className="page-actions mt-10">
+            {targetMode === "multi" ? (
+              <div className="mt-10">
+                <div className="page-actions">
                   <select
                     className="input"
-                    value={targetValue}
-                    onChange={(e) => setTargetValue(e.target.value)}
+                    value={multiPickAgentId}
+                    onChange={(e) => setMultiPickAgentId(formatAgentId(e.target.value))}
                   >
-                    <option value="">Select agent</option>
+                    <option value="">Select connected agent</option>
                     {connectedWindows.map((agent) => (
-                      <option key={`single-agent-${agent.id}`} value={agent.id}>
+                      <option key={`multi-agent-${agent.id}`} value={agent.id}>
                         {agent.id} - {agent.name || "-"}{agent.groupText ? ` (${agent.groupText})` : ""}
                       </option>
                     ))}
                   </select>
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={() => {
+                      if (!multiPickAgentId) return;
+                      setTargetAgentIds((prev) => {
+                        const ids = new Set(prev.map((id) => formatAgentId(id)).filter(Boolean));
+                        ids.add(multiPickAgentId);
+                        return Array.from(ids);
+                      });
+                    }}
+                    disabled={!multiPickAgentId}
+                  >
+                    Add
+                  </button>
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={() => setTargetAgentIds(connectedWindows.map((agent) => agent.id))}
+                  >
+                    All
+                  </button>
+                  <button
+                    className="btn secondary"
+                    type="button"
+                    onClick={() => setTargetAgentIds([])}
+                  >
+                    Clear
+                  </button>
                 </div>
-              ) : null}
-            </div>
-
-            <div className="list-item readable">
-              <div className="muted">Shell Type</div>
-              <div className="page-actions mt-8">
-                <select className="input" value={shell} onChange={(e) => setShell(e.target.value)}>
-                  <option value="powershell">PowerShell</option>
-                  <option value="cmd">CMD</option>
+                <div className="meta-line mt-6">Selected: {selectedAgentSet.size}</div>
+                <div className="list mt-10">
+                  {selectedMultiAgents.length === 0 ? (
+                    <div className="empty-state">No agents selected yet.</div>
+                  ) : (
+                    selectedMultiAgents.map((agent) => (
+                      <div key={`selected-agent-${agent.id}`} className="list-item split readable" data-agent-id={agent.id}>
+                        <span>{agent.id} - {agent.name || "-"}</span>
+                        <button
+                          className="btn secondary"
+                          type="button"
+                          onClick={() => {
+                            setTargetAgentIds((prev) =>
+                              prev
+                                .map((id) => formatAgentId(id))
+                                .filter((id) => id && id !== agent.id)
+                            );
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))
+                  )}
+                  {connectedWindows.length === 0 ? (
+                    <div className="meta-line">No connected Windows agents available.</div>
+                  ) : null}
+                </div>
+              </div>
+            ) : targetMode === "group" ? (
+              <div className="page-actions mt-10">
+                <select className="input" value={targetValue} onChange={(e) => setTargetValue(e.target.value)}>
+                  <option value="">Select group</option>
+                  {availableGroups.map((group) => (
+                    <option key={group} value={group}>{group}</option>
+                  ))}
                 </select>
               </div>
-              <label className="mt-10 inline-check">
-                <input
-                  type="checkbox"
-                  checked={runAsSystem}
-                  onChange={(e) => setRunAsSystem(Boolean(e.target.checked))}
-                />
-                <span className="muted">Run as SYSTEM (administrator context)</span>
-              </label>
+            ) : targetMode === "agent" ? (
+              <div className="page-actions mt-10">
+                <select
+                  className="input"
+                  value={targetValue}
+                  onChange={(e) => setTargetValue(e.target.value)}
+                >
+                  <option value="">Select agent</option>
+                  {connectedWindows.map((agent) => (
+                    <option key={`single-agent-${agent.id}`} value={agent.id}>
+                      {agent.id} - {agent.name || "-"}{agent.groupText ? ` (${agent.groupText})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="list-item readable">
+            <div className="muted">Shell Type</div>
+            <div className="page-actions mt-8">
+              <select className="input" value={shell} onChange={(e) => setShell(e.target.value)}>
+                <option value="powershell">PowerShell</option>
+                <option value="cmd">CMD</option>
+              </select>
             </div>
+            <label className="mt-10 inline-check">
+              <input
+                type="checkbox"
+                checked={runAsSystem}
+                onChange={(e) => setRunAsSystem(Boolean(e.target.checked))}
+              />
+              <span className="muted">Run as SYSTEM (administrator context)</span>
+            </label>
           </div>
         </div>
+      </div>
 
+      <div className="global-shell-assistant-grid">
         <div className="card global-shell-builder-card global-shell-ai-card">
           <div className="card-header">
             <div>
@@ -965,7 +965,7 @@ export default function GlobalShell() {
                 className="input mono"
                 value={assistantPrompt}
                 onChange={(e) => setAssistantPrompt(e.target.value)}
-                rows={3}
+                rows={4}
                 placeholder="Describe the task or vulnerability fix you want (example: Upgrade Google Chrome on affected endpoints)."
               />
               <div className="page-actions mt-8">
@@ -1004,7 +1004,16 @@ export default function GlobalShell() {
                 <span className="muted">Auto-remediate loop (retry with fallback commands)</span>
               </label>
             </div>
+          </div>
+        </div>
 
+        <div className="card global-shell-builder-card global-shell-command-card">
+          <div className="card-header">
+            <div>
+              <h3>Upgrade Preset & Command</h3>
+            </div>
+          </div>
+          <div className="list">
             <div className="list-item readable">
               <div className="muted">Upgrade Preset (optional)</div>
               <div className="page-actions mt-8">

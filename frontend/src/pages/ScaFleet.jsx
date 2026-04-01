@@ -2,6 +2,14 @@ import { useState } from "react";
 import { getFleetScaHardening } from "../api/wazuh";
 import { formatApiError } from "../utils/httpErrors";
 
+const SCA_LIMITS = {
+  limitAgents: { min: 0, max: 2000, label: "0-2000" },
+  recommendationLimit: { min: 1, max: 250, label: "1-250" },
+  fleetRecommendationLimit: { min: 1, max: 5000, label: "1-5000" },
+  parallelism: { min: 1, max: 32, label: "1-32" },
+  aiMaxItems: 12,
+};
+
 const toBoundedInt = (value, fallback, min, max) => {
   const raw = String(value ?? "").trim();
   if (!raw) return fallback;
@@ -49,13 +57,23 @@ export default function ScaFleet() {
         platform: platform || undefined,
         group: group || undefined,
         agent_ids: agentIds || undefined,
-        limit_agents: toBoundedInt(limitAgents, 200, 0, 2000),
-        recommendation_limit: toBoundedInt(recommendationLimit, 25, 1, 250),
-        fleet_recommendation_limit: toBoundedInt(fleetRecommendationLimit, 300, 1, 5000),
-        parallelism: toBoundedInt(parallelism, 6, 1, 32),
+        limit_agents: toBoundedInt(limitAgents, 200, SCA_LIMITS.limitAgents.min, SCA_LIMITS.limitAgents.max),
+        recommendation_limit: toBoundedInt(
+          recommendationLimit,
+          25,
+          SCA_LIMITS.recommendationLimit.min,
+          SCA_LIMITS.recommendationLimit.max
+        ),
+        fleet_recommendation_limit: toBoundedInt(
+          fleetRecommendationLimit,
+          300,
+          SCA_LIMITS.fleetRecommendationLimit.min,
+          SCA_LIMITS.fleetRecommendationLimit.max
+        ),
+        parallelism: toBoundedInt(parallelism, 6, SCA_LIMITS.parallelism.min, SCA_LIMITS.parallelism.max),
         ai_assist: aiAssist,
         ai_instruction: aiInstruction || undefined,
-        ai_max_items: 12,
+        ai_max_items: SCA_LIMITS.aiMaxItems,
         include_checks: false,
       });
       setPayload(response?.data || null);
@@ -108,20 +126,48 @@ export default function ScaFleet() {
             <input className="input" value={agentIds} onChange={(event) => setAgentIds(event.target.value)} placeholder="001,004,010" />
           </label>
           <label className="list-item">
-            <div className="muted">Limit Agents</div>
-            <input className="input" type="number" min="0" value={limitAgents} onChange={(event) => setLimitAgents(event.target.value)} />
+            <div className="muted">{`Limit Agents (${SCA_LIMITS.limitAgents.label})`}</div>
+            <input
+              className="input"
+              type="number"
+              min={SCA_LIMITS.limitAgents.min}
+              max={SCA_LIMITS.limitAgents.max}
+              value={limitAgents}
+              onChange={(event) => setLimitAgents(event.target.value)}
+            />
           </label>
           <label className="list-item">
-            <div className="muted">Per-Agent Recommendation Limit</div>
-            <input className="input" type="number" min="1" value={recommendationLimit} onChange={(event) => setRecommendationLimit(event.target.value)} />
+            <div className="muted">{`Per-Agent Recommendation Limit (${SCA_LIMITS.recommendationLimit.label})`}</div>
+            <input
+              className="input"
+              type="number"
+              min={SCA_LIMITS.recommendationLimit.min}
+              max={SCA_LIMITS.recommendationLimit.max}
+              value={recommendationLimit}
+              onChange={(event) => setRecommendationLimit(event.target.value)}
+            />
           </label>
           <label className="list-item">
-            <div className="muted">Fleet Recommendation Limit</div>
-            <input className="input" type="number" min="1" value={fleetRecommendationLimit} onChange={(event) => setFleetRecommendationLimit(event.target.value)} />
+            <div className="muted">{`Fleet Recommendation Limit (${SCA_LIMITS.fleetRecommendationLimit.label})`}</div>
+            <input
+              className="input"
+              type="number"
+              min={SCA_LIMITS.fleetRecommendationLimit.min}
+              max={SCA_LIMITS.fleetRecommendationLimit.max}
+              value={fleetRecommendationLimit}
+              onChange={(event) => setFleetRecommendationLimit(event.target.value)}
+            />
           </label>
           <label className="list-item">
-            <div className="muted">Parallelism</div>
-            <input className="input" type="number" min="1" value={parallelism} onChange={(event) => setParallelism(event.target.value)} />
+            <div className="muted">{`Parallelism (${SCA_LIMITS.parallelism.label})`}</div>
+            <input
+              className="input"
+              type="number"
+              min={SCA_LIMITS.parallelism.min}
+              max={SCA_LIMITS.parallelism.max}
+              value={parallelism}
+              onChange={(event) => setParallelism(event.target.value)}
+            />
           </label>
           <label className="list-item">
             <div className="muted">AI Assist</div>
@@ -143,6 +189,9 @@ export default function ScaFleet() {
               placeholder="Example: prioritize low user-impact changes first"
             />
           </label>
+        </div>
+        <div className="muted mt-8">
+          {`Limits: agents ${SCA_LIMITS.limitAgents.label}, per-agent recs ${SCA_LIMITS.recommendationLimit.label}, fleet recs ${SCA_LIMITS.fleetRecommendationLimit.label}, parallelism ${SCA_LIMITS.parallelism.label}.`}
         </div>
         <div className="muted mt-8">
           AI uses Org Admin / Platform AI Configuration. If disabled there, this page continues with deterministic recommendations.

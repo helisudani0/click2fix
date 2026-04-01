@@ -369,6 +369,14 @@ body.console-redesign-v4 .shell-sidebar-footer {
 
 body.console-redesign-v4 .shell-version { font-size: 0.64rem; color: var(--c-hint); font-family: "IBM Plex Mono", monospace; }
 body.console-redesign-v4 .shell-user { font-size: 0.76rem; font-weight: 600; color: var(--c-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body.console-redesign-v4 .shell-sidebar-footer .shell-logout-safe {
+  width: 100%;
+  margin-top: 6px;
+  justify-content: center;
+  height: 30px;
+  min-height: 30px;
+  font-size: 0.74rem;
+}
 
 /* ============================================================
    COLLAPSED SIDEBAR
@@ -2145,15 +2153,27 @@ body.console-redesign-v4 .page-route-org-admin select.input {
 /* ============================================================
    GLOBAL SHELL - FINAL LAYOUT + HISTORY STABILITY
    ============================================================ */
-body.console-redesign-v4 .page-route-global-shell .global-shell-builder-grid {
+body.console-redesign-v4 .page-route-global-shell .global-shell-builder-card {
+  min-width: 0;
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-scope-card {
+  margin-top: 14px;
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-scope-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px;
   align-items: start;
 }
 
-body.console-redesign-v4 .page-route-global-shell .global-shell-builder-card {
-  min-width: 0;
+body.console-redesign-v4 .page-route-global-shell .global-shell-assistant-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  margin-top: 14px;
 }
 
 body.console-redesign-v4 .page-route-global-shell .global-shell-run-card {
@@ -2162,7 +2182,7 @@ body.console-redesign-v4 .page-route-global-shell .global-shell-run-card {
 
 body.console-redesign-v4 .page-route-global-shell .global-shell-run-actions {
   width: 100%;
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 body.console-redesign-v4 .page-route-global-shell .global-shell-history-card {
@@ -2228,7 +2248,126 @@ body.console-redesign-v4 .page-route-global-shell .shell-output-preview {
 }
 
 @media (max-width: 1200px) {
-  body.console-redesign-v4 .page-route-global-shell .global-shell-builder-grid {
+  body.console-redesign-v4 .page-route-global-shell .global-shell-scope-grid,
+  body.console-redesign-v4 .page-route-global-shell .global-shell-assistant-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================================
+   ALERTS - FORCE FULL-WIDTH TABLE, NO PHANTOM RIGHT GAP
+   ============================================================ */
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll .table.readable {
+  width: 100% !important;
+  min-width: 0 !important;
+  table-layout: fixed;
+}
+
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll .table.readable th:nth-child(1),
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll .table.readable td:nth-child(1) { width: 11%; }
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll .table.readable th:nth-child(2),
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll .table.readable td:nth-child(2) { width: 8%; }
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll .table.readable th:nth-child(3),
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll .table.readable td:nth-child(3) { width: 34%; }
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll .table.readable th:nth-child(4),
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll .table.readable td:nth-child(4) { width: 17%; }
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll .table.readable th:nth-child(5),
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll .table.readable td:nth-child(5) { width: 18%; }
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll .table.readable th:nth-child(6),
+body.console-redesign-v4 .page-route-alerts .ticketing-table-scroll .table.readable td:nth-child(6) {
+  width: 12%;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   ACTIONS - TARGET FLOW + EXECUTION PLAN FINAL PASS
+   ============================================================ */
+body.console-redesign-v4 .page-route-actions .actions-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: min(780px, 100%);
+  margin-left: auto;
+}
+
+body.console-redesign-v4 .page-route-actions .actions-header-actions > * {
+  flex: 0 0 auto;
+}
+
+body.console-redesign-v4 .page-route-actions .actions-sidebar-pane {
+  position: sticky;
+  top: 14px;
+  align-self: start;
+  display: grid;
+  gap: 12px;
+  max-height: calc(100vh - 145px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+body.console-redesign-v4 .page-route-actions .actions-catalog-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+}
+
+body.console-redesign-v4 .page-route-actions .actions-catalog-card .actions-catalog-scroll {
+  flex: 1;
+  min-height: 240px;
+  max-height: min(48vh, 520px);
+}
+
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-target-scroll {
+  max-height: min(34vh, 320px);
+  overflow: auto;
+}
+
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-target-preview-table {
+  min-width: 760px;
+  table-layout: fixed;
+  width: 100%;
+}
+
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-target-preview-table th:nth-child(1),
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-target-preview-table td:nth-child(1) { width: 90px; }
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-target-preview-table th:nth-child(2),
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-target-preview-table td:nth-child(2) { width: 180px; }
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-target-preview-table th:nth-child(3),
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-target-preview-table td:nth-child(3) { width: 170px; }
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-target-preview-table th:nth-child(4),
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-target-preview-table td:nth-child(4) { width: 130px; }
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-target-preview-table th:nth-child(5),
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-target-preview-table td:nth-child(5) { width: auto; }
+
+body.console-redesign-v4 .page-route-actions .actions-run-footer {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+body.console-redesign-v4 .page-route-actions .actions-run-footer .btn {
+  justify-self: end;
+}
+
+@media (max-width: 1100px) {
+  body.console-redesign-v4 .page-route-actions .actions-sidebar-pane {
+    position: relative;
+    top: 0;
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 768px) {
+  body.console-redesign-v4 .page-route-actions .actions-header-actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+
+  body.console-redesign-v4 .page-route-actions .actions-run-footer .btn {
+    justify-self: stretch;
   }
 }

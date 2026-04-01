@@ -340,7 +340,11 @@ export default function AppLayout() {
     };
   }, []);
 
-  const logout = async () => {
+  const logout = async (requireConfirm = false) => {
+    if (requireConfirm && typeof window !== "undefined") {
+      const confirmed = window.confirm("Sign out of this session?");
+      if (!confirmed) return;
+    }
     try {
       await api.post("/auth/logout");
     } catch {
@@ -518,6 +522,13 @@ export default function AppLayout() {
           <div className="shell-sidebar-footer">
             <span className="shell-version">v{appVersion}</span>
             <span className="shell-user">{user ? `${user.username} - ${user.role}` : "user"}</span>
+            <button
+              type="button"
+              className="btn secondary shell-logout-safe"
+              onClick={() => void logout(true)}
+            >
+              Sign Out
+            </button>
           </div>
         </aside>
 
@@ -556,7 +567,6 @@ export default function AppLayout() {
               {backendHealth.queuedExecutions > 0 ? (
                 <span className="shell-chip">{backendHealth.queuedExecutions} queued</span>
               ) : null}
-              <button type="button" className="btn secondary" onClick={logout}>Logout</button>
             </div>
           </header>
 

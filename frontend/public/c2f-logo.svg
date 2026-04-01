@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Click2Fix Logo</title>
+  <desc id="desc">Tri-color lightning mark for Click2Fix.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#111b2a" />
+      <stop offset="100%" stop-color="#0a1220" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)" />
+  <path d="M12 10L24 10L19 32L7 32Z" fill="#6f4bff" />
+  <path d="M26 10L39 10L32 34L19 34Z" fill="#ffd84d" />
+  <path d="M40 10L53 10L33 54L20 54Z" fill="#3ddfb1" />
+  <path d="M7 32H19L20 34H8Z" fill="#4a2cc4" opacity="0.85" />
+  <path d="M19 34H32L33 36H20Z" fill="#c5a53c" opacity="0.88" />
+</svg>

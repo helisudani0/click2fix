@@ -46,6 +46,11 @@ export default function Login() {
   }, [navigate]);
 
   useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.title = "Click2Fix | Login";
+  }, []);
+
+  useEffect(() => {
     let active = true;
     api
       .get("/system/version")
@@ -109,7 +114,9 @@ export default function Login() {
     <div className="login-page page-route-login">
       <div className="login-card">
         <div className="login-brand">
-          <div className="brand-badge">C2F</div>
+          <div className="brand-badge brand-badge-logo" aria-hidden="true">
+            <img src="/c2f-logo.svg" alt="" loading="lazy" />
+          </div>
           <div>
             <div className="brand-title">Click2Fix</div>
             <div className="brand-subtitle">SOAR Console</div>

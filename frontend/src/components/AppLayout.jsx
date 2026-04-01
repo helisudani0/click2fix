@@ -376,6 +376,11 @@ export default function AppLayout() {
 
   const currentPageLabel = useMemo(() => ROUTE_LABELS[location.pathname || "/"] || "Workspace", [location.pathname]);
 
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.title = `Click2Fix | ${currentPageLabel}`;
+  }, [currentPageLabel]);
+
   const submitSearch = (event) => {
     event.preventDefault();
     const term = search.trim();
@@ -443,7 +448,9 @@ export default function AppLayout() {
         <aside className="shell-sidebar" aria-label="Primary navigation">
           <div className="shell-sidebar-header">
             <div className="shell-brand">
-              <div className="brand-badge">C2F</div>
+              <div className="brand-badge brand-badge-logo" aria-hidden="true">
+                <img src="/c2f-logo.svg" alt="" loading="lazy" />
+              </div>
               <div className="shell-brand-copy">
                 <div className="brand-title">Click2Fix</div>
                 <div className="brand-subtitle">SOC Operations</div>

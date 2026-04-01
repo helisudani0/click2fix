@@ -96,6 +96,17 @@ const buildDefaultActionInputs = (action) => {
 
 const actionLabel = (action) => String(action?.label || action?.name || action?.id || "").trim();
 const actionCategory = (action) => String(action?.category || action?.type || "Uncategorized").trim() || "Uncategorized";
+const actionInputCount = (action) => (Array.isArray(action?.inputs) ? action.inputs.length : 0);
+const actionRequiredInputCount = (action) =>
+  Array.isArray(action?.inputs) ? action.inputs.filter((field) => field?.required).length : 0;
+const actionRiskLabel = (action) => String(action?.risk || "").trim().toLowerCase() || "unspecified";
+const actionRiskTone = (action) => {
+  const risk = actionRiskLabel(action);
+  if (risk.includes("critical") || risk.includes("high")) return "risk-high";
+  if (risk.includes("medium")) return "risk-medium";
+  if (risk.includes("low")) return "risk-low";
+  return "risk-neutral";
+};
 
 const isAgentConnected = (status) => {
   const value = String(status || "").trim().toLowerCase();
@@ -215,6 +226,11 @@ export default function Actions() {
       return haystack.includes(query);
     });
   }, [actions, actionSearch, categoryFilter]);
+
+  const selectedCatalogAction = useMemo(
+    () => filteredActions.find((action) => String(action?.id || "") === String(actionId)) || selectedAction,
+    [filteredActions, selectedAction, actionId]
+  );
 
   const connectedAgents = useMemo(
     () => agents.filter((agent) => isAgentConnected(agent.status)),
@@ -670,17 +686,60 @@ export default function Actions() {
                 <h3>Action Catalog</h3>
                 <p className="muted">Browse remediation and containment actions without leaving the workspace.</p>
               </div>
+              <span className="chip">{filteredActions.length} / {actions.length} visible</span>
             </div>
-            <div className="page-actions">
-              <input className="input" value={actionSearch} onChange={(event) => setActionSearch(event.target.value)} placeholder="Search action name, id, category, or description..." />
+            <div className="page-actions actions-catalog-toolbar">
+              <input
+                className="input"
+                value={actionSearch}
+                onChange={(event) => setActionSearch(event.target.value)}
+                placeholder="Search action name, id, category, or description..."
+              />
               <select className="input" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
                 <option value="">All categories</option>
                 {actionCategories.map((category) => (
                   <option key={category} value={category}>{category}</option>
                 ))}
               </select>
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => {
+                  setActionSearch("");
+                  setCategoryFilter("");
+                }}
+                disabled={!actionSearch.trim() && !categoryFilter}
+              >
+                Clear Filters
+              </button>
             </div>
-            <div className="meta-line">{filteredActions.length} visible actions. Drag the divider to resize the catalog.</div>
+            <div className="actions-catalog-summary">
+              <div className="actions-catalog-stat">
+                <span>Total</span>
+                <strong>{actions.length}</strong>
+              </div>
+              <div className="actions-catalog-stat">
+                <span>Filtered</span>
+                <strong>{filteredActions.length}</strong>
+              </div>
+              <div className="actions-catalog-stat">
+                <span>Category</span>
+                <strong>{categoryFilter || "All"}</strong>
+              </div>
+            </div>
+            {selectedCatalogAction ? (
+              <div className="actions-catalog-selected">
+                <div className="actions-catalog-selected-title">{actionLabel(selectedCatalogAction)}</div>
+                <div className="actions-catalog-selected-meta">
+                  <span>{String(selectedCatalogAction?.id || "-")}</span>
+                  <span>{actionRequiredInputCount(selectedCatalogAction)} required input(s)</span>
+                  <span className={`actions-catalog-risk ${actionRiskTone(selectedCatalogAction)}`}>
+                    {actionRiskLabel(selectedCatalogAction)}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+            <div className="meta-line">Drag the divider to resize the catalog panel.</div>
             <div className="actions-catalog-scroll">
               {filteredActions.length ? (
                 <div className="actions-catalog-list">
@@ -693,10 +752,16 @@ export default function Actions() {
                         className={`actions-catalog-item${selected ? " selected" : ""}`}
                         onClick={() => handleActionSelect(action)}
                       >
-                        <div className="actions-catalog-item-title">{actionLabel(action)}</div>
+                        <div className="actions-catalog-item-head">
+                          <div className="actions-catalog-item-title">{actionLabel(action)}</div>
+                          <span className="chip actions-catalog-item-chip">
+                            {actionInputCount(action)} input{actionInputCount(action) === 1 ? "" : "s"}
+                          </span>
+                        </div>
                         <div className="actions-catalog-item-desc">{toDisplay(action?.description, "No description available.")}</div>
                         <div className="actions-catalog-item-meta">
                           <span className="actions-catalog-item-category">{actionCategory(action)}</span>
+                          <span className={`actions-catalog-risk ${actionRiskTone(action)}`}>{actionRiskLabel(action)}</span>
                           <code>{String(action?.id || "-")}</code>
                         </div>
                       </button>

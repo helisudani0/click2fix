@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { decideApproval, getPendingApprovals } from "../api/wazuh";
+import { decideApproval, generateApprovalAiJustification, getPendingApprovals } from "../api/wazuh";
 import RelativeTimestamp from "../components/RelativeTimestamp";
+import { formatApiError } from "../utils/httpErrors";
 
 const approvalRow = (row) => {
   if (Array.isArray(row)) {
@@ -33,6 +34,8 @@ export default function Approvals() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [aiLoadingId, setAiLoadingId] = useState(null);
+  const [aiByApprovalId, setAiByApprovalId] = useState({});
   const safeRows = useMemo(() => (Array.isArray(rows) ? rows : []), [rows]);
   const normalizedRows = useMemo(() => safeRows.map(approvalRow), [safeRows]);
   const linkedAlertCount = normalizedRows.filter((row) => row.alertId).length;
@@ -61,7 +64,7 @@ export default function Approvals() {
       setRows(nextRows);
     } catch (error) {
       setRows([]);
-      setLoadError(error?.response?.data?.detail || error?.message || "Unable to load approvals.");
+      setLoadError(formatApiError(error, "Unable to load approvals."));
     } finally {
       setLoading(false);
     }
@@ -78,6 +81,37 @@ export default function Approvals() {
   const reject = id =>
     decideApproval(id, { decision: "reject" })
       .then(load);
+
+  const generateAiDraft = async (row) => {
+    const actionId = String(row?.action || "").trim();
+    if (!actionId) {
+      setAiByApprovalId((prev) => ({
+        ...prev,
+        [row?.id]: { error: "Action ID is missing for this approval request." },
+      }));
+      return;
+    }
+    setAiLoadingId(row.id);
+    try {
+      const response = await generateApprovalAiJustification({
+        action_id: actionId,
+        target_count: 1,
+      });
+      setAiByApprovalId((prev) => ({
+        ...prev,
+        [row.id]: response?.data || null,
+      }));
+    } catch (error) {
+      setAiByApprovalId((prev) => ({
+        ...prev,
+        [row.id]: {
+          error: formatApiError(error, "Unable to generate AI justification."),
+        },
+      }));
+    } finally {
+      setAiLoadingId(null);
+    }
+  };
 
   return (
     <div className="page page-route-approvals">
@@ -159,12 +193,29 @@ export default function Approvals() {
                       <td>{row.requestedBy || "-"}</td>
                       <td>{row.alertId || "-"}</td>
                       <td>{row.approved} / {row.required}</td>
-                      <td>{row.justification || "-"}</td>
+                      <td>
+                        <div>{row.justification || "-"}</div>
+                        {aiByApprovalId[row.id]?.justification ? (
+                          <div className="meta-line mt-8">
+                            AI: {aiByApprovalId[row.id].justification}
+                          </div>
+                        ) : null}
+                        {aiByApprovalId[row.id]?.error ? (
+                          <div className="meta-line mt-8">{aiByApprovalId[row.id].error}</div>
+                        ) : null}
+                      </td>
                       <td><RelativeTimestamp value={row.createdAt} /></td>
                       <td>
                         <div className="page-actions">
                           <button className="btn success" onClick={() => approve(row.id)}>Approve</button>
                           <button className="btn danger" onClick={() => reject(row.id)}>Reject</button>
+                          <button
+                            className="btn secondary"
+                            onClick={() => generateAiDraft(row)}
+                            disabled={aiLoadingId === row.id}
+                          >
+                            {aiLoadingId === row.id ? "AI..." : "AI Draft"}
+                          </button>
                         </div>
                       </td>
                     </tr>

@@ -7,6 +7,7 @@ import {
   downloadCaseAttachment,
   downloadCaseEvidence,
   getCaseAttackPath,
+  getCaseAiSummary,
   getCaseAttachments,
   getCaseDetail,
   getCaseEvidence,
@@ -23,6 +24,7 @@ import {
 } from "../api/wazuh";
 import RelativeTimestamp from "../components/RelativeTimestamp";
 import { formatWazuhTimestamp } from "../utils/time";
+import { formatApiError } from "../utils/httpErrors";
 
 export default function Cases() {
   const [cases, setCases] = useState([]);
@@ -54,6 +56,9 @@ export default function Cases() {
   const [createStatus, setCreateStatus] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
+  const [aiSummaryError, setAiSummaryError] = useState("");
+  const [aiSummary, setAiSummary] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedCaseParam = searchParams.get("case") || "";
 
@@ -65,7 +70,7 @@ export default function Cases() {
       setError(null);
     } catch (err) {
       console.error("Failed to load cases:", err);
-      setError(err.response?.data?.detail || err.message);
+      setError(formatApiError(err, "Failed to load cases."));
     } finally {
       setLoading(false);
     }
@@ -109,7 +114,7 @@ export default function Cases() {
         setStatusValue(currentStatus);
       }
     } catch (err) {
-      setError(err.response?.data?.detail || err.message);
+      setError(formatApiError(err, "Failed to load case details."));
     } finally {
       setDetailLoading(false);
     }
@@ -155,6 +160,27 @@ export default function Cases() {
     loadCaseDetail(id);
   }, [requestedCaseParam, cases, selectedId, loadCaseDetail]);
 
+  useEffect(() => {
+    setAiSummary(null);
+    setAiSummaryError("");
+    setAiSummaryLoading(false);
+  }, [selectedId]);
+
+  const generateCaseAiSummary = useCallback(async () => {
+    if (!selectedId) return;
+    try {
+      setAiSummaryLoading(true);
+      setAiSummaryError("");
+      const response = await getCaseAiSummary(selectedId);
+      setAiSummary(response?.data || null);
+    } catch (err) {
+      setAiSummary(null);
+      setAiSummaryError(formatApiError(err, "Unable to generate AI case summary."));
+    } finally {
+      setAiSummaryLoading(false);
+    }
+  }, [selectedId]);
+
   const submitNote = async () => {
     if (!note.trim() || !selectedId) return;
     try {
@@ -162,7 +188,7 @@ export default function Cases() {
       setNote("");
       await loadCaseDetail(selectedId);
     } catch (err) {
-      setError(err.response?.data?.detail || err.message);
+      setError(formatApiError(err, "Unable to save note."));
     }
   };
 
@@ -173,7 +199,7 @@ export default function Cases() {
       await loadCaseDetail(selectedId);
       await loadCases();
     } catch (err) {
-      setError(err.response?.data?.detail || err.message);
+      setError(formatApiError(err, "Unable to update case status."));
     }
   };
 
@@ -186,7 +212,7 @@ export default function Cases() {
       });
       await loadCaseDetail(selectedId);
     } catch (err) {
-      setError(err.response?.data?.detail || err.message);
+      setError(formatApiError(err, "Unable to update case risk."));
     }
   };
 
@@ -199,7 +225,7 @@ export default function Cases() {
       setFile(null);
       await loadCaseDetail(selectedId);
     } catch (err) {
-      setError(err.response?.data?.detail || err.message);
+      setError(formatApiError(err, "Unable to upload attachment."));
     }
   };
 
@@ -217,7 +243,7 @@ export default function Cases() {
       link.click();
       link.remove();
     } catch (err) {
-      setError(err.response?.data?.detail || err.message);
+      setError(formatApiError(err, "Unable to download attachment."));
     }
   };
 
@@ -236,7 +262,7 @@ export default function Cases() {
       setEvidenceNotes("");
       await loadCaseDetail(selectedId);
     } catch (err) {
-      setError(err.response?.data?.detail || err.message);
+      setError(formatApiError(err, "Unable to upload evidence."));
     }
   };
 
@@ -254,7 +280,7 @@ export default function Cases() {
       link.click();
       link.remove();
     } catch (err) {
-      setError(err.response?.data?.detail || err.message);
+      setError(formatApiError(err, "Unable to download evidence."));
     }
   };
 
@@ -266,7 +292,7 @@ export default function Cases() {
       const res = await getCaseEvidenceCustody(selectedId, id);
       setCustody(res.data || []);
     } catch (err) {
-      setError(err.response?.data?.detail || err.message);
+      setError(formatApiError(err, "Unable to load custody chain."));
     }
   };
 
@@ -337,7 +363,7 @@ export default function Cases() {
       await loadCaseDetail(selectedId);
       await loadCustody(item);
     } catch (err) {
-      setError(err.response?.data?.detail || err.message);
+      setError(formatApiError(err, "Unable to lock evidence."));
     }
   };
 
@@ -601,6 +627,53 @@ export default function Cases() {
                   <strong>{detail.case?.[1]}</strong>
                   <div className="muted">Status: {detail.case?.[3]}</div>
                   <div className="muted">Owner: {detail.case?.[4]}</div>
+                </div>
+                <div className="list-item">
+                  <div className="muted">AI Case Summary</div>
+                  <div className="page-actions mt-8">
+                    <button className="btn secondary" onClick={generateCaseAiSummary} disabled={aiSummaryLoading}>
+                      {aiSummaryLoading ? "Generating..." : "Generate AI Summary"}
+                    </button>
+                  </div>
+                  <div className="muted mt-8">
+                    AI uses Org Admin / Platform AI Configuration.
+                  </div>
+                  {aiSummaryError ? <div className="empty-state mt-8">{aiSummaryError}</div> : null}
+                  {aiSummary ? (
+                    <div className="list mt-8">
+                      <div className="list-item">
+                        <div>{aiSummary.summary || "-"}</div>
+                      </div>
+                      {Array.isArray(aiSummary.findings) && aiSummary.findings.length ? (
+                        <div className="list-item">
+                          <div className="muted">Findings</div>
+                          <ul className="list mt-8">
+                            {aiSummary.findings.map((item, idx) => (
+                              <li className="list-item" key={`case-finding-${idx}`}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {Array.isArray(aiSummary.recommended_actions) && aiSummary.recommended_actions.length ? (
+                        <div className="list-item">
+                          <div className="muted">Recommended Actions</div>
+                          <ul className="list mt-8">
+                            {aiSummary.recommended_actions.map((item, idx) => (
+                              <li className="list-item" key={`case-action-${idx}`}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                      {aiSummary.usage ? (
+                        <div className="list-item">
+                          <div className="muted">Token Usage</div>
+                          <div className="meta-line mt-8">
+                            Prompt: {aiSummary.usage.prompt_tokens ?? 0} | Completion: {aiSummary.usage.completion_tokens ?? 0} | Total: {aiSummary.usage.total_tokens ?? 0}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="list-item">
                   <div className="muted">Update Status</div>

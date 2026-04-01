@@ -16,7 +16,7 @@ from core.playbook_generator import (
 )
 from core.security import recent_auth_window_seconds, require_recent_auth, require_role
 from core.settings import SETTINGS
-from core.tenant_ai_config import load_active_tenant_ai_config
+from core.tenant_ai_config import require_active_tenant_ai_config
 from core.time_utils import utc_now_naive
 from core.ws_bus import publish_event
 from core.wazuh_client import WazuhClient
@@ -816,19 +816,17 @@ async def generate(request: Request, user=Depends(require_role("analyst"))):
         raise HTTPException(status_code=400, detail="case_id must be a positive integer")
     use_ai = _to_bool(body.get("use_ai"), False) or _to_bool(body.get("ai_enabled"), False)
     ai_prompt = str(body.get("ai_prompt") or body.get("prompt") or body.get("instructions") or "").strip()
-    ai_config = load_active_tenant_ai_config(user.get("org_id")) if isinstance(user, dict) else {}
-    if use_ai and not _to_bool(ai_config.get("enabled"), False):
-        raise HTTPException(
-            status_code=503,
-            detail="AI playbook generation is disabled. Enable it in Org Admin / Platform AI Configuration.",
-        )
+    ai_config: dict[str, Any] | None = None
+    if use_ai:
+        org_id = user.get("org_id") if isinstance(user, dict) else None
+        ai_config = require_active_tenant_ai_config(org_id, feature_label="AI playbook generation")
 
     playbook = generate_playbook(
         alert_id=alert_id,
         case_id=case_id,
         use_ai=use_ai,
         ai_prompt=ai_prompt,
-        ai_config=ai_config or None,
+        ai_config=ai_config,
     )
     return playbook
 

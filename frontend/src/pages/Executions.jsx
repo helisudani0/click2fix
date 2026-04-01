@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { getExecutionDetail, getExecutions } from "../api/wazuh";
+import { getExecutionAiTriage, getExecutionDetail, getExecutions } from "../api/wazuh";
 import ExecutionStream from "../components/ExecutionStream";
 import Pager from "../components/Pager";
 import RelativeTimestamp from "../components/RelativeTimestamp";
 import { parseWazuhTimestamp } from "../utils/time";
+import { formatApiError } from "../utils/httpErrors";
 
-const EXECUTION_FETCH_LIMIT = 250;
+const EXECUTION_FETCH_LIMIT = 120;
 
 const executionRow = (row) => {
   if (Array.isArray(row)) {
@@ -124,6 +125,9 @@ export default function Executions() {
   const [statusFilter, setStatusFilter] = useState("");
   const [queuePage, setQueuePage] = useState(1);
   const [queuePageSize, setQueuePageSize] = useState(15);
+  const [aiTriage, setAiTriage] = useState(null);
+  const [aiTriageLoading, setAiTriageLoading] = useState(false);
+  const [aiTriageError, setAiTriageError] = useState("");
 
   const prefillExecutionId = useMemo(() => {
     const fromState = location?.state?.prefillExecutionId;
@@ -134,7 +138,10 @@ export default function Executions() {
   }, [location?.search, location?.state]);
 
   const initialLoadRef = useRef(true);
+  const loadInFlightRef = useRef(false);
   const load = useCallback((force = false) => {
+    if (loadInFlightRef.current) return;
+    loadInFlightRef.current = true;
     if (initialLoadRef.current) setLoading(true);
     getExecutions({ limit: EXECUTION_FETCH_LIMIT }, { force })
       .then((r) => {
@@ -153,11 +160,14 @@ export default function Executions() {
         }
       })
       .catch((err) => {
-        setError(err.response?.data?.detail || err.message || "Failed to load execution history");
+        setError(formatApiError(err, "Failed to load execution history"));
         if (initialLoadRef.current) {
           setLoading(false);
           initialLoadRef.current = false;
         }
+      })
+      .finally(() => {
+        loadInFlightRef.current = false;
       });
   }, []);
 
@@ -190,6 +200,7 @@ export default function Executions() {
 
   useEffect(() => {
     const timer = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       load(true);
     }, 8000);
     return () => window.clearInterval(timer);
@@ -265,6 +276,12 @@ export default function Executions() {
   }, [selectedRun]);
 
   useEffect(() => {
+    setAiTriage(null);
+    setAiTriageError("");
+    setAiTriageLoading(false);
+  }, [selectedRun?.id]);
+
+  useEffect(() => {
     if (!prefillExecutionId || !selectedRun) return;
     if (Number(selectedRun.id) !== Number(prefillExecutionId)) return;
     setDetailMode(true);
@@ -288,6 +305,21 @@ export default function Executions() {
     });
     return totals;
   }, [parsedRuns]);
+
+  const handleAiTriage = async () => {
+    if (!selectedRun?.id) return;
+    setAiTriageLoading(true);
+    setAiTriageError("");
+    try {
+      const res = await getExecutionAiTriage(selectedRun.id);
+      setAiTriage(res?.data || null);
+    } catch (err) {
+      setAiTriage(null);
+      setAiTriageError(formatApiError(err, "Unable to generate AI execution triage right now."));
+    } finally {
+      setAiTriageLoading(false);
+    }
+  };
 
   if (loading) return <div className="page page-route-executions"><div className="empty-state">Loading execution workspace...</div></div>;
   if (error) return <div className="page page-route-executions"><div className="empty-state">Error: {error}</div></div>;
@@ -359,6 +391,9 @@ export default function Executions() {
               <button className="btn secondary" onClick={() => setDetailMode(false)}>
                 Back to Queue
               </button>
+              <button className="btn secondary" onClick={handleAiTriage} disabled={aiTriageLoading}>
+                {aiTriageLoading ? "Analyzing..." : "AI Triage"}
+              </button>
               <button className="btn secondary" onClick={() => load(true)}>
                 Refresh
               </button>
@@ -400,6 +435,44 @@ export default function Executions() {
               <span className="kv-value">{formatDuration(selectedRun.startedAt, selectedRun.finishedAt)}</span>
             </div>
           </div>
+          <details className="ticketing-detail-section" open>
+            <summary>AI Triage</summary>
+            {aiTriageError ? <div className="empty-state">{aiTriageError}</div> : null}
+            {!aiTriage && !aiTriageError ? (
+              <div className="empty-state">Run AI Triage to summarize probable root causes and next actions.</div>
+            ) : null}
+            {aiTriage ? (
+              <div className="mt-8">
+                <div className="meta-line ws-normal">{aiTriage.summary || "-"}</div>
+                <div className="kv-grid mt-8">
+                  <div className="kv-row">
+                    <span className="kv-key">Root Causes</span>
+                    <span className="kv-value">
+                      {Array.isArray(aiTriage.root_causes) && aiTriage.root_causes.length
+                        ? aiTriage.root_causes.join(" | ")
+                        : "-"}
+                    </span>
+                  </div>
+                  <div className="kv-row">
+                    <span className="kv-key">Recommended Actions</span>
+                    <span className="kv-value">
+                      {Array.isArray(aiTriage.recommended_actions) && aiTriage.recommended_actions.length
+                        ? aiTriage.recommended_actions.join(" | ")
+                        : "-"}
+                    </span>
+                  </div>
+                  <div className="kv-row">
+                    <span className="kv-key">Token Usage</span>
+                    <span className="kv-value">
+                      {Number(aiTriage?.usage?.total_tokens || 0) > 0
+                        ? `${Number(aiTriage.usage.total_tokens)} total`
+                        : "-"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </details>
           <details className="ticketing-detail-section" open>
             <summary>Execution Stream</summary>
             <ExecutionStream executionId={selectedRun.id} />

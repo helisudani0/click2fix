@@ -10,6 +10,7 @@ import {
   getSystemAiConfig,
 } from "../api/wazuh";
 import { formatWazuhTimestamp, parseWazuhTimestamp } from "../utils/time";
+import { formatApiError } from "../utils/httpErrors";
 
 const statusClass = status => {
   if (status === "spike" || status === "drop") return "failed";
@@ -29,8 +30,7 @@ const buildIsoRange = (lookbackHours) => {
   };
 };
 
-const errorText = (err, fallback) =>
-  err?.response?.data?.detail || err?.response?.data?.message || err?.message || fallback;
+const errorText = (err, fallback) => formatApiError(err, fallback);
 
 const isNotFoundResult = (result) =>
   result?.status === "rejected" && Number(result?.reason?.response?.status || 0) === 404;

@@ -198,6 +198,8 @@ export const getVulnerabilities = (params = {}) =>
   api.get("/vulnerabilities", { params });
 export const closeVulnerabilityLocal = (payload) =>
   api.post("/vulnerabilities/local-close", payload);
+export const getVulnerabilityAiPlan = (payload = {}) =>
+  api.post("/vulnerabilities/ai-remediation-plan", payload);
 export const getAgentInventory = (agentId, limit = 100) =>
   api.get(`/agents/${agentId}/inventory`, { params: { limit } });
 export const getAgentEvents = (agentId, hours = 24) =>
@@ -307,6 +309,8 @@ export const addCaseNote = (caseId, note) =>
   api.post(`/cases/${caseId}/notes`, null, { params: { note } });
 export const getCaseTimeline = (caseId, params = {}) =>
   api.get(`/cases/${caseId}/timeline`, { params });
+export const getCaseAiSummary = (caseId) =>
+  api.get(`/cases/${caseId}/ai-summary`);
 export const getCaseTimelineExportUrl = (caseId, params = {}) =>
   buildApiUrl(`/cases/${caseId}/timeline/export`, params);
 export const getCaseAttachments = (caseId) =>
@@ -340,6 +344,8 @@ export const updateCaseStatus = (caseId, status) =>
 
 export const requestApproval = (payload) =>
   api.post("/approvals/request", payload);
+export const generateApprovalAiJustification = (payload = {}) =>
+  api.post("/approvals/ai-justification", payload);
 
 export const getPendingApprovals = (params = {}) =>
   api.get("/approvals/pending", { params });
@@ -396,6 +402,8 @@ export const getExecutions = (params = {}, options = {}) => {
 };
 export const getExecutionDetail = (executionId) =>
   api.get(`/executions/${executionId}`);
+export const getExecutionAiTriage = (executionId) =>
+  api.get(`/executions/${executionId}/ai-triage`);
 export const suggestGlobalShellCommand = (payload) =>
   api.post("/actions/global-shell/assist", payload);
 

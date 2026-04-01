@@ -1,11 +1,11 @@
 import os
 import threading
 import time
+import copy
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import text
 
-from core.ai_providers import AIAdapter
 from core.ingest_gateway_client import IngestGatewayClient
 from core.indexer_client import IndexerClient
 from core.scheduler import scheduler as core_scheduler
@@ -29,11 +29,20 @@ _OVERVIEW_HEALTH_CACHE_TTL_SECONDS = max(
     1.0,
     float(os.getenv("C2F_OVERVIEW_HEALTH_CACHE_TTL_SECONDS", "15")),
 )
+_OVERVIEW_CACHE_TTL_SECONDS = max(
+    1.0,
+    float(os.getenv("C2F_OVERVIEW_CACHE_TTL_SECONDS", "5")),
+)
 _overview_health_cache_lock = threading.Lock()
 _overview_health_cache: dict[str, object] = {
     "expires_at": 0.0,
     "integration": None,
     "queue_summary": None,
+}
+_overview_cache_lock = threading.Lock()
+_overview_cache: dict[str, object] = {
+    "expires_at": 0.0,
+    "payload": None,
 }
 
 
@@ -218,10 +227,20 @@ def _effective_ai_config_payload(org_id: int) -> dict:
             "source": "tenant_config",
             **to_public_ai_config(tenant_cfg),
         }
-    env_cfg = AIAdapter().config
     return {
-        "source": "environment",
-        **to_public_ai_config(env_cfg),
+        "source": "tenant_config",
+        **to_public_ai_config(
+            {
+                "enabled": False,
+                "provider": "",
+                "base_url": "",
+                "model": "",
+                "api_key": "",
+                "timeout_seconds": 45,
+                "temperature": 0.1,
+                "max_tokens": 1800,
+            }
+        ),
     }
 
 
@@ -273,6 +292,81 @@ def _get_cached_integration_health() -> tuple[dict, dict]:
         _overview_health_cache["expires_at"] = now + _OVERVIEW_HEALTH_CACHE_TTL_SECONDS
 
     return integration, queue_summary
+
+
+def _collect_overview_counts() -> dict[str, int]:
+    db = connect()
+    try:
+        row = db.execute(
+            text(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM approvals WHERE status='PENDING') AS approvals_pending,
+                    (SELECT COUNT(*) FROM approvals WHERE status='IN_REVIEW') AS approvals_in_review,
+                    (SELECT COUNT(*) FROM executions) AS executions_total,
+                    (SELECT COUNT(*) FROM cases) AS cases_total,
+                    (SELECT COUNT(*) FROM alerts_store) AS alerts_total,
+                    (SELECT COUNT(*) FROM audit_logs) AS audit_total,
+                    (SELECT COUNT(*) FROM change_requests) AS changes_total,
+                    (SELECT COUNT(*) FROM change_requests WHERE status IN ('PROPOSED','APPROVED')) AS changes_open
+                """
+            )
+        ).mappings().first()
+    finally:
+        db.close()
+
+    values = dict(row or {})
+    return {
+        "approvals_pending": int(values.get("approvals_pending") or 0),
+        "approvals_in_review": int(values.get("approvals_in_review") or 0),
+        "executions_total": int(values.get("executions_total") or 0),
+        "cases_total": int(values.get("cases_total") or 0),
+        "alerts_total": int(values.get("alerts_total") or 0),
+        "audit_total": int(values.get("audit_total") or 0),
+        "changes_total": int(values.get("changes_total") or 0),
+        "changes_open": int(values.get("changes_open") or 0),
+    }
+
+
+def _build_overview_payload() -> dict:
+    counts = _collect_overview_counts()
+    integration, queue_summary = _get_cached_integration_health()
+    return {
+        "started_at": utc_iso(_started_at),
+        "scheduler_running": core_scheduler.running,
+        "integration": integration,
+        "counts": {
+            **counts,
+            "ingestion_queue_total": int(queue_summary.get("total") or 0),
+            "ingestion_queue_status": queue_summary.get("status_counts") or {},
+        },
+        "settings": _safe_settings(),
+    }
+
+
+def _get_cached_overview_payload() -> dict:
+    now = time.time()
+    with _overview_cache_lock:
+        expires_at = float(_overview_cache.get("expires_at") or 0.0)
+        cached_payload = _overview_cache.get("payload")
+        if cached_payload is not None and now < expires_at:
+            return copy.deepcopy(cached_payload)
+
+    try:
+        payload = _build_overview_payload()
+    except Exception:
+        # Keep /system/overview resilient during transient DB/indexer hiccups.
+        with _overview_cache_lock:
+            cached_payload = _overview_cache.get("payload")
+            if cached_payload is not None:
+                return copy.deepcopy(cached_payload)
+        raise
+
+    with _overview_cache_lock:
+        _overview_cache["payload"] = copy.deepcopy(payload)
+        _overview_cache["expires_at"] = now + _OVERVIEW_CACHE_TTL_SECONDS
+
+    return payload
 
 
 @router.get("/version")
@@ -353,45 +447,7 @@ async def update_system_ai_config(request: Request, user=Depends(require_role("a
 
 @router.get("/overview")
 def overview(user=Depends(require_role("admin"))):
-    db = connect()
-    try:
-        approvals_pending = db.execute(
-            text("SELECT COUNT(*) FROM approvals WHERE status='PENDING'")
-        ).scalar() or 0
-        approvals_review = db.execute(
-            text("SELECT COUNT(*) FROM approvals WHERE status='IN_REVIEW'")
-        ).scalar() or 0
-        executions_total = db.execute(text("SELECT COUNT(*) FROM executions")).scalar() or 0
-        cases_total = db.execute(text("SELECT COUNT(*) FROM cases")).scalar() or 0
-        alerts_total = db.execute(text("SELECT COUNT(*) FROM alerts_store")).scalar() or 0
-        audit_total = db.execute(text("SELECT COUNT(*) FROM audit_logs")).scalar() or 0
-        changes_total = db.execute(text("SELECT COUNT(*) FROM change_requests")).scalar() or 0
-        changes_open = db.execute(
-            text("SELECT COUNT(*) FROM change_requests WHERE status IN ('PROPOSED','APPROVED')")
-        ).scalar() or 0
-    finally:
-        db.close()
-
-    integration, queue_summary = _get_cached_integration_health()
-
-    return {
-        "started_at": utc_iso(_started_at),
-        "scheduler_running": core_scheduler.running,
-        "integration": integration,
-        "counts": {
-            "approvals_pending": approvals_pending,
-            "approvals_in_review": approvals_review,
-            "executions_total": executions_total,
-            "cases_total": cases_total,
-            "alerts_total": alerts_total,
-            "audit_total": audit_total,
-            "changes_total": changes_total,
-            "changes_open": changes_open,
-            "ingestion_queue_total": int(queue_summary.get("total") or 0),
-            "ingestion_queue_status": queue_summary.get("status_counts") or {},
-        },
-        "settings": _safe_settings(),
-    }
+    return _get_cached_overview_payload()
 
 
 @router.post("/executions/reconcile")

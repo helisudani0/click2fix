@@ -25,8 +25,13 @@ def test_generate_route_uses_tenant_ai_config_when_request_has_no_ai_config(monk
 
     monkeypatch.setattr(
         playbooks_api,
-        "load_active_tenant_ai_config",
-        lambda org_id: {"provider": "openai", "api_key": "tenant-key", "enabled": True, "model": "gpt-4.1-mini"},
+        "require_active_tenant_ai_config",
+        lambda org_id, feature_label=None: {
+            "provider": "openai",
+            "api_key": "tenant-key",
+            "enabled": True,
+            "model": "gpt-4.1-mini",
+        },
     )
 
     def _fake_generate_playbook(**kwargs):
@@ -53,13 +58,18 @@ def test_generate_route_uses_tenant_ai_config_when_request_has_no_ai_config(monk
     assert captured["ai_config"]["api_key"] == "tenant-key"
 
 
-def test_generate_route_prefers_explicit_request_ai_config_over_tenant(monkeypatch):
+def test_generate_route_ignores_request_ai_config_and_uses_tenant(monkeypatch):
     captured = {}
 
     monkeypatch.setattr(
         playbooks_api,
-        "load_active_tenant_ai_config",
-        lambda org_id: {"provider": "openai", "api_key": "tenant-key", "enabled": True, "model": "gpt-4.1-mini"},
+        "require_active_tenant_ai_config",
+        lambda org_id, feature_label=None: {
+            "provider": "openai",
+            "api_key": "tenant-key",
+            "enabled": True,
+            "model": "gpt-4.1-mini",
+        },
     )
 
     def _fake_generate_playbook(**kwargs):
@@ -92,5 +102,5 @@ def test_generate_route_prefers_explicit_request_ai_config_over_tenant(monkeypat
     )
 
     assert response["name"] == "Generated"
-    assert captured["ai_config"]["provider"] == "gemini"
-    assert captured["ai_config"]["api_key"] == "request-key"
+    assert captured["ai_config"]["provider"] == "openai"
+    assert captured["ai_config"]["api_key"] == "tenant-key"

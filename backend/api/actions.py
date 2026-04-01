@@ -28,6 +28,7 @@ from core.indexer_client import IndexerClient
 from core.launch_guardrails import register_launch, should_emit_burst
 from core.security import recent_auth_window_seconds, require_recent_auth, require_role
 from core.security_monitoring import record_security_event
+from core.tenant_ai_config import load_active_tenant_ai_config, require_active_tenant_ai_config
 from core.time_utils import utc_now_naive
 from core.wazuh_client import WazuhClient
 from core.ws_bus import publish_event
@@ -549,20 +550,10 @@ def _load_active_tenant_ai_config(org_id: Any) -> dict[str, Any]:
 
 
 def _resolve_ai_provider_config(*, user: Any, require_enabled: bool = False) -> dict[str, Any] | None:
-    tenant_cfg = _load_active_tenant_ai_config((user or {}).get("org_id") if isinstance(user, dict) else None)
-    if not tenant_cfg:
-        if require_enabled:
-            raise HTTPException(
-                status_code=503,
-                detail="AI assistant is disabled. Enable it in Org Admin / Platform AI Configuration.",
-            )
-        return None
-    if require_enabled and not _to_bool(tenant_cfg.get("enabled"), False):
-        raise HTTPException(
-            status_code=503,
-            detail="AI assistant is disabled. Enable it in Org Admin / Platform AI Configuration.",
-        )
-    return tenant_cfg
+    org_id = (user or {}).get("org_id") if isinstance(user, dict) else None
+    if require_enabled:
+        return require_active_tenant_ai_config(org_id, feature_label="AI assistant")
+    return load_active_tenant_ai_config(org_id)
 
 
 def _build_global_shell_dispatch(

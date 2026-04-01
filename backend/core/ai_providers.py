@@ -49,6 +49,16 @@ def _to_bool(value: Any, default: bool) -> bool:
     return bool(value)
 
 
+def _to_non_negative_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except Exception:
+        return None
+    if parsed < 0:
+        return None
+    return parsed
+
+
 def _json_from_text(raw: str) -> Dict[str, Any]:
     text = _text(raw)
     if not text:
@@ -105,6 +115,42 @@ def _extract_gemini_text(node: Dict[str, Any]) -> str:
         if text:
             out.append(text)
     return "\n".join(out)
+
+
+def _extract_openai_usage(node: Dict[str, Any]) -> Dict[str, int]:
+    usage = _dict(node.get("usage"))
+    prompt_tokens = _to_non_negative_int(usage.get("prompt_tokens"))
+    completion_tokens = _to_non_negative_int(usage.get("completion_tokens"))
+    total_tokens = _to_non_negative_int(usage.get("total_tokens"))
+    if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+        total_tokens = prompt_tokens + completion_tokens
+    out: Dict[str, int] = {}
+    if prompt_tokens is not None:
+        out["prompt_tokens"] = prompt_tokens
+    if completion_tokens is not None:
+        out["completion_tokens"] = completion_tokens
+    if total_tokens is not None:
+        out["total_tokens"] = total_tokens
+    return out
+
+
+def _extract_gemini_usage(node: Dict[str, Any]) -> Dict[str, int]:
+    usage = _dict(node.get("usageMetadata"))
+    prompt_tokens = _to_non_negative_int(usage.get("promptTokenCount"))
+    completion_tokens = _to_non_negative_int(
+        usage.get("candidatesTokenCount") if "candidatesTokenCount" in usage else usage.get("candidateTokenCount")
+    )
+    total_tokens = _to_non_negative_int(usage.get("totalTokenCount"))
+    if total_tokens is None and prompt_tokens is not None and completion_tokens is not None:
+        total_tokens = prompt_tokens + completion_tokens
+    out: Dict[str, int] = {}
+    if prompt_tokens is not None:
+        out["prompt_tokens"] = prompt_tokens
+    if completion_tokens is not None:
+        out["completion_tokens"] = completion_tokens
+    if total_tokens is not None:
+        out["total_tokens"] = total_tokens
+    return out
 
 
 def _gemini_response_json_schema(system_prompt: str) -> Dict[str, Any] | None:
@@ -237,6 +283,9 @@ class AIProviderError(RuntimeError):
 
 
 class BaseAIProvider:
+    def __init__(self) -> None:
+        self.last_usage: Dict[str, int] = {}
+
     def ask_json(self, system_prompt: str, user_payload: dict) -> dict:
         raise NotImplementedError
 
@@ -245,6 +294,7 @@ class _OpenAICompatibleProvider(BaseAIProvider):
     provider_name = "provider"
 
     def __init__(self, config: Dict[str, Any]):
+        super().__init__()
         self.base_url = _clean_base_url(config.get("base_url"))
         self.model = _text(config.get("model"))
         self.api_key = _text(config.get("api_key"))
@@ -375,6 +425,7 @@ class _OpenAICompatibleProvider(BaseAIProvider):
             raise AIProviderError(f"{self.provider_name} returned non-JSON response") from exc
 
     def ask_json(self, system_prompt: str, user_payload: dict) -> dict:
+        self.last_usage = {}
         payload = _dict(user_payload)
         if not isinstance(user_payload, dict):
             raise AIProviderError("user_payload must be a JSON object")
@@ -408,6 +459,7 @@ class _OpenAICompatibleProvider(BaseAIProvider):
                     continue
                 raise
             transport_attempts += 1
+            self.last_usage = _extract_openai_usage(node)
             text = _extract_message_text(node)
             parsed = _json_from_text(text)
             if parsed:
@@ -435,6 +487,7 @@ class GeminiProvider(_OpenAICompatibleProvider):
     provider_name = "gemini"
 
     def __init__(self, config: Dict[str, Any]):
+        BaseAIProvider.__init__(self)
         merged = dict(config or {})
         self.base_url = _clean_base_url(merged.get("base_url") or _DEFAULT_GEMINI_BASE_URL)
         self.model = _normalize_gemini_model_name(merged.get("model") or _DEFAULT_GEMINI_MODEL)
@@ -591,6 +644,7 @@ class GeminiProvider(_OpenAICompatibleProvider):
             raise AIProviderError(f"{self.provider_name} returned non-JSON response") from exc
 
     def ask_json(self, system_prompt: str, user_payload: dict) -> dict:
+        self.last_usage = {}
         payload = _dict(user_payload)
         if not isinstance(user_payload, dict):
             raise AIProviderError("user_payload must be a JSON object")
@@ -617,6 +671,7 @@ class GeminiProvider(_OpenAICompatibleProvider):
                         invalid_json_attempts = 0
                         continue
                 raise
+            self.last_usage = _extract_gemini_usage(node)
             text = _extract_gemini_text(node)
             parsed = _json_from_text(text)
             if parsed:
@@ -664,6 +719,7 @@ class AIAdapter:
     def __init__(self, config: Dict[str, Any] | None = None, settings_config: Dict[str, Any] | None = None):
         self.config = self._resolve_config(config=config, settings_config=settings_config)
         self.enabled = _to_bool(self.config.get("enabled"), False)
+        self.last_usage: Dict[str, int] = {}
         # Provider initialization is lazy so disabled AI does not require provider credentials at startup.
         self.provider: BaseAIProvider | None = None
 
@@ -755,10 +811,13 @@ class AIAdapter:
         }
 
     def ask_json(self, system_prompt: str, user_payload: dict) -> dict:
+        self.last_usage = {}
         if not self.enabled:
             raise AIProviderError(
                 "AI features are disabled. Set C2F_AI_FEATURES_ENABLED=true with C2F_LLM_API_KEY, or configure AI in Org Admin."
             )
         if self.provider is None:
             self.provider = ProviderFactory.create(self.config)
-        return self.provider.ask_json(system_prompt=system_prompt, user_payload=user_payload)
+        response = self.provider.ask_json(system_prompt=system_prompt, user_payload=user_payload)
+        self.last_usage = dict(getattr(self.provider, "last_usage", {}) or {})
+        return response

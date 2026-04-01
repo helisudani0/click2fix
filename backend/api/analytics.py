@@ -8,7 +8,7 @@ from core.active_defense import predict_alert_storm
 from core.analytics import overview, kill_chain, alert_summary, hourly_volume
 from core.ai_providers import AIAdapter, AIProviderError
 from core.security import current_user
-from core.tenant_ai_config import load_active_tenant_ai_config
+from core.tenant_ai_config import ai_feature_disabled_detail, load_active_tenant_ai_config
 
 
 router = APIRouter(prefix="/analytics")
@@ -134,7 +134,8 @@ async def analytics_ai_insights(request: Request, user=Depends(current_user)):
     hours = max(1, min(_to_int(body.get("hours"), 72), 720))
     alert_id = _to_text(body.get("alert_id"))
     prompt = _to_text(body.get("prompt") or body.get("ai_prompt") or body.get("instructions"))
-    ai_config = load_active_tenant_ai_config(user.get("org_id")) if isinstance(user, dict) else {}
+    org_id = user.get("org_id") if isinstance(user, dict) else None
+    ai_config = load_active_tenant_ai_config(org_id)
 
     overview_payload = overview()
     hourly_series = hourly_volume(hours)
@@ -149,12 +150,21 @@ async def analytics_ai_insights(request: Request, user=Depends(current_user)):
         alert_id=alert_id,
     )
 
+    ai_enabled = _to_bool(ai_config.get("enabled"), False)
+    has_key = bool(_to_text(ai_config.get("api_key")))
+    if not ai_enabled or not has_key:
+        return {
+            **fallback,
+            "reason": ai_feature_disabled_detail("AI insights"),
+            "source": {"hours": hours, "alert_id": alert_id or None},
+        }
+
     try:
-        adapter = AIAdapter(config=ai_config or None)
+        adapter = AIAdapter(config=ai_config if isinstance(ai_config, dict) else {})
         if not adapter.enabled:
             return {
                 **fallback,
-                "reason": "AI insights are disabled",
+                "reason": ai_feature_disabled_detail("AI insights"),
                 "source": {"hours": hours, "alert_id": alert_id or None},
             }
         ai_payload = {
@@ -206,6 +216,7 @@ async def analytics_ai_insights(request: Request, user=Depends(current_user)):
             "summary": summary[:1200],
             "priority_findings": findings,
             "recommended_actions": actions[:6],
+            "usage": dict(adapter.last_usage or {}),
             "source": {"hours": hours, "alert_id": alert_id or None},
         }
     except AIProviderError as exc:

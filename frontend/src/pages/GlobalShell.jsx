@@ -22,17 +22,6 @@ const TARGET_MODE_LABELS = {
   group: "Specific group",
   fleet: "Fleet",
 };
-const asFlag = (value, defaultValue) => {
-  if (value === undefined || value === null || value === "") return defaultValue;
-  const normalized = String(value).trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(normalized)) return true;
-  if (["0", "false", "no", "off"].includes(normalized)) return false;
-  return defaultValue;
-};
-const ASSIST_ENV_ENABLED = asFlag(
-  import.meta.env.VITE_C2F_AI_FEATURES_ENABLED,
-  asFlag(import.meta.env.VITE_AI_REMEDIATION_ENABLED, true)
-);
 const looksLikeAssistantUnavailable = (text) => {
   const lowered = String(text || "").toLowerCase();
   return (
@@ -300,7 +289,7 @@ export default function GlobalShell() {
   const [runAsSystem, setRunAsSystem] = useState(false);
   const [assistantPrompt, setAssistantPrompt] = useState("");
   const [assistantLoading, setAssistantLoading] = useState(false);
-  const [assistantEnabled, setAssistantEnabled] = useState(ASSIST_ENV_ENABLED);
+  const [assistantEnabled, setAssistantEnabled] = useState(false);
   const [assistantDisabledReason, setAssistantDisabledReason] = useState("");
   const [autoRemediate, setAutoRemediate] = useState(false);
   const [maxAttempts, setMaxAttempts] = useState(3);
@@ -359,7 +348,7 @@ export default function GlobalShell() {
   const loadHistory = useCallback(async (force = false) => {
     setHistoryLoading(true);
     try {
-      const res = await getExecutions({ limit: 120, q: "global-shell" }, { force });
+      const res = await getExecutions({ limit: 120, q: "global-shell", include_latest_output: true }, { force });
       const rows = normalizeExecutions(res.data);
       setHistory(rows);
       setActiveExecutionId((current) => {
@@ -386,11 +375,9 @@ export default function GlobalShell() {
       );
       return enabled;
     } catch {
-      setAssistantEnabled(ASSIST_ENV_ENABLED);
-      setAssistantDisabledReason(
-        ASSIST_ENV_ENABLED ? "" : "AI assistant is disabled. Enable it in Org Admin / Platform AI Configuration."
-      );
-      return ASSIST_ENV_ENABLED;
+      setAssistantEnabled(false);
+      setAssistantDisabledReason("AI status unavailable. Configure AI in Org Admin / Platform AI Configuration.");
+      return false;
     }
   }, []);
 
@@ -992,7 +979,7 @@ export default function GlobalShell() {
                 </div>
               ) : null}
               <div className="meta-line mt-8">
-                AI setup: use Org Admin / Platform AI Configuration, or set `C2F_AI_FEATURES_ENABLED=true` with `C2F_LLM_API_KEY` in `.env.appliance`.
+                AI setup: use Org Admin / Platform AI Configuration.
               </div>
               <label className="mt-10 inline-check">
                 <input

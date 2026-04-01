@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Pager from "../components/Pager";
-import { getAgents, getAgentGroups, getVulnerabilities } from "../api/wazuh";
+import { getAgents, getAgentGroups, getVulnerabilities, getVulnerabilityAiPlan } from "../api/wazuh";
 import { formatWazuhTimestamp } from "../utils/time";
+import { formatApiError } from "../utils/httpErrors";
 
 const SEVERITIES = ["critical", "high", "medium", "low"];
 const INITIAL_FETCH_LIMIT = 2500;
@@ -151,6 +152,9 @@ export default function Vulnerabilities() {
   const [queryLimit, setQueryLimit] = useState(INITIAL_FETCH_LIMIT);
   const [truncated, setTruncated] = useState(false);
   const [selectedVulnerabilityId, setSelectedVulnerabilityId] = useState("");
+  const [aiPlanLoading, setAiPlanLoading] = useState(false);
+  const [aiPlanError, setAiPlanError] = useState("");
+  const [aiPlan, setAiPlan] = useState(null);
 
   const loadAgents = useCallback(async () => {
     try {
@@ -243,7 +247,7 @@ export default function Vulnerabilities() {
       });
       setTargetAgents({ critical: [], high: [], medium: [], low: [] });
       setSource("-");
-      setError(err.response?.data?.detail || err.message || "Failed to load vulnerabilities.");
+      setError(formatApiError(err, "Failed to load vulnerabilities."));
       setTruncated(false);
       setQueryLimit(fetchLimit);
     } finally {
@@ -312,6 +316,27 @@ export default function Vulnerabilities() {
     () => filteredItems.find((row) => String(row?.id || "") === String(selectedVulnerabilityId || "")) || filteredItems[0] || null,
     [filteredItems, selectedVulnerabilityId]
   );
+
+  useEffect(() => {
+    setAiPlan(null);
+    setAiPlanError("");
+    setAiPlanLoading(false);
+  }, [selectedItem?.id]);
+
+  const generateAiPlan = useCallback(async () => {
+    if (!selectedItem) return;
+    try {
+      setAiPlanLoading(true);
+      setAiPlanError("");
+      const response = await getVulnerabilityAiPlan({ vulnerability: buildWazuhDetail(selectedItem) });
+      setAiPlan(response?.data || null);
+    } catch (err) {
+      setAiPlan(null);
+      setAiPlanError(formatApiError(err, "Unable to generate AI remediation plan."));
+    } finally {
+      setAiPlanLoading(false);
+    }
+  }, [selectedItem]);
 
   const wazuhDetailJson = useMemo(
     () => JSON.stringify(buildWazuhDetail(selectedItem), null, 2),
@@ -657,6 +682,14 @@ export default function Vulnerabilities() {
                 </div>
                 <h3 className="mt-10">{selectedItem.cve || selectedItem.title || "Vulnerability"}</h3>
                 <div className="meta-line mt-6">{selectedItem.title || "-"}</div>
+                <div className="page-actions mt-10">
+                  <button className="btn secondary" onClick={generateAiPlan} disabled={aiPlanLoading}>
+                    {aiPlanLoading ? "Generating AI Plan..." : "Generate AI Remediation Plan"}
+                  </button>
+                </div>
+                <div className="muted mt-8">
+                  AI uses Org Admin / Platform AI Configuration and approved action catalog context.
+                </div>
               </div>
 
               <div className="kv-grid">
@@ -794,6 +827,65 @@ export default function Vulnerabilities() {
                     )}
                   </tbody>
                 </table>
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h3>AI Remediation Plan</h3>
+                <p className="muted">Operator-ready remediation sequence generated for the selected vulnerability.</p>
+              </div>
+            </div>
+            {!selectedItem ? (
+              <div className="empty-state">Select a vulnerability to generate an AI remediation plan.</div>
+            ) : aiPlanError ? (
+              <div className="empty-state">{aiPlanError}</div>
+            ) : !aiPlan ? (
+              <div className="empty-state">No AI plan generated yet for this vulnerability.</div>
+            ) : (
+              <div className="list">
+                <div className="list-item">
+                  <div className="muted">Summary</div>
+                  <div className="mt-8">{toDisplay(aiPlan.summary, "-")}</div>
+                </div>
+                <div className="list-item">
+                  <div className="muted">Steps</div>
+                  {Array.isArray(aiPlan.steps) && aiPlan.steps.length ? (
+                    <ol className="list mt-8">
+                      {aiPlan.steps.map((step, idx) => (
+                        <li className="list-item" key={`ai-step-${idx}`}>
+                          <div><strong>{toDisplay(step.action_id || step.action, "action")}</strong></div>
+                          <div className="meta-line">{toDisplay(step.goal, "-")}</div>
+                          <div className="meta-line">{toDisplay(step.rationale, "-")}</div>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <div className="meta-line mt-8">No steps provided.</div>
+                  )}
+                </div>
+                <div className="list-item">
+                  <div className="muted">Verification</div>
+                  {Array.isArray(aiPlan.verification) && aiPlan.verification.length ? (
+                    <ul className="list mt-8">
+                      {aiPlan.verification.map((item, idx) => (
+                        <li className="list-item" key={`ai-verify-${idx}`}>{toDisplay(item, "-")}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="meta-line mt-8">No verification checks provided.</div>
+                  )}
+                </div>
+                {aiPlan.usage ? (
+                  <div className="list-item">
+                    <div className="muted">Token Usage</div>
+                    <div className="meta-line mt-8">
+                      Prompt: {toDisplay(aiPlan.usage.prompt_tokens, "0")} | Completion: {toDisplay(aiPlan.usage.completion_tokens, "0")} | Total: {toDisplay(aiPlan.usage.total_tokens, "0")}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             )}
           </div>

@@ -202,7 +202,7 @@ export default function OrgAdmin() {
     max_tokens: "1800",
     has_api_key: false,
     api_key_masked: "",
-    source: "environment",
+    source: "tenant_config",
   });
 
   const selectedTenant = useMemo(
@@ -258,7 +258,7 @@ export default function OrgAdmin() {
         max_tokens: String(node?.max_tokens || current.max_tokens || "1800"),
         has_api_key: Boolean(node?.has_api_key),
         api_key_masked: normalizeText(node?.api_key_masked),
-        source: normalizeText(node?.source || "environment") || "environment",
+        source: normalizeText(node?.source || "tenant_config") || "tenant_config",
       }));
     } catch (err) {
       setAiError(getErrorMessage(err, "Failed to load AI configuration."));
@@ -669,7 +669,7 @@ export default function OrgAdmin() {
           <div>
             <h3>Platform AI Configuration</h3>
             <p className="muted">
-              Enable AI once for this org and reuse it across Global Shell assistant, AI playbook generation, and analytics insights.
+              Enable AI once for this org and reuse it across Global Shell assistant, AI playbook generation, analytics insights, SCA assist, execution triage, case summary, approval justification, and vulnerability planning.
             </p>
           </div>
           <span className={`status-pill ${aiConfig.enabled ? "success" : "pending"}`}>

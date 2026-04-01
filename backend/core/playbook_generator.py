@@ -507,6 +507,7 @@ def _ai_generate_steps(
         "description": _text(response.get("description")),
         "analysis": _text(response.get("analysis")),
         "confidence": _text(response.get("confidence") or "medium").lower(),
+        "usage": dict(adapter.last_usage or {}),
         "steps": steps[:8],
     }
 
@@ -564,6 +565,7 @@ def _ai_generate_steps_from_prompt(
         "description": _text(response.get("description")) or "AI-generated playbook from operator objective",
         "analysis": _text(response.get("analysis")),
         "confidence": _text(response.get("confidence") or "medium").lower(),
+        "usage": dict(adapter.last_usage or {}),
         "steps": steps[:8],
         "unmapped_actions": _collect_unmapped_actions(steps, actions),
     }
@@ -613,6 +615,7 @@ def generate_playbook(
                     "ai_prompt": _text(ai_prompt),
                     "ai_analysis": ai_generated.get("analysis") if isinstance(ai_generated, dict) else "",
                     "ai_confidence": ai_generated.get("confidence") if isinstance(ai_generated, dict) else "",
+                    "ai_usage": ai_generated.get("usage") if isinstance(ai_generated, dict) else {},
                     "ai_error": ai_error,
                     "unmapped_actions": (
                         ai_generated.get("unmapped_actions")
@@ -682,6 +685,7 @@ def generate_playbook(
             "ai_prompt": _text(ai_prompt) if use_ai else "",
             "ai_analysis": ai_generated.get("analysis") if isinstance(ai_generated, dict) else "",
             "ai_confidence": ai_generated.get("confidence") if isinstance(ai_generated, dict) else "",
+            "ai_usage": ai_generated.get("usage") if isinstance(ai_generated, dict) else {},
             "ai_error": ai_error,
             "unmapped_actions": (
                 ai_generated.get("unmapped_actions")

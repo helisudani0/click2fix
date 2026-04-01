@@ -384,6 +384,7 @@ class _Agent:
             )
         except AIProviderError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        ai_usage = dict(self.ai.last_usage or {})
         out = _validate_plan_response(out)
         commands = out.get("commands")
         candidates: List[Dict[str, Any]] = []
@@ -406,7 +407,17 @@ class _Agent:
             raise HTTPException(status_code=422, detail="LLM did not provide a usable remediation command")
         candidates.sort(key=lambda x: (int(x.get("risk_score") or 100), len(_text(x.get("command")))))
         recommended = candidates[0]
-        plan = {"session_id": sid, "prompt": payload["task_prompt"], "shell": normalized_shell, "analysis": _dict(out.get("analysis")), "decision": _dict(out.get("decision")), "recommended": recommended, "candidates": candidates[:10], "context": context}
+        plan = {
+            "session_id": sid,
+            "prompt": payload["task_prompt"],
+            "shell": normalized_shell,
+            "analysis": _dict(out.get("analysis")),
+            "decision": _dict(out.get("decision")),
+            "recommended": recommended,
+            "candidates": candidates[:10],
+            "context": context,
+            "ai_usage": ai_usage,
+        }
         self.sessions.append(
             sid,
             {
@@ -416,6 +427,7 @@ class _Agent:
                 "decision": _dict(out.get("decision")),
                 "candidate_count": len(candidates),
                 "recommended": {"command": recommended.get("command"), "risk_score": recommended.get("risk_score")},
+                "ai_usage": ai_usage,
             },
         )
         return plan
@@ -439,6 +451,7 @@ class _Agent:
             )
         except AIProviderError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+        ai_usage = dict(self.ai.last_usage or {})
         out = _validate_next_response(out)
         nxt = _dict(out.get("next"))
         cmd = _text(nxt.get("command"))
@@ -450,7 +463,19 @@ class _Agent:
         safety = enforce_command_safety(cmd, shell=row_shell, allow_destructive=allow_destructive)
         if safety.get("blocked"):
             return None
-        row = {"command": cmd, "shell": row_shell, "run_as_system": _to_bool(nxt.get("run_as_system"), current_run_as_system), "verify_kb": _text(nxt.get("verify_kb")), "verify_min_build": _text(nxt.get("verify_min_build")), "verify_stdout_contains": _text(nxt.get("verify_stdout_contains")), "reason": _text(nxt.get("rationale") or _dict(out.get("analysis")).get("why_next_step")), "confidence": _text(nxt.get("confidence") or "medium"), "risk_score": max(_to_int(nxt.get("risk_score"), 0), _to_int(safety.get("risk_score"), 0)), "risk_reasons": safety.get("reasons") or []}
+        row = {
+            "command": cmd,
+            "shell": row_shell,
+            "run_as_system": _to_bool(nxt.get("run_as_system"), current_run_as_system),
+            "verify_kb": _text(nxt.get("verify_kb")),
+            "verify_min_build": _text(nxt.get("verify_min_build")),
+            "verify_stdout_contains": _text(nxt.get("verify_stdout_contains")),
+            "reason": _text(nxt.get("rationale") or _dict(out.get("analysis")).get("why_next_step")),
+            "confidence": _text(nxt.get("confidence") or "medium"),
+            "risk_score": max(_to_int(nxt.get("risk_score"), 0), _to_int(safety.get("risk_score"), 0)),
+            "risk_reasons": safety.get("reasons") or [],
+            "ai_usage": ai_usage,
+        }
         self.sessions.append(
             sid,
             {
@@ -460,6 +485,7 @@ class _Agent:
                 "failure_text": payload.get("failure_text"),
                 "command": row["command"],
                 "risk_score": row["risk_score"],
+                "ai_usage": ai_usage,
             },
         )
         return row

@@ -819,13 +819,14 @@ def _apply_ai_to_fleet_recommendations(
         "summary": "",
         "error": "",
         "rows_updated": 0,
+        "usage": {},
     }
     if not recommendations:
         status["error"] = "No recommendations available for AI assist."
         return recommendations, status
 
     try:
-        adapter = AIAdapter(config=ai_config or None)
+        adapter = AIAdapter(config=ai_config if isinstance(ai_config, dict) else {})
     except Exception as exc:
         status["error"] = str(exc) or "Failed to initialize AI adapter."
         return recommendations, status
@@ -879,6 +880,7 @@ def _apply_ai_to_fleet_recommendations(
     except Exception as exc:
         status["error"] = str(exc) or "AI provider request failed."
         return recommendations, status
+    status["usage"] = dict(adapter.last_usage or {})
 
     ai_rows = _coerce_ai_recommendation_rows(ai_raw.get("recommendations") if isinstance(ai_raw, dict) else None)
     ai_summary = _stringify((ai_raw or {}).get("summary")).strip() if isinstance(ai_raw, dict) else ""

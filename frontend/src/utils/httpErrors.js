@@ -1,8 +1,42 @@
+const normalizeDetail = (value) => {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        if (typeof entry === "string") return entry;
+        if (entry && typeof entry === "object") {
+          if (typeof entry.msg === "string" && entry.msg.trim()) return entry.msg;
+          if (typeof entry.message === "string" && entry.message.trim()) return entry.message;
+          if (typeof entry.error === "string" && entry.error.trim()) return entry.error;
+          try {
+            return JSON.stringify(entry);
+          } catch {
+            return String(entry);
+          }
+        }
+        return String(entry ?? "");
+      })
+      .filter((entry) => entry && entry.trim())
+      .join("; ");
+  }
+  if (value && typeof value === "object") {
+    if (typeof value.message === "string" && value.message.trim()) return value.message;
+    if (typeof value.error === "string" && value.error.trim()) return value.error;
+    if (typeof value.msg === "string" && value.msg.trim()) return value.msg;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value ?? "");
+};
+
 const extractDetail = (error, fallback = "") => (
-  error?.response?.data?.detail
-  || error?.recentLoginMessage
-  || error?.message
-  || fallback
+  normalizeDetail(error?.response?.data?.detail)
+  || normalizeDetail(error?.recentLoginMessage)
+  || normalizeDetail(error?.message)
+  || normalizeDetail(fallback)
   || "Request failed."
 );
 

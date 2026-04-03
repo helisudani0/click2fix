@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { getFleetScaHardening } from "../api/wazuh";
+import { useEffect, useState } from "react";
+import { getAgents, getAgentGroups, getFleetScaHardening } from "../api/wazuh";
 import { formatApiError } from "../utils/httpErrors";
 
 const SCA_LIMITS = {
@@ -9,6 +9,25 @@ const SCA_LIMITS = {
   parallelism: { min: 1, max: 32, label: "1-32" },
   aiMaxItems: 12,
 };
+
+const STATUS_OPTIONS = [
+  { value: "active", label: "Active" },
+  { value: "disconnected", label: "Disconnected" },
+  { value: "pending", label: "Pending" },
+  { value: "", label: "Any status" },
+];
+
+const PLATFORM_OPTIONS = [
+  { value: "windows,linux", label: "Windows + Linux" },
+  { value: "windows", label: "Windows only" },
+  { value: "linux", label: "Linux only" },
+  { value: "", label: "Any platform" },
+];
+
+const LIMIT_AGENT_OPTIONS = [0, 50, 100, 200, 300, 500, 1000, 1500, 2000];
+const PER_AGENT_REC_OPTIONS = [10, 25, 50, 75, 100, 150, 200, 250];
+const FLEET_REC_OPTIONS = [100, 200, 300, 500, 750, 1000, 2000, 3000, 5000];
+const PARALLELISM_OPTIONS = [1, 2, 4, 6, 8, 12, 16, 24, 32];
 
 const toBoundedInt = (value, fallback, min, max) => {
   const raw = String(value ?? "").trim();
@@ -34,19 +53,64 @@ const toSafeText = (value, fallback = "-") => {
 
 export default function ScaFleet() {
   const [status, setStatus] = useState("active");
-  const [platform, setPlatform] = useState("");
+  const [platform, setPlatform] = useState("windows,linux");
   const [group, setGroup] = useState("");
-  const [agentIds, setAgentIds] = useState("");
+  const [selectedAgentIds, setSelectedAgentIds] = useState([]);
   const [limitAgents, setLimitAgents] = useState("200");
   const [recommendationLimit, setRecommendationLimit] = useState("25");
   const [fleetRecommendationLimit, setFleetRecommendationLimit] = useState("300");
   const [parallelism, setParallelism] = useState("6");
   const [aiAssist, setAiAssist] = useState(false);
   const [aiInstruction, setAiInstruction] = useState("");
+  const [groupOptions, setGroupOptions] = useState([]);
+  const [agentOptions, setAgentOptions] = useState([]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [payload, setPayload] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadFilterOptions = async () => {
+      try {
+        const [groupRes, agentRes] = await Promise.all([
+          getAgentGroups().catch(() => ({ data: [] })),
+          getAgents("", { compact: true, status: "active", limit: 500 }).catch(() => ({ data: [] })),
+        ]);
+        if (!active) return;
+
+        const parsedGroups = (Array.isArray(groupRes?.data) ? groupRes.data : [])
+          .map((item) => String(item?.name || item?.group || item?.id || item || "").trim())
+          .filter(Boolean);
+        const uniqueGroups = Array.from(new Set(parsedGroups)).sort((left, right) => left.localeCompare(right));
+        setGroupOptions(uniqueGroups);
+
+        const rawAgents = Array.isArray(agentRes?.data)
+          ? agentRes.data
+          : (Array.isArray(agentRes?.data?.items) ? agentRes.data.items : []);
+        const parsedAgents = rawAgents
+          .map((agent) => ({
+            id: String(agent?.id || agent?.agent_id || "").trim(),
+            name: String(agent?.name || agent?.hostname || agent?.agent_name || "").trim(),
+          }))
+          .filter((agent) => agent.id);
+        const dedupedAgents = Array.from(
+          new Map(parsedAgents.map((agent) => [agent.id, agent])).values()
+        ).sort((left, right) => left.id.localeCompare(right.id));
+        setAgentOptions(dedupedAgents);
+      } catch {
+        if (!active) return;
+        setGroupOptions([]);
+        setAgentOptions([]);
+      }
+    };
+
+    void loadFilterOptions();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const loadFleetSca = async () => {
     try {
@@ -56,7 +120,7 @@ export default function ScaFleet() {
         status: status || undefined,
         platform: platform || undefined,
         group: group || undefined,
-        agent_ids: agentIds || undefined,
+        agent_ids: selectedAgentIds.length ? selectedAgentIds.join(",") : undefined,
         limit_agents: toBoundedInt(limitAgents, 200, SCA_LIMITS.limitAgents.min, SCA_LIMITS.limitAgents.max),
         recommendation_limit: toBoundedInt(
           recommendationLimit,
@@ -108,66 +172,122 @@ export default function ScaFleet() {
             </p>
           </div>
         </div>
-        <div className="grid-4">
+        <div className="grid-4 sca-fleet-filter-grid">
           <label className="list-item">
             <div className="muted">Status</div>
-            <input className="input" value={status} onChange={(event) => setStatus(event.target.value)} />
+            <select className="input" value={status} onChange={(event) => setStatus(event.target.value)}>
+              {STATUS_OPTIONS.map((option) => (
+                <option key={`sca-status-${option.value || "any"}`} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="list-item">
             <div className="muted">Platform</div>
-            <input className="input" value={platform} onChange={(event) => setPlatform(event.target.value)} placeholder="windows,linux" />
+            <select className="input" value={platform} onChange={(event) => setPlatform(event.target.value)}>
+              {PLATFORM_OPTIONS.map((option) => (
+                <option key={`sca-platform-${option.value || "any"}`} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="list-item">
             <div className="muted">Group</div>
-            <input className="input" value={group} onChange={(event) => setGroup(event.target.value)} />
+            <select className="input" value={group} onChange={(event) => setGroup(event.target.value)}>
+              <option value="">All groups</option>
+              {groupOptions.map((value) => (
+                <option key={`sca-group-${value}`} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
           </label>
-          <label className="list-item">
+          <div className="list-item">
             <div className="muted">Agent IDs</div>
-            <input className="input" value={agentIds} onChange={(event) => setAgentIds(event.target.value)} placeholder="001,004,010" />
-          </label>
+            <select
+              className="input sca-agent-multi"
+              multiple
+              size={4}
+              value={selectedAgentIds}
+              onChange={(event) => {
+                const values = Array.from(event.target.selectedOptions).map((option) => option.value);
+                setSelectedAgentIds(values);
+              }}
+            >
+              {agentOptions.map((agent) => (
+                <option key={`sca-agent-${agent.id}`} value={agent.id}>
+                  {agent.id}{agent.name ? ` - ${agent.name}` : ""}
+                </option>
+              ))}
+            </select>
+            <div className="page-actions mt-8 sca-agent-actions">
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => setSelectedAgentIds(agentOptions.map((agent) => agent.id))}
+                disabled={!agentOptions.length}
+              >
+                Select All
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => setSelectedAgentIds([])}
+                disabled={!selectedAgentIds.length}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
           <label className="list-item">
             <div className="muted">{`Limit Agents (${SCA_LIMITS.limitAgents.label})`}</div>
-            <input
-              className="input"
-              type="number"
-              min={SCA_LIMITS.limitAgents.min}
-              max={SCA_LIMITS.limitAgents.max}
-              value={limitAgents}
-              onChange={(event) => setLimitAgents(event.target.value)}
-            />
+            <select className="input" value={limitAgents} onChange={(event) => setLimitAgents(event.target.value)}>
+              {LIMIT_AGENT_OPTIONS.map((value) => (
+                <option key={`sca-limit-agents-${value}`} value={String(value)}>
+                  {value}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="list-item">
             <div className="muted">{`Per-Agent Recommendation Limit (${SCA_LIMITS.recommendationLimit.label})`}</div>
-            <input
+            <select
               className="input"
-              type="number"
-              min={SCA_LIMITS.recommendationLimit.min}
-              max={SCA_LIMITS.recommendationLimit.max}
               value={recommendationLimit}
               onChange={(event) => setRecommendationLimit(event.target.value)}
-            />
+            >
+              {PER_AGENT_REC_OPTIONS.map((value) => (
+                <option key={`sca-per-agent-${value}`} value={String(value)}>
+                  {value}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="list-item">
             <div className="muted">{`Fleet Recommendation Limit (${SCA_LIMITS.fleetRecommendationLimit.label})`}</div>
-            <input
+            <select
               className="input"
-              type="number"
-              min={SCA_LIMITS.fleetRecommendationLimit.min}
-              max={SCA_LIMITS.fleetRecommendationLimit.max}
               value={fleetRecommendationLimit}
               onChange={(event) => setFleetRecommendationLimit(event.target.value)}
-            />
+            >
+              {FLEET_REC_OPTIONS.map((value) => (
+                <option key={`sca-fleet-rec-${value}`} value={String(value)}>
+                  {value}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="list-item">
             <div className="muted">{`Parallelism (${SCA_LIMITS.parallelism.label})`}</div>
-            <input
-              className="input"
-              type="number"
-              min={SCA_LIMITS.parallelism.min}
-              max={SCA_LIMITS.parallelism.max}
-              value={parallelism}
-              onChange={(event) => setParallelism(event.target.value)}
-            />
+            <select className="input" value={parallelism} onChange={(event) => setParallelism(event.target.value)}>
+              {PARALLELISM_OPTIONS.map((value) => (
+                <option key={`sca-parallel-${value}`} value={String(value)}>
+                  {value}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="list-item">
             <div className="muted">AI Assist</div>
@@ -180,12 +300,13 @@ export default function ScaFleet() {
               <option value="on">On (Org Admin AI)</option>
             </select>
           </label>
-          <label className="list-item">
+          <label className="list-item sca-ai-instruction-item">
             <div className="muted">AI Instruction (optional)</div>
-            <input
+            <textarea
               className="input"
               value={aiInstruction}
               onChange={(event) => setAiInstruction(event.target.value)}
+              rows={3}
               placeholder="Example: prioritize low user-impact changes first"
             />
           </label>
@@ -217,8 +338,8 @@ export default function ScaFleet() {
             {actionPlan.length === 0 ? (
               <div className="empty-state">No action plan generated for this run yet.</div>
             ) : (
-              <div className="table-scroll h-220">
-                <table className="table compact">
+              <div className="table-scroll h-220 sca-action-plan-scroll">
+                <table className="table compact sca-action-plan-table">
                   <thead>
                     <tr>
                       <th>Rank</th>
@@ -237,7 +358,7 @@ export default function ScaFleet() {
                         <td>{toSafeText(step.priority)}</td>
                         <td>{toSafeText(step.impacted_agents, "0")}</td>
                         <td>{toSafeText(step.control_count, "0")}</td>
-                        <td>{toSafeText(step.recommended_action)}</td>
+                        <td className="sca-action-cell">{toSafeText(step.recommended_action)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -311,8 +432,8 @@ export default function ScaFleet() {
                 <p className="muted">Quick pass/fail distribution and recommendation count per agent.</p>
               </div>
             </div>
-            <div className="table-scroll h-260">
-              <table className="table compact">
+            <div className="table-scroll h-260 sca-agent-summary-scroll">
+              <table className="table compact sca-agent-summary-table">
                 <thead>
                   <tr>
                     <th>Agent</th>
@@ -334,7 +455,7 @@ export default function ScaFleet() {
                   ) : (
                     agents.map((row) => (
                       <tr key={row.agent_id}>
-                        <td>{row.agent_name || row.agent_id}</td>
+                        <td className="sca-agent-cell">{row.agent_name || row.agent_id}</td>
                         <td>{toSafeText(row.status)}</td>
                         <td>{toSafeText(row.platform)}</td>
                         <td>{row.policy_count || 0}</td>
@@ -342,7 +463,7 @@ export default function ScaFleet() {
                         <td>{row?.checks_summary?.failed || 0}</td>
                         <td>{row?.checks_summary?.total || 0}</td>
                         <td>{Array.isArray(row.recommendations) ? row.recommendations.length : 0}</td>
-                        <td>{toSafeText(row.error)}</td>
+                        <td className="sca-error-cell">{toSafeText(row.error)}</td>
                       </tr>
                     ))
                   )}
@@ -358,8 +479,8 @@ export default function ScaFleet() {
                 <p className="muted">Prioritized failed checks to harden first across the fleet.</p>
               </div>
             </div>
-            <div className="table-scroll h-56vh">
-              <table className="table readable compact">
+            <div className="table-scroll h-56vh sca-fleet-recs-scroll">
+              <table className="table readable compact sca-fleet-recs-table">
                 <thead>
                   <tr>
                     <th>Rank</th>
@@ -382,13 +503,13 @@ export default function ScaFleet() {
                       <tr key={`${rec.fleet_rank}-${rec.agent_id}-${rec.check_id}`}>
                         <td>{rec.fleet_rank || "-"}</td>
                         <td>{rec.agent_name || rec.agent_id}</td>
-                        <td>{toSafeText(rec.policy_name || rec.policy_id)}</td>
+                        <td className="sca-policy-cell">{toSafeText(rec.policy_name || rec.policy_id)}</td>
                         <td>{toSafeText(rec.check_id)}</td>
                         <td>{toSafeText(rec.priority)}</td>
                         <td>{toSafeText(rec.priority_score)}</td>
-                        <td>{toSafeText(rec.reason)}</td>
+                        <td className="sca-reason-cell">{toSafeText(rec.reason)}</td>
                         <td>
-                          <div>{toSafeText(rec.recommendation)}</div>
+                          <div className="sca-recommendation-cell">{toSafeText(rec.recommendation)}</div>
                           {toBoundedInt(rec.duplicate_count, 1, 1, 9999) > 1 ? (
                             <div className="muted">
                               {`Seen in ${toSafeText(rec.duplicate_count)} similar controls`}

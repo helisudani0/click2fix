@@ -547,7 +547,7 @@ export default function Playbooks() {
               <p className="muted">Load an existing template into the editor, then adjust steps or targets as needed.</p>
             </div>
           </div>
-          <div className="page-actions">
+          <div className="page-actions playbooks-search-row">
             <input
               className="input"
               placeholder="Search playbooks"

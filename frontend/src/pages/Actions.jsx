@@ -650,33 +650,10 @@ export default function Actions() {
               <div className="meta-line">{TARGET_MODE_LABELS[targetMode]} resolves to {resolvedTargetIds.length} target(s).</div>
             )}
 
-            <div className="table-scroll actions-target-scroll">
-              <table className="table compact readable actions-target-table actions-target-preview-table">
-                <thead>
-                  <tr>
-                    <th>Agent ID</th>
-                    <th>Host</th>
-                    <th>Group</th>
-                    <th>Status</th>
-                    <th>OS</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {scopedTargets.length ? scopedTargets.map((agent) => (
-                    <tr key={`target-row-${agent.id}`}>
-                      <td><MaskedAgentId value={agent.id} /></td>
-                      <td>{agent.hostname}</td>
-                      <td>{agent.groupText || "-"}</td>
-                      <td><span className={`status-pill ${isAgentConnected(agent.status) ? "success" : "failed"}`}>{toDisplay(agent.status, "Unknown")}</span></td>
-                      <td>{agent.os}</td>
-                    </tr>
-                  )) : (
-                    <tr>
-                      <td colSpan={5}><div className="empty-state">No agents match the current target scope.</div></td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+            <div className="meta-line">
+              {scopedTargets.length
+                ? `Resolved target preview hidden to keep the workspace focused. ${scopedTargets.length} target(s) will be used for execution.`
+                : "No agents match the current target scope."}
             </div>
           </div>
 

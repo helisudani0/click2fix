@@ -31,15 +31,6 @@ const ROUTE_LABELS = {
   "/orgs": "Org Admin",
 };
 
-const PRIORITY_LINKS = [
-  { to: "/alerts", label: "Alerts" },
-  { to: "/vulnerabilities", label: "Vulnerabilities" },
-  { to: "/actions", label: "Actions" },
-  { to: "/global-shell", label: "Global Shell" },
-  { to: "/playbooks", label: "Playbooks" },
-  { to: "/executions", label: "Execution Monitor" },
-];
-
 const NAV_SECTIONS = [
   {
     title: "Detection",
@@ -75,6 +66,23 @@ const NAV_SECTIONS = [
     ],
   },
 ];
+
+const PRIORITY_DEFAULT_ENABLED_ROUTES = new Set([
+  "/alerts",
+  "/vulnerabilities",
+  "/actions",
+  "/global-shell",
+  "/playbooks",
+  "/executions",
+]);
+
+const PRIORITY_LINKS = NAV_SECTIONS.flatMap((section) => section.links)
+  .reduce((acc, link) => {
+    if (!acc.some((item) => item.to === link.to)) {
+      acc.push({ to: link.to, label: link.label });
+    }
+    return acc;
+  }, []);
 
 const OPS_MODULES = [
   {
@@ -117,7 +125,7 @@ const shortLabel = (value) =>
 
 const DEFAULT_PRIORITY_QUEUE = PRIORITY_LINKS.map((item) => ({
   to: item.to,
-  enabled: true,
+  enabled: PRIORITY_DEFAULT_ENABLED_ROUTES.has(item.to),
 }));
 
 const normalizePriorityQueue = (value) => {
@@ -138,7 +146,10 @@ const normalizePriorityQueue = (value) => {
     });
     PRIORITY_LINKS.forEach((item) => {
       if (!normalized.some((entry) => entry.to === item.to)) {
-        normalized.push({ to: item.to, enabled: true });
+        normalized.push({
+          to: item.to,
+          enabled: PRIORITY_DEFAULT_ENABLED_ROUTES.has(item.to),
+        });
       }
     });
     return normalized;

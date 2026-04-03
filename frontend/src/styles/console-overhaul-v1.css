@@ -1606,7 +1606,32 @@ body.console-redesign-v4 .page-route-actions .actions-selection-strip { display:
    PLAYBOOKS PAGE
    ============================================================ */
 body.console-redesign-v4 .page-route-playbooks .playbooks-source-grid {
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+}
+
+body.console-redesign-v4 .page-route-playbooks .playbooks-saved-card,
+body.console-redesign-v4 .page-route-playbooks .playbooks-generate-card {
+  height: 100%;
+  min-height: 520px;
+}
+
+body.console-redesign-v4 .page-route-playbooks .playbooks-search-row {
+  margin-left: 0;
+  width: 100%;
+  justify-content: flex-start;
+}
+
+body.console-redesign-v4 .page-route-playbooks .playbooks-search-row .input {
+  max-width: 360px;
+}
+
+body.console-redesign-v4 .page-route-playbooks .playbooks-saved-card .list-scroll {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  max-height: min(52vh, 560px);
+  overflow: auto;
 }
 
 body.console-redesign-v4 .page-route-playbooks .playbook-generate-row {
@@ -1642,6 +1667,10 @@ body.console-redesign-v4 .page-route-playbooks .playbooks-ai-card .list-item {
 }
 
 @media (max-width: 900px) {
+  body.console-redesign-v4 .page-route-playbooks .playbooks-source-grid {
+    grid-template-columns: 1fr;
+  }
+
   body.console-redesign-v4 .page-route-playbooks .playbook-generate-row {
     grid-template-columns: 1fr;
   }
@@ -2299,9 +2328,35 @@ body.console-redesign-v4 .page-route-global-shell .global-shell-scope-grid {
 body.console-redesign-v4 .page-route-global-shell .global-shell-assistant-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-auto-rows: 1fr;
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
   margin-top: 14px;
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-assistant-grid > .global-shell-builder-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-ai-card,
+body.console-redesign-v4 .page-route-global-shell .global-shell-command-card {
+  min-height: 420px;
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-ai-card .list,
+body.console-redesign-v4 .page-route-global-shell .global-shell-command-card .list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+body.console-redesign-v4 .page-route-global-shell .global-shell-ai-card textarea.input,
+body.console-redesign-v4 .page-route-global-shell .global-shell-command-card textarea.input {
+  min-height: 122px;
 }
 
 body.console-redesign-v4 .page-route-global-shell .global-shell-run-card {
@@ -2366,13 +2421,23 @@ body.console-redesign-v4 .page-route-global-shell .global-shell-history-table td
 }
 
 body.console-redesign-v4 .page-route-global-shell .shell-output-preview {
-  display: block;
-  max-height: 78px;
+  display: -webkit-box;
+  width: 100%;
+  max-width: 100%;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
   overflow: hidden;
   white-space: pre-wrap;
-  word-break: normal;
+  word-break: break-word;
   overflow-wrap: anywhere;
   line-height: 1.35;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  color: #b7c9de;
+  background: rgba(6, 10, 18, 0.58);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
 }
 
 @media (max-width: 1200px) {
@@ -2429,22 +2494,25 @@ body.console-redesign-v4 .page-route-actions .actions-sidebar-pane {
   top: 14px;
   align-self: start;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   max-height: calc(100vh - 145px);
-  overflow: auto;
+  overflow: hidden;
   padding-right: 2px;
 }
 
 body.console-redesign-v4 .page-route-actions .actions-catalog-card {
   display: flex;
   flex-direction: column;
-  min-height: 320px;
+  min-height: 420px;
+  min-height: min(62vh, 760px);
 }
 
 body.console-redesign-v4 .page-route-actions .actions-catalog-card .actions-catalog-scroll {
   flex: 1;
-  min-height: 240px;
-  max-height: min(48vh, 520px);
+  min-height: 320px;
+  max-height: none;
+  overflow: auto;
 }
 
 body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-target-scroll {
@@ -2501,5 +2569,156 @@ body.console-redesign-v4 .page-route-actions .actions-run-footer .btn {
 
   body.console-redesign-v4 .page-route-actions .actions-run-footer .btn {
     justify-self: stretch;
+  }
+}
+
+/* ============================================================
+   SCA FLEET - DROPDOWNS + READABILITY PASS
+   ============================================================ */
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-filter-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+body.console-redesign-v4 .page-route-sca-fleet .sca-ai-instruction-item {
+  grid-column: 1 / -1;
+}
+
+body.console-redesign-v4 .page-route-sca-fleet .sca-ai-instruction-item textarea.input {
+  height: auto;
+  min-height: 96px;
+  resize: vertical;
+}
+
+body.console-redesign-v4 .page-route-sca-fleet textarea.input {
+  height: auto;
+}
+
+body.console-redesign-v4 .page-route-sca-fleet .input,
+body.console-redesign-v4 .page-route-sca-fleet select.input,
+body.console-redesign-v4 .page-route-sca-fleet .btn {
+  min-height: 40px;
+  height: 40px;
+  font-size: 0.86rem;
+}
+
+body.console-redesign-v4 .page-route-sca-fleet .btn {
+  padding: 0 16px;
+}
+
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-multi {
+  min-height: 132px;
+  height: auto;
+  padding: 8px 10px;
+}
+
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-multi option {
+  padding: 4px 6px;
+}
+
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-actions {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-scroll {
+  max-height: min(38vh, 360px);
+  overflow: auto;
+}
+
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-scroll {
+  max-height: min(38vh, 380px);
+  overflow: auto;
+}
+
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-scroll {
+  max-height: min(52vh, 680px);
+  overflow: auto;
+}
+
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table,
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table,
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table {
+  width: 100% !important;
+  min-width: 0 !important;
+  table-layout: fixed;
+}
+
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table th,
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table td,
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table th,
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table td,
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table th,
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  vertical-align: top;
+}
+
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table th:nth-child(1),
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table td:nth-child(1) { width: 6%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table th:nth-child(2),
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table td:nth-child(2) { width: 16%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table th:nth-child(3),
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table td:nth-child(3) { width: 10%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table th:nth-child(4),
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table td:nth-child(4) { width: 11%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table th:nth-child(5),
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table td:nth-child(5) { width: 10%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table th:nth-child(6),
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-plan-table td:nth-child(6) { width: 47%; }
+
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table th:nth-child(1),
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table td:nth-child(1) { width: 16%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table th:nth-child(2),
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table td:nth-child(2) { width: 9%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table th:nth-child(3),
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table td:nth-child(3) { width: 10%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table th:nth-child(4),
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table td:nth-child(4) { width: 8%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table th:nth-child(5),
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table td:nth-child(5) { width: 8%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table th:nth-child(6),
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table td:nth-child(6) { width: 8%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table th:nth-child(7),
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table td:nth-child(7) { width: 8%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table th:nth-child(8),
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table td:nth-child(8) { width: 13%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table th:nth-child(9),
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-summary-table td:nth-child(9) { width: 20%; }
+
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table th:nth-child(1),
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table td:nth-child(1) { width: 5%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table th:nth-child(2),
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table td:nth-child(2) { width: 12%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table th:nth-child(3),
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table td:nth-child(3) { width: 22%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table th:nth-child(4),
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table td:nth-child(4) { width: 8%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table th:nth-child(5),
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table td:nth-child(5) { width: 9%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table th:nth-child(6),
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table td:nth-child(6) { width: 8%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table th:nth-child(7),
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table td:nth-child(7) { width: 16%; }
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table th:nth-child(8),
+body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-recs-table td:nth-child(8) { width: 20%; }
+
+body.console-redesign-v4 .page-route-sca-fleet .sca-action-cell,
+body.console-redesign-v4 .page-route-sca-fleet .sca-policy-cell,
+body.console-redesign-v4 .page-route-sca-fleet .sca-reason-cell,
+body.console-redesign-v4 .page-route-sca-fleet .sca-recommendation-cell,
+body.console-redesign-v4 .page-route-sca-fleet .sca-agent-cell,
+body.console-redesign-v4 .page-route-sca-fleet .sca-error-cell {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (max-width: 980px) {
+  body.console-redesign-v4 .page-route-sca-fleet .sca-fleet-filter-grid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   }
 }

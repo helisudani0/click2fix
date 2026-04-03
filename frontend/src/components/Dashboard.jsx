@@ -5,6 +5,7 @@ import { getAlerts, getIntegrationStatus } from "../api/wazuh";
 import { alertSocket } from "../api/socket";
 import { APP_TIMEZONE_LABEL, formatWazuhTimestamp, nowUtcIso, parseWazuhTimestamp } from "../utils/time";
 import RelativeTimestamp from "./RelativeTimestamp";
+import Pager from "./Pager";
 
 const normalizeAlerts = (data) => {
   let items = [];
@@ -165,6 +166,8 @@ export default function Dashboard() {
   const [queueLoading, setQueueLoading] = useState(false);
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
   const [liveStreamEnabled, setLiveStreamEnabled] = useState(false);
+  const [liveStreamPage, setLiveStreamPage] = useState(1);
+  const [liveStreamPageSize, setLiveStreamPageSize] = useState(10);
 
   useEffect(() => {
     if (!liveStreamEnabled) {
@@ -188,6 +191,13 @@ export default function Dashboard() {
     };
     return () => ws.close();
   }, [liveStreamEnabled]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(events.length / Math.max(1, Number(liveStreamPageSize) || 1)));
+    if (liveStreamPage > totalPages) {
+      setLiveStreamPage(totalPages);
+    }
+  }, [events.length, liveStreamPage, liveStreamPageSize]);
 
   const loadSummary = useCallback(() => {
     api
@@ -289,6 +299,14 @@ export default function Dashboard() {
       width: Math.max(6, Math.round((Number(row[1] || 0) / max) * 100)),
     }));
   }, [mitreRows]);
+
+  const pagedLiveEvents = useMemo(() => {
+    const safePageSize = Math.max(1, Number(liveStreamPageSize) || 1);
+    const totalPages = Math.max(1, Math.ceil(events.length / safePageSize));
+    const safePage = Math.min(Math.max(1, Number(liveStreamPage) || 1), totalPages);
+    const start = (safePage - 1) * safePageSize;
+    return events.slice(start, start + safePageSize);
+  }, [events, liveStreamPage, liveStreamPageSize]);
 
   const alertLevelSummary = useMemo(() => {
     const bucket = { critical: 0, high: 0, medium: 0, low: 0 };
@@ -589,21 +607,35 @@ export default function Dashboard() {
           {events.length === 0 ? (
             <div className="empty-state">No streamed events yet.</div>
           ) : (
-            <div className="list-scroll tall">
-              <ul className="list">
-                {events.map((evt, idx) => {
-                  const info = formatEvent(evt);
-                  return (
-                    <li key={`${info.title}-${idx}`} className="list-item">
-                      <div>{info.title}</div>
-                      <div className="meta-line">
-                        {info.agent} | level {info.level} | {info.time}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
+            <>
+              <div className="list-scroll tall">
+                <ul className="list">
+                  {pagedLiveEvents.map((evt, idx) => {
+                    const info = formatEvent(evt);
+                    return (
+                      <li key={`${info.title}-${info.agent}-${info.time}-${idx}`} className="list-item">
+                        <div>{info.title}</div>
+                        <div className="meta-line">
+                          {info.agent} | level {info.level} | {info.time}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+              <Pager
+                total={events.length}
+                page={liveStreamPage}
+                pageSize={liveStreamPageSize}
+                onPageChange={setLiveStreamPage}
+                onPageSizeChange={(size) => {
+                  setLiveStreamPageSize(size);
+                  setLiveStreamPage(1);
+                }}
+                pageSizeOptions={[5, 10, 20, 40]}
+                label="events"
+              />
+            </>
           )}
         </div>
       </div>

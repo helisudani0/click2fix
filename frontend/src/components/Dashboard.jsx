@@ -461,50 +461,6 @@ export default function Dashboard() {
           <div className="card">
             <div className="card-header">
               <div>
-                <h3>Approval Workbench</h3>
-                <p className="muted">Authorization backlog and reviewer progress.</p>
-              </div>
-              <button className="btn secondary" onClick={() => navigate("/approvals")}>
-                Open
-              </button>
-            </div>
-            {queueLoading ? (
-              <div className="empty-state">Loading approvals...</div>
-            ) : parsedApprovals.length === 0 ? (
-              <div className="empty-state">No approvals pending.</div>
-            ) : (
-              <div className="table-scroll">
-                <table className="table compact readable">
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Action</th>
-                      <th>Agent</th>
-                      <th>Votes</th>
-                      <th>Submitted</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {parsedApprovals.map((item) => (
-                      <tr key={item.id} className="clickable" onClick={() => navigate("/approvals")}>
-                        <td>{item.id}</td>
-                        <td>{item.action}</td>
-                        <td>{item.agent}</td>
-                        <td>
-                          {item.approved}/{item.required}
-                        </td>
-                        <td><RelativeTimestamp value={item.createdAt} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          <div className="card">
-            <div className="card-header">
-              <div>
                 <h3>Execution Activity</h3>
                 <p className="muted">Latest automation outcomes and active run states.</p>
               </div>
@@ -534,10 +490,50 @@ export default function Dashboard() {
                         <td>{item.id}</td>
                         <td>{item.agent}</td>
                         <td>{item.action}</td>
-                        <td>
-                          <span className={`status-pill ${executionTone(item.status)}`}>{item.status}</span>
-                        </td>
+                        <td><span className={`status-pill ${executionTone(item.status)}`}>{item.status}</span></td>
                         <td><RelativeTimestamp value={item.startedAt} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h3>Approval Workbench</h3>
+                <p className="muted">Authorization backlog and reviewer progress.</p>
+              </div>
+              <button className="btn secondary" onClick={() => navigate("/approvals")}>
+                Open
+              </button>
+            </div>
+            {queueLoading ? (
+              <div className="empty-state">Loading approvals...</div>
+            ) : parsedApprovals.length === 0 ? (
+              <div className="empty-state">No approvals pending.</div>
+            ) : (
+              <div className="table-scroll">
+                <table className="table compact readable">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Action</th>
+                      <th>Agent</th>
+                      <th>Votes</th>
+                      <th>Submitted</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {parsedApprovals.map((item) => (
+                      <tr key={item.id} className="clickable" onClick={() => navigate("/approvals")}>
+                        <td>{item.id}</td>
+                        <td>{item.action}</td>
+                        <td>{item.agent}</td>
+                        <td>{item.approved}/{item.required}</td>
+                        <td><RelativeTimestamp value={item.createdAt} /></td>
                       </tr>
                     ))}
                   </tbody>

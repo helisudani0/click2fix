@@ -379,6 +379,11 @@ export default function AppLayout() {
     setOpsPanelOpen(false);
   }, [location.pathname]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.scrollTo(0, 0);
+  }, [location.pathname]);
+
   const breadcrumbs = useMemo(() => {
     const path = location.pathname || "/";
     const currentLabel = ROUTE_LABELS[path] || "Workspace";

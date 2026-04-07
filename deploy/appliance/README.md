@@ -2,6 +2,10 @@
 
 This folder is the customer-facing deployment scaffold for the current Click2Fix appliance line.
 
+For environments that cannot execute PowerShell scripts, use the CMD-only operational guide:
+
+- `deploy/appliance/CMD_INSTALL_AND_MANAGE.md`
+
 The intended current flows:
 
 1. Customer runs the Docker-based appliance scaffold directly from release assets or the raw bootstrap path.

@@ -180,6 +180,10 @@ OWNER=helisudani0 REPO=click2fix VERSION=${VERSION} INSTALL_DIR=/opt/click2fix P
 
 Use this path when endpoint policy blocks `.zip` extraction and/or `.ps1` execution.
 
+Full command reference (install + manage + troubleshooting):
+
+- `deploy/appliance/CMD_INSTALL_AND_MANAGE.md`
+
 1. Prepare folder and download required appliance runtime files from GitHub raw:
 
 ```cmd

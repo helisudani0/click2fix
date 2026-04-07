@@ -63,17 +63,7 @@ export default function Cases() {
   const [aiSummary, setAiSummary] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedCaseParam = searchParams.get("case") || "";
-  const [iocThreeDMode, setIocThreeDMode] = useState(() => {
-    if (typeof window === "undefined") return false;
-    const saved = window.localStorage.getItem("soar.cases.ioc.3d");
-    if (saved === null) return true;
-    return saved === "1";
-  });
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("soar.cases.ioc.3d", iocThreeDMode ? "1" : "0");
-  }, [iocThreeDMode]);
+  const [iocThreeDAvailable, setIocThreeDAvailable] = useState(true);
 
   const loadCases = async () => {
     try {
@@ -709,12 +699,17 @@ export default function Cases() {
     if (!iocGraphView.option) {
       return <div className="empty-state">No IOC graph data yet.</div>;
     }
-    const use3D = iocThreeDMode && Boolean(iocGraph3DView.option);
+    const use3D = iocThreeDAvailable && Boolean(iocGraph3DView.option);
     const activeHeight = use3D ? iocGraph3DView.height : iocGraphView.height;
     return (
       <div className="ioc-graph-wrap">
         {use3D ? (
-          <EChart3DPanel option={iocGraph3DView.option} style={{ width: "100%", height: activeHeight }} loading={detailLoading} />
+          <EChart3DPanel
+            option={iocGraph3DView.option}
+            style={{ width: "100%", height: activeHeight }}
+            loading={detailLoading}
+            onUnavailable={() => setIocThreeDAvailable(false)}
+          />
         ) : (
           <EChartGraphPanel option={iocGraphView.option} style={{ width: "100%", height: activeHeight }} />
         )}
@@ -1240,15 +1235,6 @@ export default function Cases() {
             <div>
               <h3>IOC Graph</h3>
               <p className="muted">Case - alerts - IOCs relationship map.</p>
-            </div>
-            <div className="page-actions">
-              <button
-                className="btn secondary"
-                type="button"
-                onClick={() => setIocThreeDMode((value) => !value)}
-              >
-                {iocThreeDMode ? "3D: ON" : "3D: OFF"}
-              </button>
             </div>
           </div>
           {detailLoading ? (

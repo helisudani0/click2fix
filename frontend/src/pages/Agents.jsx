@@ -353,21 +353,11 @@ export default function Agents() {
   const [alertsPageSize, setAlertsPageSize] = useState(25);
   const [fimPage, setFimPage] = useState(1);
   const [fimPageSize, setFimPageSize] = useState(25);
-  const [threeDMode, setThreeDMode] = useState(() => {
-    if (typeof window === "undefined") return false;
-    const saved = window.localStorage.getItem("soar.agents.events.3d");
-    if (saved === null) return true;
-    return saved === "1";
-  });
+  const [threeDAvailable, setThreeDAvailable] = useState(true);
 
   const [error, setError] = useState(null);
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
   const selectedAgentRef = useRef("");
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("soar.agents.events.3d", threeDMode ? "1" : "0");
-  }, [threeDMode]);
 
   useEffect(() => {
     selectedAgentRef.current = selectedAgentId;
@@ -1208,13 +1198,6 @@ export default function Agents() {
             <div className="page-actions">
               <button
                 className="btn secondary"
-                type="button"
-                onClick={() => setThreeDMode((value) => !value)}
-              >
-                {threeDMode ? "3D: ON" : "3D: OFF"}
-              </button>
-              <button
-                className="btn secondary"
                 onClick={() =>
                   navigate(`/alerts?query=${encodeURIComponent(`agent.id:${selectedAgentId || "*"}`)}`)
                 }
@@ -1232,8 +1215,13 @@ export default function Agents() {
 	                <span className="chip">Max bucket: {eventChart.max}</span>
 	              </div>
 	              <div className="trend-wrap">
-	                {threeDMode ? (
-	                  <EChart3DPanel option={eventChart3DOption} style={{ width: "100%", height: 238 }} loading={detailLoading} />
+	                {threeDAvailable ? (
+	                  <EChart3DPanel
+	                    option={eventChart3DOption}
+	                    style={{ width: "100%", height: 238 }}
+	                    loading={detailLoading}
+	                    onUnavailable={() => setThreeDAvailable(false)}
+	                  />
 	                ) : (
 	                  <EChartLinePanel option={eventChartOption} style={{ width: "100%", height: 238 }} loading={detailLoading} />
 	                )}

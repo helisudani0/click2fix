@@ -189,17 +189,7 @@ export default function Analytics() {
   const [aiDisabledReason, setAiDisabledReason] = useState(
     "AI is disabled. Enable it in Org Admin / Platform AI Configuration."
   );
-  const [threeDMode, setThreeDMode] = useState(() => {
-    if (typeof window === "undefined") return false;
-    const saved = window.localStorage.getItem("soar.analytics.3d");
-    if (saved === null) return true;
-    return saved === "1";
-  });
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("soar.analytics.3d", threeDMode ? "1" : "0");
-  }, [threeDMode]);
+  const [threeDAvailable, setThreeDAvailable] = useState(true);
 
   const refreshOverview = () => {
     setLoading(true);
@@ -771,13 +761,6 @@ export default function Analytics() {
         <div className="page-actions">
           <button
             className="btn secondary"
-            type="button"
-            onClick={() => setThreeDMode((value) => !value)}
-          >
-            {threeDMode ? "3D Charts: ON" : "3D Charts: OFF"}
-          </button>
-          <button
-            className="btn secondary"
             onClick={() => {
               refreshOverview();
               refreshDataLayer();
@@ -951,8 +934,13 @@ export default function Analytics() {
                     <span className="chip">Peak: {dataLayerChart.max}</span>
                   </div>
                   <div className="trend-wrap">
-                    {threeDMode ? (
-                      <EChart3DPanel option={dataLayerChart3DOption} style={{ width: "100%", height: 260 }} loading={loadingDataLayer} />
+                    {threeDAvailable ? (
+                      <EChart3DPanel
+                        option={dataLayerChart3DOption}
+                        style={{ width: "100%", height: 260 }}
+                        loading={loadingDataLayer}
+                        onUnavailable={() => setThreeDAvailable(false)}
+                      />
                     ) : (
                       <EChartLinePanel option={dataLayerChartOption} style={{ width: "100%", height: 260 }} loading={loadingDataLayer} />
                     )}
@@ -1134,8 +1122,12 @@ export default function Analytics() {
                 <span className="chip">Peak bucket: {severityChart.max}</span>
               </div>
               <div className="trend-wrap">
-                {threeDMode ? (
-                  <EChart3DPanel option={severityChart3DOption} style={{ width: "100%", height: 260 }} />
+                {threeDAvailable ? (
+                  <EChart3DPanel
+                    option={severityChart3DOption}
+                    style={{ width: "100%", height: 260 }}
+                    onUnavailable={() => setThreeDAvailable(false)}
+                  />
                 ) : (
                   <EChartLinePanel option={severityChartOption} style={{ width: "100%", height: 260 }} />
                 )}
@@ -1178,8 +1170,13 @@ export default function Analytics() {
                 <span className="chip">Peak: {hourlyChart.max}</span>
               </div>
               <div className="trend-wrap">
-                {threeDMode ? (
-                  <EChart3DPanel option={hourlyChart3DOption} style={{ width: "100%", height: 260 }} loading={loading} />
+                {threeDAvailable ? (
+                  <EChart3DPanel
+                    option={hourlyChart3DOption}
+                    style={{ width: "100%", height: 260 }}
+                    loading={loading}
+                    onUnavailable={() => setThreeDAvailable(false)}
+                  />
                 ) : (
                   <EChartLinePanel option={hourlyChartOption} style={{ width: "100%", height: 260 }} loading={loading} />
                 )}

@@ -8,11 +8,13 @@ export default function EChart3DPanel({
   loadingText = "Loading 3D...",
   deferUntilVisible = true,
   unsupportedText = "3D rendering is unavailable in this browser. Switch back to 2D.",
+  onUnavailable,
 }) {
   const shellRef = useRef(null);
   const hostRef = useRef(null);
   const chartRef = useRef(null);
   const echartsRef = useRef(null);
+  const unavailableNotifiedRef = useRef(false);
   const [shouldBoot, setShouldBoot] = useState(!deferUntilVisible);
   const [bootError, setBootError] = useState("");
   const [runtimeReady, setRuntimeReady] = useState(false);
@@ -78,7 +80,13 @@ export default function EChart3DPanel({
     const chart = chartRef.current;
     if (!chart || !option) return;
     chart.setOption(option, { notMerge: true, lazyUpdate: true });
-  }, [option]);
+  }, [option, runtimeReady]);
+
+  useEffect(() => {
+    if (!bootError || unavailableNotifiedRef.current) return;
+    unavailableNotifiedRef.current = true;
+    onUnavailable?.(bootError);
+  }, [bootError, onUnavailable]);
 
   useEffect(() => {
     const chart = chartRef.current;

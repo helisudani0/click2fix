@@ -302,6 +302,16 @@ VM/OVA path for environments where Windows security policies block ZIP/script de
 - export the VM as an OVA for customer import
 - publish that `.ova` + `.ova.sha256` as release assets for direct customer download
 
+One-click release asset publish for OVA:
+
+- run GitHub Actions workflow `.github/workflows/publish-ova-asset.yml`
+- inputs:
+  - `version` (for example `v1.1.4`)
+  - `ova_url` (HTTPS URL to your exported `.ova`)
+- workflow attaches:
+  - `click2fix-appliance-<version>.ova`
+  - `click2fix-appliance-<version>.ova.sha256`
+
 Important:
 
 - raw bootstrap and OVA packaging reduce Windows download friction

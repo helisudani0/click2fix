@@ -299,6 +299,7 @@ Note:
 Release workflow file:
 
 - `.github/workflows/release-appliance.yml`
+- `.github/workflows/publish-ova-asset.yml`
 
 What it does on `v*` tag:
 
@@ -332,3 +333,11 @@ To publish a direct-download OVA:
    - `deploy/appliance/release/add-ova-asset.sh` or `add-ova-asset.ps1`
 4. Upload `.ova` and `.ova.sha256` to the matching GitHub release.
 5. Optional automation path: run `release-appliance` via `workflow_dispatch` with `ova_url` pointing to the prebuilt `.ova`.
+
+Lightweight automation path (no full image rebuild):
+
+1. Host exported `.ova` at an HTTPS URL.
+2. Run `publish-ova-asset` workflow with:
+   - `version` = release tag (for example `v1.1.4`)
+   - `ova_url` = URL to exported `.ova`
+3. Workflow publishes `.ova` and `.ova.sha256` to the selected GitHub release tag.

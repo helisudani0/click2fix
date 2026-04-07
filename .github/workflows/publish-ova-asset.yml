@@ -1,0 +1,80 @@
+name: publish-ova-asset
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version tag (for example v1.1.4)"
+        required: true
+        type: string
+      ova_url:
+        description: "HTTPS URL to the prebuilt .ova file"
+        required: true
+        type: string
+      asset_name:
+        description: "Optional asset filename (default: click2fix-appliance-<version>.ova)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+  attestations: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve metadata
+        id: meta
+        shell: bash
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          OVA_URL="${{ github.event.inputs.ova_url }}"
+          ASSET_NAME="${{ github.event.inputs.asset_name }}"
+
+          if [ -z "${ASSET_NAME}" ]; then
+            ASSET_NAME="click2fix-appliance-${VERSION}.ova"
+          fi
+
+          if [ -z "${VERSION}" ] || [ -z "${OVA_URL}" ]; then
+            echo "ERROR: version and ova_url are required." >&2
+            exit 1
+          fi
+
+          OUT_DIR="deploy/releases/${VERSION}"
+          OVA_FILE="${OUT_DIR}/${ASSET_NAME}"
+          SHA_FILE="${OVA_FILE}.sha256"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "ova_url=${OVA_URL}" >> "$GITHUB_OUTPUT"
+          echo "out_dir=${OUT_DIR}" >> "$GITHUB_OUTPUT"
+          echo "ova_file=${OVA_FILE}" >> "$GITHUB_OUTPUT"
+          echo "sha_file=${SHA_FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Download OVA
+        shell: bash
+        run: |
+          mkdir -p "${{ steps.meta.outputs.out_dir }}"
+          curl --fail --location "${{ steps.meta.outputs.ova_url }}" --output "${{ steps.meta.outputs.ova_file }}"
+
+      - name: Generate OVA checksum
+        shell: bash
+        run: |
+          OVA_SHA="$(sha256sum "${{ steps.meta.outputs.ova_file }}" | awk '{print $1}')"
+          printf "%s  %s\n" "${OVA_SHA}" "$(basename "${{ steps.meta.outputs.ova_file }}")" > "${{ steps.meta.outputs.sha_file }}"
+
+      - name: Attest OVA asset
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ steps.meta.outputs.ova_file }}
+
+      - name: Publish OVA release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.version }}
+          overwrite_files: true
+          files: |
+            ${{ steps.meta.outputs.ova_file }}
+            ${{ steps.meta.outputs.sha_file }}

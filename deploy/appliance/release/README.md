@@ -56,6 +56,12 @@ Output:
 
 Then upload both files to the matching GitHub release so customers can directly import the OVA into VirtualBox/VMware.
 
+If you want GitHub Actions to publish them automatically for an existing tag:
+
+- run `.github/workflows/publish-ova-asset.yml`
+- set `version` and `ova_url`
+- workflow uploads `.ova` and `.ova.sha256` to that release
+
 The generated template is pre-filled with:
 
 - `C2F_BACKEND_IMAGE=ghcr.io/<owner>/click2fix-backend`

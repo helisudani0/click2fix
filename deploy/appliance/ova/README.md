@@ -104,6 +104,7 @@ Release workflow support:
 
 - `.github/workflows/release-appliance.yml` now supports optional `workflow_dispatch` input `ova_url`.
 - If `ova_url` is provided, the workflow downloads `click2fix-appliance-<version>.ova`, generates `.ova.sha256`, and publishes both as release assets.
+- `.github/workflows/publish-ova-asset.yml` provides a lightweight OVA-only publish path for existing release tags.
 
 ## Guardrails
 

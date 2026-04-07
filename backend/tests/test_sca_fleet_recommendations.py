@@ -44,6 +44,34 @@ def test_recommend_failed_checks_fills_missing_recommendation_text():
     assert rec != "-"
 
 
+def test_recommend_failed_checks_maps_to_attack_tactics():
+    policies = [
+        {
+            "policy_id": "cis-win",
+            "policy_name": "CIS Windows",
+            "checks": [
+                {
+                    "id": "20001",
+                    "title": "Detect brute force logon attempts",
+                    "description": "Alert when brute force authentication failures are observed.",
+                    "remediation": "",
+                    "result": "failed",
+                }
+            ],
+        }
+    ]
+
+    rows = _recommend_failed_checks(
+        policies,
+        context={"vulnerabilities_critical": 0, "alerts_high": 2, "fim_events": 0, "mitre_tactics": ["Credential Access"]},
+        limit=10,
+    )
+
+    assert rows
+    tactics = [str(item).lower() for item in (rows[0].get("matched_tactics") or [])]
+    assert "credential access" in tactics
+
+
 def test_dedupe_fleet_recommendations_collapses_equivalent_controls():
     rows = [
         {

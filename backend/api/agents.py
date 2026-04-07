@@ -15,11 +15,13 @@ from core.active_defense import (
 from core.tenant_ai_config import load_active_tenant_ai_config
 from core.wazuh_client import WazuhClient
 from core.indexer_client import IndexerClient
+from core.mitre_mapper import MitreMapper
 from core.security import current_user
 
 router = APIRouter()
 client = WazuhClient()
 indexer = IndexerClient()
+_MITRE_MAPPER = MitreMapper()
 
 def _extract_items(data):
     if isinstance(data, dict):
@@ -212,6 +214,42 @@ SCA_CATEGORY_KEYWORDS = {
         "tls",
         "ssl",
     ),
+}
+
+
+ATTACK_TACTIC_TO_FOCUS = {
+    "initial access": ("network", "identity"),
+    "execution": ("hardening", "malware"),
+    "persistence": ("hardening", "privilege"),
+    "privilege escalation": ("privilege", "identity"),
+    "defense evasion": ("logging", "malware", "hardening"),
+    "credential access": ("identity", "privilege"),
+    "discovery": ("logging", "hardening"),
+    "lateral movement": ("network", "identity"),
+    "collection": ("logging",),
+    "command and control": ("network", "logging"),
+    "exfiltration": ("network", "encryption"),
+    "impact": ("hardening", "patching"),
+    "resource development": ("identity", "network"),
+    "reconnaissance": ("network", "logging"),
+}
+
+
+ATTACK_TACTIC_FOCUS_BOOSTS = {
+    "initial access": {"network": 2.0, "identity": 1.5},
+    "execution": {"hardening": 2.0, "malware": 1.0},
+    "persistence": {"hardening": 2.0, "privilege": 1.5},
+    "privilege escalation": {"privilege": 5.0, "identity": 2.0},
+    "defense evasion": {"logging": 3.0, "malware": 2.0, "hardening": 1.0},
+    "credential access": {"identity": 5.0, "privilege": 2.0},
+    "discovery": {"logging": 1.0, "hardening": 0.5},
+    "lateral movement": {"network": 4.0, "identity": 1.0},
+    "collection": {"logging": 1.0},
+    "command and control": {"network": 2.0, "logging": 1.0},
+    "exfiltration": {"network": 2.0, "encryption": 2.0},
+    "impact": {"hardening": 3.0, "patching": 2.0},
+    "resource development": {"identity": 1.0, "network": 1.0},
+    "reconnaissance": {"network": 1.5, "logging": 1.0},
 }
 
 
@@ -535,6 +573,30 @@ def _collect_hardening_context(agent_id: str) -> dict:
         except HTTPException:
             mitre_tactics = []
 
+    mapped_tactics: list[str] = []
+    mapped_techniques: list[str] = []
+    for alert in alerts:
+        if not isinstance(alert, dict):
+            continue
+        mappings = _MITRE_MAPPER.map_alerts(alert)
+        for mapping in mappings[:3]:
+            if not isinstance(mapping, dict):
+                continue
+            tactic = str(mapping.get("tactic") or "").strip()
+            if tactic:
+                mapped_tactics.append(tactic)
+            technique_id = str(mapping.get("technique_id") or "").strip().upper()
+            technique = str(mapping.get("technique") or "").strip()
+            if technique_id and technique:
+                mapped_techniques.append(f"{technique_id} {technique}")
+            elif technique_id:
+                mapped_techniques.append(technique_id)
+            elif technique:
+                mapped_techniques.append(technique)
+
+    mitre_tactics = _dedupe_ordered_text(mitre_tactics + mapped_tactics, limit=12)
+    mapped_techniques = _dedupe_ordered_text(mapped_techniques, limit=20)
+
     high_alerts = 0
     critical_alerts = 0
     for alert in alerts:
@@ -562,7 +624,8 @@ def _collect_hardening_context(agent_id: str) -> dict:
         "vulnerabilities_medium": int(severity_counter.get("medium", 0)),
         "vulnerabilities_low": int(severity_counter.get("low", 0)),
         "fim_events": len(fim_events),
-        "mitre_tactics": mitre_tactics[:10],
+        "mitre_tactics": mitre_tactics,
+        "mitre_techniques": mapped_techniques,
     }
 
 
@@ -586,23 +649,11 @@ def _build_category_boosts(context: dict) -> dict[str, float]:
         boosts["logging"] += 2.0
 
     for tactic in context.get("mitre_tactics") or []:
-        text = str(tactic).strip().lower()
-        if not text:
+        key = str(tactic or "").strip().lower()
+        if not key:
             continue
-        if "credential access" in text:
-            boosts["identity"] += 5.0
-        if "privilege escalation" in text:
-            boosts["privilege"] += 5.0
-        if "defense evasion" in text:
-            boosts["logging"] += 3.0
-            boosts["malware"] += 2.0
-        if "lateral movement" in text:
-            boosts["network"] += 4.0
-        if "persistence" in text:
-            boosts["hardening"] += 3.0
-        if "initial access" in text:
-            boosts["network"] += 2.0
-            boosts["identity"] += 2.0
+        for focus, increment in ATTACK_TACTIC_FOCUS_BOOSTS.get(key, {}).items():
+            boosts[focus] = float(boosts.get(focus, 0.0)) + float(increment)
 
     return boosts
 
@@ -631,6 +682,77 @@ def _check_text_blob(check: dict) -> str:
         check.get("compliance"),
     ]
     return _stringify(pieces).lower()
+
+
+def _dedupe_ordered_text(values: list[str], *, limit: int) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(text)
+        if len(out) >= max(1, limit):
+            break
+    return out
+
+
+def _focus_categories_from_attack_tactics(tactics: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for tactic in tactics:
+        for focus in ATTACK_TACTIC_TO_FOCUS.get(str(tactic or "").strip().lower(), ()):
+            key = str(focus or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+def _map_check_to_attack_context(check: dict) -> dict[str, list[str]]:
+    if not isinstance(check, dict):
+        return {"tactics": [], "techniques": []}
+
+    text_blob = _check_text_blob(check)
+    if not text_blob:
+        return {"tactics": [], "techniques": []}
+
+    synthetic_alert = {
+        "rule": {
+            "description": text_blob,
+            "groups": _normalize_sca_references(check.get("compliance")),
+        },
+        "full_log": text_blob,
+        "data": {
+            "references": check.get("references"),
+            "command": check.get("command"),
+            "check_id": check.get("id"),
+            "policy_id": check.get("policy_id"),
+        },
+    }
+
+    mapped = _MITRE_MAPPER.map_alerts(synthetic_alert)
+    tactics = _dedupe_ordered_text([str(item.get("tactic") or "") for item in mapped if isinstance(item, dict)], limit=4)
+
+    techniques_raw: list[str] = []
+    for item in mapped:
+        if not isinstance(item, dict):
+            continue
+        tid = str(item.get("technique_id") or "").strip().upper()
+        name = str(item.get("technique") or "").strip()
+        if tid and name:
+            techniques_raw.append(f"{tid} {name}")
+        elif tid:
+            techniques_raw.append(tid)
+        elif name:
+            techniques_raw.append(name)
+    techniques = _dedupe_ordered_text(techniques_raw, limit=4)
+    return {"tactics": tactics, "techniques": techniques}
 
 
 def _recommendation_from_categories(matched_categories: list[str], check: dict) -> str:
@@ -852,6 +974,8 @@ def _apply_ai_to_fleet_recommendations(
                 "reason": str(row.get("reason") or ""),
                 "current_recommendation": str(row.get("recommendation") or ""),
                 "categories": row.get("matched_categories") if isinstance(row.get("matched_categories"), list) else [],
+                "mitre_tactics": row.get("matched_tactics") if isinstance(row.get("matched_tactics"), list) else [],
+                "mitre_techniques": row.get("matched_techniques") if isinstance(row.get("matched_techniques"), list) else [],
             }
             for idx, row in enumerate(top)
         ],
@@ -923,6 +1047,12 @@ def _apply_ai_to_fleet_recommendations(
 
 def _recommend_failed_checks(policies: list[dict], context: dict, limit: int) -> list[dict]:
     boosts = _build_category_boosts(context)
+    observed_tactic_map = {
+        str(item or "").strip().lower(): str(item or "").strip()
+        for item in (context.get("mitre_tactics") or [])
+        if str(item or "").strip()
+    }
+    attack_cache: dict[str, dict[str, list[str]]] = {}
     rows: list[dict] = []
     for policy in policies:
         checks = policy.get("checks")
@@ -935,36 +1065,68 @@ def _recommend_failed_checks(policies: list[dict], context: dict, limit: int) ->
                 continue
 
             text = _check_text_blob(check)
-            matched_categories: list[str] = []
+            cache_key = " ".join(
+                [
+                    str(check.get("id") or "").strip(),
+                    str(check.get("title") or "").strip(),
+                    str(check.get("description") or "").strip(),
+                    str(check.get("remediation") or "").strip(),
+                ]
+            ).strip() or text
+            attack_ctx = attack_cache.get(cache_key)
+            if not attack_ctx:
+                attack_ctx = _map_check_to_attack_context(check)
+                attack_cache[cache_key] = attack_ctx
+            matched_tactics = attack_ctx.get("tactics") if isinstance(attack_ctx.get("tactics"), list) else []
+            matched_techniques = attack_ctx.get("techniques") if isinstance(attack_ctx.get("techniques"), list) else []
+            matched_categories = _focus_categories_from_attack_tactics(matched_tactics)
+            matched_set = {str(item).strip().lower() for item in matched_categories if str(item).strip()}
             score = 1.0
-            for category, keywords in SCA_CATEGORY_KEYWORDS.items():
-                hits = [kw for kw in keywords if kw in text]
-                if not hits:
-                    continue
-                matched_categories.append(category)
-                score += min(2.0, len(hits) * 0.5)
+            if matched_tactics:
+                score += min(5.0, float(len(matched_tactics)) * 1.25)
+            if matched_techniques:
+                score += min(2.0, float(len(matched_techniques)) * 0.4)
+
+            for category in matched_categories:
                 score += boosts.get(category, 0.0)
 
+            for category, keywords in SCA_CATEGORY_KEYWORDS.items():
+                hits = [kw for kw in keywords if str(kw).strip().lower() in text]
+                if not hits:
+                    continue
+                key = str(category).strip().lower()
+                if key not in matched_set:
+                    matched_set.add(key)
+                    matched_categories.append(key)
+                score += min(1.2, len(hits) * (0.3 if matched_tactics else 0.5))
+                if not matched_tactics:
+                    score += boosts.get(key, 0.0)
+
             reasons: list[str] = []
+            if matched_tactics:
+                reasons.append(f"MITRE ATT&CK tactics: {', '.join(matched_tactics[:3])}")
+            if matched_techniques:
+                reasons.append(f"Mapped techniques: {', '.join(matched_techniques[:2])}.")
+            overlap = [t for t in matched_tactics if str(t).strip().lower() in observed_tactic_map]
+            if overlap:
+                reasons.append(f"Observed on this endpoint: {', '.join(overlap[:2])}.")
             if matched_categories:
                 reasons.append(f"Control area match: {', '.join(matched_categories[:3])}")
-            if "patching" in matched_categories and _to_int(context.get("vulnerabilities_critical"), 0) > 0:
+            if "patching" in matched_set and _to_int(context.get("vulnerabilities_critical"), 0) > 0:
                 reasons.append(
                     f"{_to_int(context.get('vulnerabilities_critical'), 0)} critical vulnerabilities detected on this agent."
                 )
             if _to_int(context.get("alerts_high"), 0) > 0 and (
-                "logging" in matched_categories
-                or "hardening" in matched_categories
-                or "malware" in matched_categories
-                or "network" in matched_categories
+                "logging" in matched_set
+                or "hardening" in matched_set
+                or "malware" in matched_set
+                or "network" in matched_set
             ):
                 reasons.append(f"{_to_int(context.get('alerts_high'), 0)} high-severity alerts in recent history.")
             if _to_int(context.get("fim_events"), 0) >= 20 and (
-                "hardening" in matched_categories or "logging" in matched_categories
+                "hardening" in matched_set or "logging" in matched_set
             ):
                 reasons.append(f"{_to_int(context.get('fim_events'), 0)} recent FIM changes observed.")
-            if context.get("mitre_tactics"):
-                reasons.append(f"Recent MITRE tactics: {', '.join((context.get('mitre_tactics') or [])[:2])}.")
             if not reasons:
                 reasons.append("Failed check with hardening impact.")
 
@@ -977,6 +1139,8 @@ def _recommend_failed_checks(policies: list[dict], context: dict, limit: int) ->
                     "priority_score": round(score, 2),
                     "priority": _priority_from_score(score),
                     "matched_categories": matched_categories,
+                    "matched_tactics": matched_tactics,
+                    "matched_techniques": matched_techniques,
                     "reason": " ".join(reasons[:3]),
                     "remediation": _normalize_recommendation_text(
                         check.get("remediation"),

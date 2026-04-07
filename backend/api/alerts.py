@@ -83,7 +83,7 @@ def _store_alerts_background(items: Iterable[dict]) -> None:
 
 @router.get("")
 def list_alerts(
-    limit: int = Query(default=100, ge=1, le=1000),
+    limit: int = Query(default=5000, ge=1),
     q: str | None = None,
     agent_id: str | None = None,
     agent_only: bool = False,

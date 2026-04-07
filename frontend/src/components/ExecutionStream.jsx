@@ -1048,7 +1048,7 @@ export default function ExecutionStream({ executionId }) {
     let cancelled = false;
     setEvidenceLoading(true);
 
-    getAlerts("", 250, {
+    getAlerts("", undefined, {
       agentId: selectedTargetId,
       agentOnly: true,
       start: startedAt.toISOString(),

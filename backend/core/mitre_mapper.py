@@ -314,6 +314,77 @@ class _OfficialMitreCatalog:
             return
 
     def _parse_catalog(self, payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        parsed = self._parse_catalog_with_stix2(payload)
+        if parsed:
+            return parsed
+        return self._parse_catalog_native(payload)
+
+    def _parse_catalog_with_stix2(self, payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+        objects = payload.get("objects") if isinstance(payload, dict) else None
+        if not isinstance(objects, list):
+            return {}
+        try:
+            from stix2 import Filter, MemoryStore  # type: ignore
+        except Exception:
+            return {}
+
+        try:
+            try:
+                store = MemoryStore(stix_data=objects, allow_custom=True)
+            except TypeError:
+                store = MemoryStore(stix_data=objects)
+            attack_patterns = store.query([Filter("type", "=", "attack-pattern")])
+        except Exception:
+            return {}
+
+        catalog: Dict[str, Dict[str, Any]] = {}
+        for obj in attack_patterns:
+            if bool(getattr(obj, "revoked", False)) or bool(getattr(obj, "x_mitre_deprecated", False)):
+                continue
+
+            ext_refs = getattr(obj, "external_references", None)
+            if not isinstance(ext_refs, list):
+                continue
+
+            technique_id = ""
+            for ref in ext_refs:
+                if isinstance(ref, dict):
+                    source_name = str(ref.get("source_name") or "").strip().lower()
+                    external_id = _normalize_technique_id(ref.get("external_id"))
+                else:
+                    source_name = str(getattr(ref, "source_name", "") or "").strip().lower()
+                    external_id = _normalize_technique_id(getattr(ref, "external_id", ""))
+                if source_name == "mitre-attack" and external_id:
+                    technique_id = external_id
+                    break
+            if not technique_id:
+                continue
+
+            name = str(getattr(obj, "name", "") or "").strip()
+            kill_chain_phases = getattr(obj, "kill_chain_phases", None)
+            tactics: List[str] = []
+            if isinstance(kill_chain_phases, list):
+                for phase in kill_chain_phases:
+                    if isinstance(phase, dict):
+                        kill_chain_name = str(phase.get("kill_chain_name") or "").strip().lower()
+                        phase_name = str(phase.get("phase_name") or "").strip().replace("-", " ")
+                    else:
+                        kill_chain_name = str(getattr(phase, "kill_chain_name", "") or "").strip().lower()
+                        phase_name = str(getattr(phase, "phase_name", "") or "").strip().replace("-", " ")
+                    if kill_chain_name != "mitre-attack":
+                        continue
+                    tactic = _normalize_tactic(phase_name)
+                    if tactic and tactic not in tactics:
+                        tactics.append(tactic)
+
+            catalog[technique_id] = {
+                "technique_id": technique_id,
+                "technique": name or technique_id,
+                "tactics": tactics,
+            }
+        return catalog
+
+    def _parse_catalog_native(self, payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         objects = payload.get("objects") if isinstance(payload, dict) else None
         if not isinstance(objects, list):
             return {}

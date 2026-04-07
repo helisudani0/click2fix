@@ -105,7 +105,7 @@ export default function Alerts() {
 
   const loadAlerts = (q, options = {}, { silent = false } = {}) => {
     if (!silent) setLoading(true);
-    getAlerts(q, 250, options)
+    getAlerts(q, undefined, options)
       .then((alertsRes) => {
         const items = normalizeAlerts(alertsRes.data).sort(byNewestAlert);
         setAlerts(items);

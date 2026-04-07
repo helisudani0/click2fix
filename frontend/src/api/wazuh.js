@@ -147,11 +147,12 @@ export const getAgents = (group, options = {}) => {
   return request;
 };
 export const getAgentGroups = () => api.get("/agents/groups");
-export const getAlerts = (query, limit = 100, options = {}) => {
+export const getAlerts = (query, limit, options = {}) => {
   const opts = options && typeof options === "object" ? options : {};
   const force = Boolean(opts.force);
   const ttlMs = Number(opts.ttlMs || ALERT_CACHE_TTL_MS);
-  const params = { limit, ...(query ? { q: query } : {}) };
+  const params = { ...(query ? { q: query } : {}) };
+  if (Number.isFinite(limit) && Number(limit) > 0) params.limit = Number(limit);
   if (opts.agentId) params.agent_id = opts.agentId;
   if (typeof opts.agentOnly === "boolean") params.agent_only = opts.agentOnly;
   if (opts.start) params.start = opts.start;

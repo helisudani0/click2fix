@@ -247,7 +247,7 @@ export default function Dashboard() {
       setQueueLoading(true);
     }
     Promise.all([
-      getAlerts("", 12),
+      getAlerts(""),
       api.get("/cases"),
       api.get("/approvals/pending"),
       api.get("/approvals/executions"),

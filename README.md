@@ -176,6 +176,118 @@ chmod +x ./bootstrap-from-github.sh
 OWNER=helisudani0 REPO=click2fix VERSION=${VERSION} INSTALL_DIR=/opt/click2fix PULL_IMAGES=true ./bootstrap-from-github.sh
 ```
 
+### 1A. Windows CMD-Only Path (No ZIP, No PowerShell)
+
+Use this path when endpoint policy blocks `.zip` extraction and/or `.ps1` execution.
+
+1. Prepare folder and download required appliance runtime files from GitHub raw:
+
+```cmd
+set C2F_VERSION=v1.1.4
+mkdir C:\Click2Fix
+cd /d C:\Click2Fix
+curl -fL -o docker-compose.yml https://raw.githubusercontent.com/helisudani0/click2fix/%C2F_VERSION%/deploy/appliance/docker-compose.appliance.yml
+curl -fL -o .env.appliance.template https://raw.githubusercontent.com/helisudani0/click2fix/%C2F_VERSION%/deploy/appliance/.env.appliance.template
+curl -fL -o nginx.conf https://raw.githubusercontent.com/helisudani0/click2fix/%C2F_VERSION%/deploy/appliance/nginx.conf
+copy /Y .env.appliance.template .env.appliance
+```
+
+2. Edit environment values:
+
+```cmd
+notepad .env.appliance
+```
+
+3. Set required values in `.env.appliance`:
+
+```env
+C2F_BACKEND_IMAGE=ghcr.io/helisudani0/click2fix-backend
+C2F_FRONTEND_IMAGE=ghcr.io/helisudani0/click2fix-frontend
+C2F_IMAGE_TAG=1.1.4
+COMPOSE_PROJECT_NAME=click2fix
+POSTGRES_PASSWORD=<strong-db-password>
+JWT_SECRET=<long-random-secret>
+WAZUH_URL=https://<wazuh-host>:55000
+WAZUH_USER=<wazuh-user>
+WAZUH_PASSWORD=<wazuh-password>
+INDEXER_URL=https://<indexer-host>:9200
+INDEXER_USER=<indexer-user>
+INDEXER_PASSWORD=<indexer-password>
+C2F_BOOTSTRAP_ADMIN_USERNAME=admin
+C2F_BOOTSTRAP_ADMIN_PASSWORD=<strong-admin-password>
+```
+
+4. Optional GHCR login (required only if your GHCR packages are private):
+
+```cmd
+set GHCR_USER=<github-username>
+set GHCR_PAT=<github-pat-with-read:packages>
+echo %GHCR_PAT%| docker login ghcr.io -u %GHCR_USER% --password-stdin
+set GHCR_PAT=
+```
+
+5. Pull and start services:
+
+```cmd
+docker compose --env-file .env.appliance -f docker-compose.yml pull
+docker compose --env-file .env.appliance -f docker-compose.yml up -d --remove-orphans
+```
+
+6. Bootstrap/reset admin user explicitly (same behavior install scripts run):
+
+```cmd
+docker compose --env-file .env.appliance -f docker-compose.yml exec -T -w /app backend python -m tools.bootstrap_admin --username admin --password <strong-admin-password> --role admin
+```
+
+7. Verify runtime:
+
+```cmd
+docker compose --env-file .env.appliance -f docker-compose.yml ps
+docker compose --env-file .env.appliance -f docker-compose.yml logs --tail 120 backend
+docker compose --env-file .env.appliance -f docker-compose.yml logs --tail 120 c2f-lb
+```
+
+8. Access URLs:
+
+```text
+Frontend UI: http://localhost:5173
+Backend API docs: http://localhost:8000/docs
+Backend Ops: http://localhost:8000/ops
+```
+
+Important notes:
+
+- Use `C2F_IMAGE_TAG=1.1.4` (without `v`) for current published images.
+- Always pass `--env-file .env.appliance` on `docker compose` commands, or create `.env` from `.env.appliance`.
+- If you see `...click2fix-backend:local`, your `.env.appliance` still has default local image values.
+- If you see an `nginx.conf` mount error, ensure `C:\Click2Fix\nginx.conf` exists as a file.
+
+CMD equivalents for `setup.cmd` / Control Center operations:
+
+```cmd
+:: Start stack
+docker compose --env-file .env.appliance -f docker-compose.yml up -d --remove-orphans
+
+:: Stop stack
+docker compose --env-file .env.appliance -f docker-compose.yml stop
+
+:: Restart stack
+docker compose --env-file .env.appliance -f docker-compose.yml restart
+
+:: Status
+docker compose --env-file .env.appliance -f docker-compose.yml ps
+
+:: Tail backend logs
+docker compose --env-file .env.appliance -f docker-compose.yml logs -f backend
+
+:: Upgrade to a new image tag
+notepad .env.appliance
+:: set C2F_IMAGE_TAG=<new-tag>
+docker compose --env-file .env.appliance -f docker-compose.yml pull
+docker compose --env-file .env.appliance -f docker-compose.yml up -d --remove-orphans --force-recreate backend frontend
+docker compose --env-file .env.appliance -f docker-compose.yml ps
+```
+
 Current `v1.1.4` appliance image set:
 
 - `ghcr.io/helisudani0/click2fix-backend:<version>`

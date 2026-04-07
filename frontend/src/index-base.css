@@ -2254,18 +2254,24 @@ table tbody tr.selected,
   justify-content: space-between;
   align-items: center;
   gap: 8px 12px;
+  width: 100%;
+  box-sizing: border-box;
   margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }
 
 .pager-range {
   color: var(--muted);
   font-size: 0.8rem;
+  margin-right: auto;
 }
 
 .pager-controls {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
 }
 
 .pager-size {

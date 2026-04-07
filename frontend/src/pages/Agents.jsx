@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import ExecutionStream from "../components/ExecutionStream";
+import Pager from "../components/Pager";
 import {
   getAgents,
   getAgentGroups,
@@ -274,6 +275,24 @@ export default function Agents() {
   const [agentAlerts, setAgentAlerts] = useState([]);
   const [detailError, setDetailError] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [agentPage, setAgentPage] = useState(1);
+  const [agentPageSize, setAgentPageSize] = useState(25);
+  const [targetPickPage, setTargetPickPage] = useState(1);
+  const [targetPickPageSize, setTargetPickPageSize] = useState(25);
+  const [compliancePage, setCompliancePage] = useState(1);
+  const [compliancePageSize, setCompliancePageSize] = useState(10);
+  const [scaRecommendationsPage, setScaRecommendationsPage] = useState(1);
+  const [scaRecommendationsPageSize, setScaRecommendationsPageSize] = useState(10);
+  const [scaChecksPage, setScaChecksPage] = useState(1);
+  const [scaChecksPageSize, setScaChecksPageSize] = useState(50);
+  const [recommendationsPage, setRecommendationsPage] = useState(1);
+  const [recommendationsPageSize, setRecommendationsPageSize] = useState(10);
+  const [vulnerabilitiesPage, setVulnerabilitiesPage] = useState(1);
+  const [vulnerabilitiesPageSize, setVulnerabilitiesPageSize] = useState(25);
+  const [alertsPage, setAlertsPage] = useState(1);
+  const [alertsPageSize, setAlertsPageSize] = useState(25);
+  const [fimPage, setFimPage] = useState(1);
+  const [fimPageSize, setFimPageSize] = useState(25);
 
   const [actions, setActions] = useState([]);
   const [actionId, setActionId] = useState("");
@@ -384,7 +403,7 @@ export default function Agents() {
         checksLimit: 20000,
         recommendationLimit: 40,
       }),
-      getAlerts("", 50, { agentId, agentOnly: true }),
+      getAlerts("", undefined, { agentId, agentOnly: true }),
     ])
       .then((results) => {
         if (selectedAgentRef.current !== agentId) {
@@ -529,6 +548,11 @@ export default function Agents() {
     });
   }, [agents, agentSearch]);
 
+  const pagedFilteredAgents = useMemo(() => {
+    const start = (Math.max(1, agentPage) - 1) * Math.max(1, agentPageSize);
+    return filteredAgents.slice(start, start + Math.max(1, agentPageSize));
+  }, [filteredAgents, agentPage, agentPageSize]);
+
   const targetPickList = useMemo(() => {
     const query = targetSearch.trim().toLowerCase();
     const list = agents
@@ -551,6 +575,11 @@ export default function Agents() {
       );
     });
   }, [agents, targetSearch]);
+
+  const pagedTargetPickList = useMemo(() => {
+    const start = (Math.max(1, targetPickPage) - 1) * Math.max(1, targetPickPageSize);
+    return targetPickList.slice(start, start + Math.max(1, targetPickPageSize));
+  }, [targetPickList, targetPickPage, targetPickPageSize]);
 
   const summary = useMemo(() => {
     const fallback =
@@ -1061,6 +1090,11 @@ export default function Agents() {
       });
   }, [scaItems, scaPolicies]);
 
+  const pagedComplianceRows = useMemo(() => {
+    const start = (Math.max(1, compliancePage) - 1) * Math.max(1, compliancePageSize);
+    return complianceRows.slice(start, start + Math.max(1, compliancePageSize));
+  }, [complianceRows, compliancePage, compliancePageSize]);
+
   const complianceSummary = useMemo(() => {
     if (!complianceRows.length) {
       return { passed: 0, failed: 0, notApplicable: 0, score: 0, policy: "-", endScan: null };
@@ -1134,6 +1168,11 @@ export default function Agents() {
     });
   }, [scaCheckFilter, scaCheckSearch, scaChecks]);
 
+  const pagedFilteredScaChecks = useMemo(() => {
+    const start = (Math.max(1, scaChecksPage) - 1) * Math.max(1, scaChecksPageSize);
+    return filteredScaChecks.slice(start, start + Math.max(1, scaChecksPageSize));
+  }, [filteredScaChecks, scaChecksPage, scaChecksPageSize]);
+
   const recommendations = useMemo(() => {
     const names = new Set((actions || []).map((a) => a.id));
     const recs = [];
@@ -1165,6 +1204,116 @@ export default function Agents() {
 
     return recs.slice(0, 4);
   }, [actions, agentAlerts, fimEvents.length, mitreTop, summary.os, vulnSummary]);
+
+  const pagedScaRecommendations = useMemo(() => {
+    const start = (Math.max(1, scaRecommendationsPage) - 1) * Math.max(1, scaRecommendationsPageSize);
+    return scaRecommendations.slice(start, start + Math.max(1, scaRecommendationsPageSize));
+  }, [scaRecommendations, scaRecommendationsPage, scaRecommendationsPageSize]);
+
+  const pagedRecommendations = useMemo(() => {
+    const start = (Math.max(1, recommendationsPage) - 1) * Math.max(1, recommendationsPageSize);
+    return recommendations.slice(start, start + Math.max(1, recommendationsPageSize));
+  }, [recommendations, recommendationsPage, recommendationsPageSize]);
+
+  const pagedVulnerabilities = useMemo(() => {
+    const start = (Math.max(1, vulnerabilitiesPage) - 1) * Math.max(1, vulnerabilitiesPageSize);
+    return vulnerabilities.slice(start, start + Math.max(1, vulnerabilitiesPageSize));
+  }, [vulnerabilities, vulnerabilitiesPage, vulnerabilitiesPageSize]);
+
+  const pagedAgentAlerts = useMemo(() => {
+    const start = (Math.max(1, alertsPage) - 1) * Math.max(1, alertsPageSize);
+    return agentAlerts.slice(start, start + Math.max(1, alertsPageSize));
+  }, [agentAlerts, alertsPage, alertsPageSize]);
+
+  const pagedFimEvents = useMemo(() => {
+    const start = (Math.max(1, fimPage) - 1) * Math.max(1, fimPageSize);
+    return fimEvents.slice(start, start + Math.max(1, fimPageSize));
+  }, [fimEvents, fimPage, fimPageSize]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(filteredAgents.length / Math.max(1, agentPageSize)));
+    if (agentPage > totalPages) {
+      setAgentPage(totalPages);
+    }
+  }, [filteredAgents.length, agentPage, agentPageSize]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(targetPickList.length / Math.max(1, targetPickPageSize)));
+    if (targetPickPage > totalPages) {
+      setTargetPickPage(totalPages);
+    }
+  }, [targetPickList.length, targetPickPage, targetPickPageSize]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(complianceRows.length / Math.max(1, compliancePageSize)));
+    if (compliancePage > totalPages) {
+      setCompliancePage(totalPages);
+    }
+  }, [complianceRows.length, compliancePage, compliancePageSize]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(scaRecommendations.length / Math.max(1, scaRecommendationsPageSize)));
+    if (scaRecommendationsPage > totalPages) {
+      setScaRecommendationsPage(totalPages);
+    }
+  }, [scaRecommendations.length, scaRecommendationsPage, scaRecommendationsPageSize]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(filteredScaChecks.length / Math.max(1, scaChecksPageSize)));
+    if (scaChecksPage > totalPages) {
+      setScaChecksPage(totalPages);
+    }
+  }, [filteredScaChecks.length, scaChecksPage, scaChecksPageSize]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(recommendations.length / Math.max(1, recommendationsPageSize)));
+    if (recommendationsPage > totalPages) {
+      setRecommendationsPage(totalPages);
+    }
+  }, [recommendations.length, recommendationsPage, recommendationsPageSize]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(vulnerabilities.length / Math.max(1, vulnerabilitiesPageSize)));
+    if (vulnerabilitiesPage > totalPages) {
+      setVulnerabilitiesPage(totalPages);
+    }
+  }, [vulnerabilities.length, vulnerabilitiesPage, vulnerabilitiesPageSize]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(agentAlerts.length / Math.max(1, alertsPageSize)));
+    if (alertsPage > totalPages) {
+      setAlertsPage(totalPages);
+    }
+  }, [agentAlerts.length, alertsPage, alertsPageSize]);
+
+  useEffect(() => {
+    const totalPages = Math.max(1, Math.ceil(fimEvents.length / Math.max(1, fimPageSize)));
+    if (fimPage > totalPages) {
+      setFimPage(totalPages);
+    }
+  }, [fimEvents.length, fimPage, fimPageSize]);
+
+  useEffect(() => {
+    setAgentPage(1);
+  }, [agentSearch, selectedGroup]);
+
+  useEffect(() => {
+    setTargetPickPage(1);
+  }, [targetMode, targetSearch, selectedAgentId]);
+
+  useEffect(() => {
+    setCompliancePage(1);
+    setScaRecommendationsPage(1);
+    setScaChecksPage(1);
+    setRecommendationsPage(1);
+    setVulnerabilitiesPage(1);
+    setAlertsPage(1);
+    setFimPage(1);
+  }, [selectedAgentId]);
+
+  useEffect(() => {
+    setScaChecksPage(1);
+  }, [scaCheckFilter, scaCheckSearch]);
 
   return (
     <div className="page page-route-agents">
@@ -1232,7 +1381,7 @@ export default function Agents() {
                   </td>
                 </tr>
               ) : (
-                filteredAgents.map(a => {
+                pagedFilteredAgents.map(a => {
                   const id = formatAgentId(a.id || a.agent_id || "");
                   const name = toDisplay(a.name || a.hostname || a.id || a.agent_id || "-");
                   const groupsRaw = Array.isArray(a.groups)
@@ -1269,6 +1418,18 @@ export default function Agents() {
             </tbody>
           </table>
         </div>
+        <Pager
+          total={filteredAgents.length}
+          page={agentPage}
+          pageSize={agentPageSize}
+          onPageChange={setAgentPage}
+          onPageSizeChange={(size) => {
+            setAgentPageSize(size);
+            setAgentPage(1);
+          }}
+          pageSizeOptions={[10, 25, 50, 100]}
+          label="agents"
+        />
       </div>
 
       <div className="grid-2">
@@ -1393,15 +1554,15 @@ export default function Agents() {
 		                    <div className="meta-line mt-6">
 		                      Selected: {targetAgentIds.length}
 		                    </div>
-		                    <div className="list-scroll mt-10 h-220">
-	                      <div className="list">
-	                        {targetPickList.length === 0 ? (
-	                          <div className="empty-state">No agents match your search.</div>
-	                        ) : (
-                          targetPickList.map((agent) => {
-                            const checked = targetAgentIds.includes(agent.id);
-                            return (
-                              <label key={`target-${agent.id}`} className="list-item clickable readable">
+			                    <div className="list-scroll mt-10 h-220">
+		                      <div className="list">
+		                        {targetPickList.length === 0 ? (
+		                          <div className="empty-state">No agents match your search.</div>
+		                        ) : (
+	                          pagedTargetPickList.map((agent) => {
+	                            const checked = targetAgentIds.includes(agent.id);
+	                            return (
+	                              <label key={`target-${agent.id}`} className="list-item clickable readable">
                                 <input
                                   type="checkbox"
                                   checked={checked}
@@ -1418,13 +1579,25 @@ export default function Agents() {
 	                                />
                                 {agent.name} ({agent.id}) - {agent.group}
                               </label>
-                            );
-                          })
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
+	                            );
+	                          })
+	                        )}
+	                      </div>
+	                    </div>
+                      <Pager
+                        total={targetPickList.length}
+                        page={targetPickPage}
+                        pageSize={targetPickPageSize}
+                        onPageChange={setTargetPickPage}
+                        onPageSizeChange={(size) => {
+                          setTargetPickPageSize(size);
+                          setTargetPickPage(1);
+                        }}
+                        pageSizeOptions={[10, 25, 50, 100]}
+                        label="agents"
+                      />
+	                  </div>
+	                ) : (
                   <div className="page-actions mt-8">
                     {targetMode === "group" ? (
                       <select
@@ -1743,24 +1916,36 @@ export default function Agents() {
                       <th>Not applicable</th>
                       <th>Score</th>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {complianceRows.map((row) => (
-                      <tr key={row.id}>
-                        <td>{row.policy}</td>
-                        <td>{formatWazuhTimestamp(row.endScan)}</td>
-                        <td>{row.passed}</td>
-                        <td>{row.failed}</td>
+	                  </thead>
+	                  <tbody>
+	                    {pagedComplianceRows.map((row) => (
+	                      <tr key={row.id}>
+	                        <td>{row.policy}</td>
+	                        <td>{formatWazuhTimestamp(row.endScan)}</td>
+	                        <td>{row.passed}</td>
+	                        <td>{row.failed}</td>
                         <td>{row.notApplicable}</td>
                         <td>{row.score}%</td>
                       </tr>
                     ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
+	                  </tbody>
+	                </table>
+	              </div>
+              <Pager
+                total={complianceRows.length}
+                page={compliancePage}
+                pageSize={compliancePageSize}
+                onPageChange={setCompliancePage}
+                onPageSizeChange={(size) => {
+                  setCompliancePageSize(size);
+                  setCompliancePage(1);
+                }}
+                pageSizeOptions={[10, 25, 50]}
+                label="policies"
+              />
+	            </div>
+	          )}
+	        </div>
       </div>
 
       <div className="grid-2">
@@ -1790,13 +1975,13 @@ export default function Agents() {
               <div className="stat-value">{scaChecksSummary.failed}</div>
             </div>
           </div>
-          {scaRecommendations.length === 0 ? (
-            <div className="empty-state">No ranked failed checks available for this agent yet.</div>
-          ) : (
-            <div className="list">
-              {scaRecommendations.map((rec) => (
-                <div key={`${rec.policy_id || rec.policy_name}-${rec.check_id}-${rec.rank}`} className="list-item">
-                  <div className="list-item split">
+	          {scaRecommendations.length === 0 ? (
+	            <div className="empty-state">No ranked failed checks available for this agent yet.</div>
+	          ) : (
+	            <div className="list">
+	              {pagedScaRecommendations.map((rec) => (
+	                <div key={`${rec.policy_id || rec.policy_name}-${rec.check_id}-${rec.rank}`} className="list-item">
+	                  <div className="list-item split">
                     <div>
                       <strong>
                         #{toDisplay(rec.rank)} | {toDisplay(rec.policy_name)} | Check {toDisplay(rec.check_id)}
@@ -1812,12 +1997,24 @@ export default function Agents() {
                     <div className="meta-line mt-6">
                       Remediation: {toDisplay(rec.remediation)}
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+	                  )}
+	                </div>
+	              ))}
+              <Pager
+                total={scaRecommendations.length}
+                page={scaRecommendationsPage}
+                pageSize={scaRecommendationsPageSize}
+                onPageChange={setScaRecommendationsPage}
+                onPageSizeChange={(size) => {
+                  setScaRecommendationsPageSize(size);
+                  setScaRecommendationsPage(1);
+                }}
+                pageSizeOptions={[5, 10, 25, 50]}
+                label="recommendations"
+              />
+	            </div>
+	          )}
+	        </div>
 
         <div className="card">
           <div className="card-header">
@@ -1877,17 +2074,17 @@ export default function Agents() {
                 </tr>
               </thead>
               <tbody>
-                {filteredScaChecks.length === 0 ? (
-                  <tr>
-                    <td colSpan="6" className="text-center">
-                      No checks match this filter.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredScaChecks.slice(0, 600).map((check) => (
-                    <tr key={check.key}>
-                      <td>{toDisplay(check.policyName)}</td>
-                      <td>{toDisplay(check.id)}</td>
+	                {filteredScaChecks.length === 0 ? (
+	                  <tr>
+	                    <td colSpan="6" className="text-center">
+	                      No checks match this filter.
+	                    </td>
+	                  </tr>
+	                ) : (
+	                  pagedFilteredScaChecks.map((check) => (
+	                    <tr key={check.key}>
+	                      <td>{toDisplay(check.policyName)}</td>
+	                      <td>{toDisplay(check.id)}</td>
                       <td>
                         <span className={`status-pill ${scaResultClass(check.result)}`}>
                           {toDisplay(check.result)}
@@ -1897,18 +2094,25 @@ export default function Agents() {
                       <td>{toDisplay(check.reason, "-")}</td>
                       <td>{toDisplay(check.remediation, "-")}</td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-          {filteredScaChecks.length > 600 && (
-            <div className="meta-line mt-8">
-              Showing first 600 checks. Refine filter/search to narrow results.
-            </div>
-          )}
-        </div>
-      </div>
+	                  ))
+	                )}
+	              </tbody>
+	            </table>
+	          </div>
+            <Pager
+              total={filteredScaChecks.length}
+              page={scaChecksPage}
+              pageSize={scaChecksPageSize}
+              onPageChange={setScaChecksPage}
+              onPageSizeChange={(size) => {
+                setScaChecksPageSize(size);
+                setScaChecksPage(1);
+              }}
+              pageSizeOptions={[25, 50, 100, 200]}
+              label="checks"
+            />
+	        </div>
+	      </div>
 
       <div className="card">
         <div className="card-header">
@@ -1917,14 +2121,14 @@ export default function Agents() {
             <p className="muted">Suggested actions from current threat and compliance context.</p>
           </div>
         </div>
-        {recommendations.length === 0 ? (
-          <div className="empty-state">No immediate recommendation from current telemetry.</div>
-        ) : (
-          <div className="list">
-            {recommendations.map((rec) => (
-              <button
-                key={rec.action}
-                className="list-item split clickable"
+	        {recommendations.length === 0 ? (
+	          <div className="empty-state">No immediate recommendation from current telemetry.</div>
+	        ) : (
+	          <div className="list">
+	            {pagedRecommendations.map((rec) => (
+	              <button
+	                key={rec.action}
+	                className="list-item split clickable"
                 onClick={() => {
                   setActionId(rec.action);
                   setActionStatus(`Prepared action: ${rec.action}`);
@@ -1934,12 +2138,24 @@ export default function Agents() {
                   <div>{rec.title}</div>
                   <div className="meta-line">{rec.reason}</div>
                 </div>
-                <span className="chip">{rec.action}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+	                <span className="chip">{rec.action}</span>
+	              </button>
+	            ))}
+            <Pager
+              total={recommendations.length}
+              page={recommendationsPage}
+              pageSize={recommendationsPageSize}
+              onPageChange={setRecommendationsPage}
+              onPageSizeChange={(size) => {
+                setRecommendationsPageSize(size);
+                setRecommendationsPage(1);
+              }}
+              pageSizeOptions={[5, 10, 25]}
+              label="response recommendations"
+            />
+	          </div>
+	        )}
+	      </div>
 
       <div className="grid-2">
         <div className="card">
@@ -1995,15 +2211,15 @@ export default function Agents() {
                 </tr>
               </thead>
               <tbody>
-                {vulnerabilities.length === 0 ? (
-                  <tr>
-	                    <td colSpan="4" className="text-center">
-	                      No vulnerabilities reported (or module disabled).
-	                    </td>
-                  </tr>
-                ) : (
-                  vulnerabilities.slice(0, 50).map((vuln, idx) => {
-                    const vulnInfo = vuln.vulnerability || {};
+	                {vulnerabilities.length === 0 ? (
+	                  <tr>
+		                    <td colSpan="4" className="text-center">
+		                      No vulnerabilities reported (or module disabled).
+		                    </td>
+	                  </tr>
+	                ) : (
+	                  pagedVulnerabilities.map((vuln, idx) => {
+	                    const vulnInfo = vuln.vulnerability || {};
                     const cve =
                       vulnInfo.id ||
                       vulnInfo.cve ||
@@ -2046,12 +2262,24 @@ export default function Agents() {
                         <td>{toDisplay(status)}</td>
                       </tr>
                     );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+	                  })
+	                )}
+	              </tbody>
+	            </table>
+	          </div>
+          <Pager
+            total={vulnerabilities.length}
+            page={vulnerabilitiesPage}
+            pageSize={vulnerabilitiesPageSize}
+            onPageChange={setVulnerabilitiesPage}
+            onPageSizeChange={(size) => {
+              setVulnerabilitiesPageSize(size);
+              setVulnerabilitiesPage(1);
+            }}
+            pageSizeOptions={[10, 25, 50, 100]}
+            label="vulnerabilities"
+          />
+	        </div>
 
         <div className="card">
           <div className="card-header">
@@ -2079,16 +2307,16 @@ export default function Agents() {
                 </tr>
               </thead>
               <tbody>
-                {agentAlerts.length === 0 ? (
-                  <tr>
-	                    <td colSpan="4" className="text-center">
-	                      No recent alerts for this agent.
-	                    </td>
-                  </tr>
-                ) : (
-                  agentAlerts.map((alert) => (
-                    <tr
-                      key={alert.id}
+	                {agentAlerts.length === 0 ? (
+	                  <tr>
+		                    <td colSpan="4" className="text-center">
+		                      No recent alerts for this agent.
+		                    </td>
+	                  </tr>
+	                ) : (
+	                  pagedAgentAlerts.map((alert) => (
+	                    <tr
+	                      key={alert.id}
                       className="clickable"
                       onClick={() => navigate(`/alerts?query=${encodeURIComponent(alert.id)}`)}
                     >
@@ -2101,13 +2329,25 @@ export default function Agents() {
                       </td>
                       <td>{alert.timestamp}</td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
+	                  ))
+	                )}
+	              </tbody>
+	            </table>
+	          </div>
+          <Pager
+            total={agentAlerts.length}
+            page={alertsPage}
+            pageSize={alertsPageSize}
+            onPageChange={setAlertsPage}
+            onPageSizeChange={(size) => {
+              setAlertsPageSize(size);
+              setAlertsPage(1);
+            }}
+            pageSizeOptions={[10, 25, 50, 100]}
+            label="alerts"
+          />
+	        </div>
+	      </div>
 
       <div className="card">
         <div className="card-header">
@@ -2136,17 +2376,17 @@ export default function Agents() {
               </tr>
             </thead>
             <tbody>
-              {fimEvents.length === 0 ? (
-                <tr>
-	                  <td colSpan="5" className="text-center">
-	                    No FIM events found for this agent.
-	                  </td>
-                </tr>
-              ) : (
-                fimEvents.map((evt, idx) => {
-                  const path = toDisplay(evt?.syscheck?.path || evt?.syscheck?.event || evt?.data?.path || "-");
-                  const action = toDisplay(evt?.syscheck?.event || evt?.syscheck?.action || "-");
-                  const rule = toDisplay(evt?.rule?.description || evt?.rule?.id || "-");
+	              {fimEvents.length === 0 ? (
+	                <tr>
+		                  <td colSpan="5" className="text-center">
+		                    No FIM events found for this agent.
+		                  </td>
+	                </tr>
+	              ) : (
+	                pagedFimEvents.map((evt, idx) => {
+	                  const path = toDisplay(evt?.syscheck?.path || evt?.syscheck?.event || evt?.data?.path || "-");
+	                  const action = toDisplay(evt?.syscheck?.event || evt?.syscheck?.action || "-");
+	                  const rule = toDisplay(evt?.rule?.description || evt?.rule?.id || "-");
                   const level = toDisplay(evt?.rule?.level || "-");
                   const ts = evt?.timestamp || evt?.["@timestamp"] || evt?.time || "-";
                   return (
@@ -2158,12 +2398,24 @@ export default function Agents() {
                       <td>{level}</td>
                     </tr>
                   );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+	                })
+	              )}
+	            </tbody>
+	          </table>
+	        </div>
+        <Pager
+          total={fimEvents.length}
+          page={fimPage}
+          pageSize={fimPageSize}
+          onPageChange={setFimPage}
+          onPageSizeChange={(size) => {
+            setFimPageSize(size);
+            setFimPage(1);
+          }}
+          pageSizeOptions={[10, 25, 50, 100]}
+          label="FIM events"
+        />
+	      </div>
     </div>
   );
 }

@@ -78,6 +78,33 @@ Customer flow after import:
 4. Enter Wazuh, indexer, connector, and admin values.
 5. Use Click2Fix normally without installing Docker on the customer host.
 
+## Publish OVA For Customer Download
+
+After exporting your VM as `.ova`, prepare and publish release assets:
+
+1. Prepare OVA + checksum files in the release output tree.
+2. Upload both files to GitHub Releases under the matching tag.
+
+Linux:
+
+```bash
+cd deploy/appliance/release
+chmod +x add-ova-asset.sh
+./add-ova-asset.sh v1.1.4 /path/to/click2fix-appliance-v1.1.4.ova
+```
+
+Windows:
+
+```powershell
+cd deploy\appliance\release
+.\add-ova-asset.ps1 -Version v1.1.4 -SourceOvaPath C:\path\click2fix-appliance-v1.1.4.ova
+```
+
+Release workflow support:
+
+- `.github/workflows/release-appliance.yml` now supports optional `workflow_dispatch` input `ova_url`.
+- If `ova_url` is provided, the workflow downloads `click2fix-appliance-<version>.ova`, generates `.ova.sha256`, and publishes both as release assets.
+
 ## Guardrails
 
 The stage-builder scripts intentionally fail if the local appliance scaffold has drifted into the v2 service model.

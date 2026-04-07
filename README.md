@@ -142,6 +142,11 @@ Use release assets from:
 
 - `https://github.com/helisudani0/click2fix/releases/latest`
 
+Depending on release packaging, assets may include:
+
+- `click2fix-appliance-installer-<version>.zip`
+- optional: `click2fix-appliance-<version>.ova` for direct VM import
+
 Customer flow:
 
 1. Download `click2fix-appliance-installer-<version>.zip`
@@ -183,6 +188,7 @@ VM/OVA path for environments where Windows security policies block ZIP/script de
 - import that staged appliance tree into an Ubuntu VM
 - install the bundled first-boot service
 - export the VM as an OVA for customer import
+- publish that `.ova` + `.ova.sha256` as release assets for direct customer download
 
 Important:
 

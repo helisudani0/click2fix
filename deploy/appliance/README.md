@@ -306,6 +306,7 @@ What it does on `v*` tag:
 2. Pushes images to GHCR
 3. Builds installer bundle zip
 4. Publishes release assets to GitHub Releases
+5. Optionally publishes a prebuilt `.ova` + `.ova.sha256` (when provided via `workflow_dispatch` `ova_url`)
 
 Maintainer release steps:
 
@@ -321,3 +322,13 @@ git push origin v1.0.0
 4. Wait for workflow `release-appliance` to complete.
 5. Share customer link:
    - `https://github.com/<owner>/<repo>/releases/latest`
+
+To publish a direct-download OVA:
+
+1. Build stage bundle:
+   - `deploy/appliance/ova/build-ova-stage.sh` or `build-ova-stage.ps1`
+2. Build VM image, install first-boot service, and export hypervisor VM as `.ova`.
+3. Prepare OVA asset + checksum:
+   - `deploy/appliance/release/add-ova-asset.sh` or `add-ova-asset.ps1`
+4. Upload `.ova` and `.ova.sha256` to the matching GitHub release.
+5. Optional automation path: run `release-appliance` via `workflow_dispatch` with `ova_url` pointing to the prebuilt `.ova`.

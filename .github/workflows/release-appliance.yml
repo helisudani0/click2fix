@@ -15,6 +15,11 @@ on:
         required: true
         default: true
         type: boolean
+      ova_url:
+        description: "Optional HTTPS URL to a prebuilt click2fix-appliance-<version>.ova asset"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -39,9 +44,11 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ github.event.inputs.version }}"
             PUBLISH_LATEST="${{ github.event.inputs.publish_latest }}"
+            OVA_URL="${{ github.event.inputs.ova_url }}"
           else
             VERSION="${GITHUB_REF_NAME}"
             PUBLISH_LATEST="true"
+            OVA_URL=""
           fi
           CLEAN="${VERSION#v}"
           OWNER_LC="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
@@ -49,6 +56,7 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "clean=${CLEAN}" >> "$GITHUB_OUTPUT"
           echo "publish_latest=${PUBLISH_LATEST}" >> "$GITHUB_OUTPUT"
+          echo "ova_url=${OVA_URL}" >> "$GITHUB_OUTPUT"
           echo "owner_lc=${OWNER_LC}" >> "$GITHUB_OUTPUT"
           echo "repo_lc=${REPO_LC}" >> "$GITHUB_OUTPUT"
           echo "backend_image=ghcr.io/${OWNER_LC}/${REPO_LC}-backend" >> "$GITHUB_OUTPUT"
@@ -193,17 +201,78 @@ jobs:
         with:
           subject-path: deploy/releases/${{ steps.meta.outputs.version }}/click2fix-appliance-installer-${{ steps.meta.outputs.version }}.zip
 
+      - name: Download optional OVA asset
+        if: ${{ steps.meta.outputs.ova_url != '' }}
+        shell: bash
+        run: |
+          OVA_FILE="deploy/releases/${{ steps.meta.outputs.version }}/click2fix-appliance-${{ steps.meta.outputs.version }}.ova"
+          curl --fail --location "${{ steps.meta.outputs.ova_url }}" --output "${OVA_FILE}"
+          OVA_SHA="$(sha256sum "${OVA_FILE}" | awk '{print $1}')"
+          printf "%s  %s\n" "${OVA_SHA}" "$(basename "${OVA_FILE}")" > "${OVA_FILE}.sha256"
+
+      - name: Build release asset list
+        id: assets
+        shell: bash
+        run: |
+          OUT_DIR="deploy/releases/${{ steps.meta.outputs.version }}"
+          OVA_FILE="${OUT_DIR}/click2fix-appliance-${{ steps.meta.outputs.version }}.ova"
+          OVA_SHA="${OVA_FILE}.sha256"
+          FILES=(
+            "${OUT_DIR}/click2fix-appliance-installer-${{ steps.meta.outputs.version }}.zip"
+            "${OUT_DIR}/click2fix-appliance-installer-${{ steps.meta.outputs.version }}.sha256"
+            "${OUT_DIR}/backend-image.spdx.json"
+            "${OUT_DIR}/frontend-image.spdx.json"
+          )
+          if [ -f "${OVA_FILE}" ]; then
+            FILES+=("${OVA_FILE}")
+          fi
+          if [ -f "${OVA_SHA}" ]; then
+            FILES+=("${OVA_SHA}")
+          fi
+
+          {
+            echo "files<<EOF"
+            for file in "${FILES[@]}"; do
+              echo "${file}"
+            done
+            echo "EOF"
+            if [ -f "${OVA_FILE}" ]; then
+              echo "ova_attached=true"
+            else
+              echo "ova_attached=false"
+            fi
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Attest OVA asset
+        if: ${{ steps.assets.outputs.ova_attached == 'true' }}
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: deploy/releases/${{ steps.meta.outputs.version }}/click2fix-appliance-${{ steps.meta.outputs.version }}.ova
+
       - name: Prepare release notes
         id: notes
         shell: bash
         run: |
           NOTES_FILE="deploy/releases/${{ steps.meta.outputs.version }}/RELEASE_NOTES.md"
+          OVA_FILE="deploy/releases/${{ steps.meta.outputs.version }}/click2fix-appliance-${{ steps.meta.outputs.version }}.ova"
+          HAS_OVA="false"
+          if [ -f "${OVA_FILE}" ]; then
+            HAS_OVA="true"
+          fi
           cat > "${NOTES_FILE}" <<EOF
           Click2Fix appliance release: ${{ steps.meta.outputs.version }}
 
           Customer download:
           - click2fix-appliance-installer-${{ steps.meta.outputs.version }}.zip
           - click2fix-appliance-installer-${{ steps.meta.outputs.version }}.sha256
+          EOF
+          if [ "${HAS_OVA}" = "true" ]; then
+            cat >> "${NOTES_FILE}" <<EOF
+          - click2fix-appliance-${{ steps.meta.outputs.version }}.ova
+          - click2fix-appliance-${{ steps.meta.outputs.version }}.ova.sha256
+          EOF
+          fi
+          cat >> "${NOTES_FILE}" <<EOF
 
           Published images:
           - ${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}
@@ -212,7 +281,7 @@ jobs:
           Supply-chain evidence:
           - backend-image.spdx.json
           - frontend-image.spdx.json
-          - GitHub provenance attestations published for backend image, frontend image, and installer bundle
+          - GitHub provenance attestations published for backend image, frontend image, installer bundle, and OVA when attached
 
           Quick install:
           1. Download installer zip from this release.
@@ -220,6 +289,14 @@ jobs:
           3. Run setup.cmd (Windows) or setup.sh (Linux).
           4. Fill prompted Wazuh/indexer/endpoint credentials.
           EOF
+          if [ "${HAS_OVA}" = "true" ]; then
+            cat >> "${NOTES_FILE}" <<EOF
+
+          OVA install path:
+          1. Import click2fix-appliance-${{ steps.meta.outputs.version }}.ova into your hypervisor.
+          2. Boot VM and complete the first-boot setup wizard in the VM console.
+          EOF
+          fi
           echo "path=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release assets
@@ -228,8 +305,5 @@ jobs:
           tag_name: ${{ steps.meta.outputs.version }}
           name: Click2Fix ${{ steps.meta.outputs.version }}
           body_path: ${{ steps.notes.outputs.path }}
-          files: |
-            deploy/releases/${{ steps.meta.outputs.version }}/click2fix-appliance-installer-${{ steps.meta.outputs.version }}.zip
-            deploy/releases/${{ steps.meta.outputs.version }}/click2fix-appliance-installer-${{ steps.meta.outputs.version }}.sha256
-            deploy/releases/${{ steps.meta.outputs.version }}/backend-image.spdx.json
-            deploy/releases/${{ steps.meta.outputs.version }}/frontend-image.spdx.json
+          overwrite_files: true
+          files: ${{ steps.assets.outputs.files }}

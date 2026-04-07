@@ -30,6 +30,32 @@ Output:
 - `deploy/releases/v1.0.0/click2fix-appliance-installer-v1.0.0.zip`
 - `deploy/releases/v1.0.0/click2fix-appliance-installer-v1.0.0.sha256`
 
+## Add A Prebuilt OVA Release Asset
+
+After you export a VM as `.ova`, prepare release-ready OVA assets:
+
+Linux:
+
+```bash
+cd deploy/appliance/release
+chmod +x add-ova-asset.sh
+./add-ova-asset.sh v1.1.4 /path/to/click2fix-appliance-v1.1.4.ova
+```
+
+Windows:
+
+```powershell
+cd deploy\appliance\release
+.\add-ova-asset.ps1 -Version v1.1.4 -SourceOvaPath C:\path\click2fix-appliance-v1.1.4.ova
+```
+
+Output:
+
+- `deploy/releases/v1.1.4/click2fix-appliance-v1.1.4.ova`
+- `deploy/releases/v1.1.4/click2fix-appliance-v1.1.4.ova.sha256`
+
+Then upload both files to the matching GitHub release so customers can directly import the OVA into VirtualBox/VMware.
+
 The generated template is pre-filled with:
 
 - `C2F_BACKEND_IMAGE=ghcr.io/<owner>/click2fix-backend`

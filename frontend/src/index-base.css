@@ -2782,7 +2782,7 @@ textarea.input {
 
 .bar-chart {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .bar-row {
@@ -2797,39 +2797,110 @@ textarea.input {
   font-size: 0.83rem;
   white-space: normal;
   overflow: visible;
+  letter-spacing: 0.01em;
 }
 
 .bar-track {
+  position: relative;
   width: 100%;
-  height: 10px;
+  height: 12px;
   border-radius: 999px;
-  background: rgba(28, 40, 56, 0.92);
+  background: linear-gradient(180deg, rgba(20, 30, 44, 0.96), rgba(12, 19, 31, 0.96));
   border: 1px solid rgba(117, 144, 172, 0.12);
   overflow: hidden;
+  transform: perspective(420px) rotateX(16deg);
+  transform-origin: center center;
+  box-shadow:
+    inset 0 1px 0 rgba(196, 220, 245, 0.2),
+    inset 0 -1px 0 rgba(6, 10, 18, 0.7),
+    0 8px 18px rgba(1, 7, 15, 0.38);
+}
+
+.bar-track::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+
+.bar-track::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(115deg, transparent 0%, rgba(255, 255, 255, 0.26) 46%, transparent 74%);
+  mix-blend-mode: screen;
+  opacity: 0.38;
+  animation: chart-bar-shimmer 3.4s linear infinite;
+  pointer-events: none;
 }
 
 .bar-fill {
+  position: relative;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  background: linear-gradient(92deg, #63cdff 0%, var(--accent) 40%, var(--accent-2) 100%);
+  box-shadow:
+    0 0 18px rgba(86, 207, 255, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.36),
+    inset 0 -1px 0 rgba(8, 16, 24, 0.55);
+  transform-origin: left center;
+  animation: chart-fill-enter 850ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.bar-fill::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+
+.bar-fill::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  width: 22px;
+  height: 22px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 70%);
+  pointer-events: none;
 }
 
 .bar-fill.warn {
-  background: linear-gradient(90deg, #f0ad4e, #f39c12);
+  background: linear-gradient(92deg, #ffd087 0%, #f0ad4e 45%, #cf7a00 100%);
+  box-shadow:
+    0 0 18px rgba(240, 173, 78, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 rgba(65, 36, 4, 0.55);
 }
 
 .bar-fill.danger {
-  background: linear-gradient(90deg, #f17373, #d64545);
+  background: linear-gradient(92deg, #ff9da1 0%, #f17373 46%, #b6223a 100%);
+  box-shadow:
+    0 0 20px rgba(241, 115, 115, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 -1px 0 rgba(66, 12, 22, 0.58);
 }
 
 .bar-fill.success {
-  background: linear-gradient(90deg, #30b489, #17a673);
+  background: linear-gradient(92deg, #85efce 0%, #30b489 44%, #0f845d 100%);
+  box-shadow:
+    0 0 20px rgba(48, 180, 137, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 rgba(8, 46, 33, 0.58);
 }
 
 .bar-value {
   font-family: var(--font-family-mono);
   font-size: 0.8rem;
   color: var(--text);
+  text-shadow: 0 1px 0 rgba(3, 8, 14, 0.8);
 }
 
 .relative-time {
@@ -2951,18 +3022,302 @@ textarea.input {
 }
 
 .trend-wrap {
+  position: relative;
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: linear-gradient(180deg, rgba(17, 28, 42, 0.96), rgba(14, 22, 34, 0.96));
+  background: linear-gradient(180deg, rgba(20, 33, 49, 0.95), rgba(11, 18, 30, 0.97));
   padding: 10px;
+  box-shadow:
+    inset 0 1px 0 rgba(184, 210, 240, 0.14),
+    0 16px 28px rgba(2, 8, 16, 0.34);
+}
+
+.trend-wrap::before {
+  content: "";
+  position: absolute;
+  inset: -36% -12%;
+  background:
+    radial-gradient(circle at 15% 28%, rgba(80, 196, 255, 0.19), rgba(80, 196, 255, 0) 45%),
+    radial-gradient(circle at 84% 78%, rgba(73, 238, 179, 0.16), rgba(73, 238, 179, 0) 42%);
+  animation: chart-ambient-pan 12s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+.trend-wrap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(
+      to right,
+      rgba(255, 255, 255, 0.05) 0,
+      rgba(255, 255, 255, 0.05) 1px,
+      transparent 1px,
+      transparent 30px
+    );
+  opacity: 0.2;
+  animation: chart-scan-sweep 14s linear infinite;
+  pointer-events: none;
+}
+
+.trend-chart-svg {
+  position: relative;
+  z-index: 1;
+  display: block;
+}
+
+.trend-grid-line {
+  stroke: rgba(126, 152, 180, 0.28);
+  stroke-width: 1;
+  stroke-dasharray: 3 6;
+}
+
+.trend-area {
+  opacity: 0.58;
+}
+
+.trend-line-shadow {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.62;
+}
+
+.trend-line-main {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.trend-line-animated {
+  stroke-dasharray: 1400;
+  stroke-dashoffset: 1400;
+  animation: chart-line-draw 1.2s cubic-bezier(0.12, 0.86, 0.28, 1) forwards;
+}
+
+.trend-point-core {
+  fill: #d7f5ff;
+  stroke: #84d9ff;
+  stroke-width: 1.8;
+  filter: drop-shadow(0 0 8px rgba(122, 221, 255, 0.72));
+}
+
+.trend-point-pulse {
+  fill: rgba(122, 221, 255, 0.12);
+  stroke: rgba(122, 221, 255, 0.72);
+  stroke-width: 1.6;
+  animation: chart-point-pulse 2.4s ease-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
 }
 
 .trend-legend {
+  position: relative;
+  z-index: 1;
   display: flex;
   justify-content: space-between;
   color: var(--muted);
   font-size: 0.78rem;
   margin-top: 8px;
+}
+
+.ioc-graph-wrap {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(19, 31, 46, 0.95), rgba(11, 18, 31, 0.98));
+  padding: 10px;
+  overflow: auto;
+  box-shadow:
+    inset 0 1px 0 rgba(176, 202, 232, 0.13),
+    0 14px 26px rgba(1, 6, 14, 0.32);
+}
+
+.ioc-graph-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    repeating-linear-gradient(
+      to right,
+      rgba(171, 197, 224, 0.04) 0,
+      rgba(171, 197, 224, 0.04) 1px,
+      transparent 1px,
+      transparent 34px
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      rgba(171, 197, 224, 0.03) 0,
+      rgba(171, 197, 224, 0.03) 1px,
+      transparent 1px,
+      transparent 34px
+    );
+  opacity: 0.32;
+  animation: ioc-grid-drift 18s linear infinite;
+  pointer-events: none;
+}
+
+.ioc-graph {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  min-height: 220px;
+}
+
+.ioc-edge-base {
+  fill: none;
+  stroke: rgba(120, 156, 188, 0.25);
+  stroke-width: 2.2;
+}
+
+.ioc-edge-flow {
+  fill: none;
+  stroke: url(#iocEdgeFlow);
+  stroke-width: 3;
+  stroke-dasharray: 9 12;
+  opacity: 0.84;
+  animation: ioc-edge-flow 2.8s linear infinite;
+}
+
+.ioc-node-shell {
+  stroke: rgba(172, 205, 233, 0.7);
+  stroke-width: 1.2;
+}
+
+.ioc-node-glint {
+  fill: rgba(255, 255, 255, 0.34);
+  opacity: 0.62;
+}
+
+.ioc-node-pulse {
+  fill: none;
+  stroke: rgba(126, 209, 255, 0.68);
+  stroke-width: 1.6;
+  animation: ioc-node-pulse 2.5s ease-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.ioc-node-label {
+  fill: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  stroke: rgba(6, 11, 18, 0.84);
+  stroke-width: 3px;
+  paint-order: stroke fill;
+}
+
+.ioc-node-sub {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+@keyframes chart-bar-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(160%);
+  }
+}
+
+@keyframes chart-fill-enter {
+  from {
+    transform: scaleX(0.05);
+    opacity: 0.4;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+@keyframes chart-ambient-pan {
+  from {
+    transform: translateX(-3%) translateY(-1%);
+    opacity: 0.58;
+  }
+  to {
+    transform: translateX(4%) translateY(2%);
+    opacity: 0.92;
+  }
+}
+
+@keyframes chart-line-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes chart-point-pulse {
+  0% {
+    transform: scale(0.76);
+    opacity: 0.74;
+  }
+  70% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+@keyframes chart-scan-sweep {
+  0% {
+    transform: translateX(-8%);
+  }
+  100% {
+    transform: translateX(8%);
+  }
+}
+
+@keyframes ioc-edge-flow {
+  0% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: -42;
+  }
+}
+
+@keyframes ioc-grid-drift {
+  0% {
+    transform: translateX(0) translateY(0);
+  }
+  100% {
+    transform: translateX(18px) translateY(18px);
+  }
+}
+
+@keyframes ioc-node-pulse {
+  0% {
+    opacity: 0.74;
+    transform: scale(0.88);
+  }
+  70% {
+    opacity: 0;
+    transform: scale(1.38);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.38);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar-track::after,
+  .bar-fill,
+  .trend-wrap::before,
+  .trend-wrap::after,
+  .trend-line-animated,
+  .trend-point-pulse,
+  .ioc-edge-flow,
+  .ioc-graph-wrap::before,
+  .ioc-node-pulse {
+    animation: none !important;
+  }
 }
 
 .code-panel {
@@ -3145,6 +3500,12 @@ textarea:focus-visible {
 
 .table-scroll.h-180 {
   max-height: 180px;
+}
+
+.page-route-agents .agents-inventory-scroll {
+  min-height: 0;
+  height: auto !important;
+  resize: none;
 }
 
 .list-scroll.h-220 {

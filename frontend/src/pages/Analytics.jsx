@@ -284,25 +284,36 @@ export default function Analytics() {
     if (!normalizedHourly.length) return null;
     const series = normalizedHourly.slice(-72);
     const width = 920;
-    const height = 160;
+    const chartTop = 12;
+    const chartHeight = 152;
+    const plotBottom = chartTop + chartHeight;
     const values = series.map((row) => Number(row.count || 0));
     const max = Math.max(...values, 1);
     const step = series.length > 1 ? width / (series.length - 1) : width;
     const points = values
       .map((value, idx) => {
         const x = Math.round(idx * step);
-        const y = Math.round(height - (value / max) * height);
+        const y = Math.round(plotBottom - (value / max) * chartHeight);
         return `${x},${y}`;
       })
       .join(" ");
     const latest = series[series.length - 1];
+    const latestValue = Number(latest?.count || 0);
+    const latestX = Math.round((series.length - 1) * step);
+    const latestY = Math.round(plotBottom - (latestValue / max) * chartHeight);
+    const areaPoints = `${points} ${width},${plotBottom} 0,${plotBottom}`;
+    const gridLines = [0, 0.25, 0.5, 0.75, 1].map((ratio) => Math.round(chartTop + chartHeight * ratio));
     const average = values.reduce((sum, value) => sum + value, 0) / values.length;
     return {
       series,
       max,
       latest,
+      latestX,
+      latestY,
       average: Math.round(average),
       points,
+      areaPoints,
+      gridLines,
       from: series[0]?.hour,
       to: latest?.hour,
     };
@@ -329,25 +340,36 @@ export default function Analytics() {
     if (!normalizedEventSeries.length) return null;
     const series = normalizedEventSeries.slice(-120);
     const width = 920;
-    const height = 160;
+    const chartTop = 12;
+    const chartHeight = 152;
+    const plotBottom = chartTop + chartHeight;
     const values = series.map((row) => Number(row.count || 0));
     const max = Math.max(...values, 1);
     const step = series.length > 1 ? width / (series.length - 1) : width;
     const points = values
       .map((value, idx) => {
         const x = Math.round(idx * step);
-        const y = Math.round(height - (value / max) * height);
+        const y = Math.round(plotBottom - (value / max) * chartHeight);
         return `${x},${y}`;
       })
       .join(" ");
     const latest = series[series.length - 1];
+    const latestValue = Number(latest?.count || 0);
+    const latestX = Math.round((series.length - 1) * step);
+    const latestY = Math.round(plotBottom - (latestValue / max) * chartHeight);
+    const areaPoints = `${points} ${width},${plotBottom} 0,${plotBottom}`;
+    const gridLines = [0, 0.25, 0.5, 0.75, 1].map((ratio) => Math.round(chartTop + chartHeight * ratio));
     const average = values.reduce((sum, value) => sum + value, 0) / values.length;
     return {
       series,
       max,
       latest,
+      latestX,
+      latestY,
       average: Math.round(average),
       points,
+      areaPoints,
+      gridLines,
       from: series[0]?.bucket,
       to: latest?.bucket,
     };
@@ -538,15 +560,60 @@ export default function Analytics() {
                 <span className="chip">Peak: {dataLayerChart.max}</span>
               </div>
               <div className="trend-wrap">
-                <svg viewBox="0 0 920 180" width="100%" height="200" role="img" aria-label="Event data-layer time-series chart">
-                  <rect x="0" y="0" width="920" height="180" fill="var(--panel-soft)" stroke="var(--border)" rx="12" />
+                <svg className="trend-chart-svg" viewBox="0 0 920 180" width="100%" height="200" role="img" aria-label="Event data-layer time-series chart">
+                  <defs>
+                    <linearGradient id="dataLayerSurface" x1="0%" y1="0%" x2="0%" y2="100%">
+                      <stop offset="0%" stopColor="rgba(34, 54, 77, 0.82)" />
+                      <stop offset="100%" stopColor="rgba(9, 16, 29, 0.96)" />
+                    </linearGradient>
+                    <linearGradient id="dataLayerArea" x1="0%" y1="0%" x2="0%" y2="100%">
+                      <stop offset="0%" stopColor="rgba(107, 215, 255, 0.56)" />
+                      <stop offset="100%" stopColor="rgba(107, 215, 255, 0.03)" />
+                    </linearGradient>
+                    <linearGradient id="dataLayerLine" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#74d9ff" />
+                      <stop offset="50%" stopColor="#46b8ff" />
+                      <stop offset="100%" stopColor="#58f0c7" />
+                    </linearGradient>
+                    <linearGradient id="dataLayerLineGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="rgba(116, 217, 255, 0.1)" />
+                      <stop offset="50%" stopColor="rgba(70, 184, 255, 0.78)" />
+                      <stop offset="100%" stopColor="rgba(88, 240, 199, 0.2)" />
+                    </linearGradient>
+                    <filter id="dataLayerGlow" x="-30%" y="-30%" width="160%" height="160%">
+                      <feGaussianBlur stdDeviation="3.2" result="blurred" />
+                      <feMerge>
+                        <feMergeNode in="blurred" />
+                        <feMergeNode in="SourceGraphic" />
+                      </feMerge>
+                    </filter>
+                    <filter id="dataLayerShadow" x="-20%" y="-20%" width="140%" height="140%">
+                      <feDropShadow dx="0" dy="3" stdDeviation="2.6" floodColor="rgba(4, 10, 18, 0.85)" />
+                    </filter>
+                  </defs>
+                  <rect x="0" y="0" width="920" height="180" rx="12" fill="url(#dataLayerSurface)" stroke="rgba(118, 148, 176, 0.38)" />
+                  {dataLayerChart.gridLines.map((y, idx) => (
+                    <line key={`data-layer-grid-${idx}`} x1="0" y1={y} x2="920" y2={y} className="trend-grid-line" />
+                  ))}
+                  <polygon points={dataLayerChart.areaPoints} className="trend-area" fill="url(#dataLayerArea)" />
                   <polyline
+                    className="trend-line-shadow"
                     fill="none"
-                    stroke="var(--accent)"
-                    strokeWidth="3"
+                    stroke="url(#dataLayerLineGlow)"
+                    strokeWidth="6"
                     points={dataLayerChart.points}
-                    transform="translate(0,10)"
+                    filter="url(#dataLayerShadow)"
                   />
+                  <polyline
+                    className="trend-line-main trend-line-animated"
+                    fill="none"
+                    stroke="url(#dataLayerLine)"
+                    strokeWidth="3.2"
+                    points={dataLayerChart.points}
+                    filter="url(#dataLayerGlow)"
+                  />
+                  <circle className="trend-point-pulse" cx={dataLayerChart.latestX} cy={dataLayerChart.latestY} r="7.2" />
+                  <circle className="trend-point-core" cx={dataLayerChart.latestX} cy={dataLayerChart.latestY} r="4.2" />
                 </svg>
                 <div className="trend-legend">
                   <span>{formatWazuhTimestamp(dataLayerChart.from)}</span>
@@ -747,15 +814,60 @@ export default function Analytics() {
                 <span className="chip">Peak: {hourlyChart.max}</span>
               </div>
               <div className="trend-wrap">
-                <svg viewBox="0 0 920 180" width="100%" height="200" role="img" aria-label="Hourly alert volume chart">
-                  <rect x="0" y="0" width="920" height="180" fill="var(--panel-soft)" stroke="var(--border)" rx="12" />
+                <svg className="trend-chart-svg" viewBox="0 0 920 180" width="100%" height="200" role="img" aria-label="Hourly alert volume chart">
+                  <defs>
+                    <linearGradient id="hourlySurface" x1="0%" y1="0%" x2="0%" y2="100%">
+                      <stop offset="0%" stopColor="rgba(32, 52, 76, 0.84)" />
+                      <stop offset="100%" stopColor="rgba(9, 15, 27, 0.97)" />
+                    </linearGradient>
+                    <linearGradient id="hourlyArea" x1="0%" y1="0%" x2="0%" y2="100%">
+                      <stop offset="0%" stopColor="rgba(138, 232, 201, 0.5)" />
+                      <stop offset="100%" stopColor="rgba(138, 232, 201, 0.03)" />
+                    </linearGradient>
+                    <linearGradient id="hourlyLine" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="#8be8c9" />
+                      <stop offset="55%" stopColor="#59d0f7" />
+                      <stop offset="100%" stopColor="#64a7ff" />
+                    </linearGradient>
+                    <linearGradient id="hourlyLineGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="rgba(139, 232, 201, 0.16)" />
+                      <stop offset="50%" stopColor="rgba(89, 208, 247, 0.72)" />
+                      <stop offset="100%" stopColor="rgba(100, 167, 255, 0.24)" />
+                    </linearGradient>
+                    <filter id="hourlyGlow" x="-30%" y="-30%" width="160%" height="160%">
+                      <feGaussianBlur stdDeviation="3.1" result="blurred" />
+                      <feMerge>
+                        <feMergeNode in="blurred" />
+                        <feMergeNode in="SourceGraphic" />
+                      </feMerge>
+                    </filter>
+                    <filter id="hourlyShadow" x="-20%" y="-20%" width="140%" height="140%">
+                      <feDropShadow dx="0" dy="3" stdDeviation="2.4" floodColor="rgba(3, 9, 18, 0.86)" />
+                    </filter>
+                  </defs>
+                  <rect x="0" y="0" width="920" height="180" rx="12" fill="url(#hourlySurface)" stroke="rgba(118, 148, 176, 0.38)" />
+                  {hourlyChart.gridLines.map((y, idx) => (
+                    <line key={`hourly-grid-${idx}`} x1="0" y1={y} x2="920" y2={y} className="trend-grid-line" />
+                  ))}
+                  <polygon points={hourlyChart.areaPoints} className="trend-area" fill="url(#hourlyArea)" />
                   <polyline
+                    className="trend-line-shadow"
                     fill="none"
-                    stroke="var(--accent)"
-                    strokeWidth="3"
+                    stroke="url(#hourlyLineGlow)"
+                    strokeWidth="6"
                     points={hourlyChart.points}
-                    transform="translate(0,10)"
+                    filter="url(#hourlyShadow)"
                   />
+                  <polyline
+                    className="trend-line-main trend-line-animated"
+                    fill="none"
+                    stroke="url(#hourlyLine)"
+                    strokeWidth="3.2"
+                    points={hourlyChart.points}
+                    filter="url(#hourlyGlow)"
+                  />
+                  <circle className="trend-point-pulse" cx={hourlyChart.latestX} cy={hourlyChart.latestY} r="7.2" />
+                  <circle className="trend-point-core" cx={hourlyChart.latestX} cy={hourlyChart.latestY} r="4.2" />
                 </svg>
                 <div className="trend-legend">
                   <span>{formatWazuhTimestamp(hourlyChart.from)}</span>

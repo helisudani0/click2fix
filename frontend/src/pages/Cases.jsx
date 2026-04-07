@@ -385,66 +385,130 @@ export default function Cases() {
     });
 
     const columnOrder = ["case", "alert", "ioc"];
-    const columnX = { case: 80, alert: 340, ioc: 600 };
-    const rowGap = 70;
-    const nodeRadius = 18;
+    const width = 700;
+    const columnX = { case: 92, alert: 356, ioc: 620 };
+    const rowGap = 74;
+    const nodeRadius = 19;
     const maxRows = Math.max(
       columns.case.length,
       columns.alert.length,
       columns.ioc.length,
       1
     );
-    const height = maxRows * rowGap + 40;
+    const height = maxRows * rowGap + 56;
 
     const positions = {};
     columnOrder.forEach((col) => {
       columns[col].forEach((node, idx) => {
         positions[node.id] = {
           x: columnX[col],
-          y: 30 + idx * rowGap
+          y: 34 + idx * rowGap
         };
       });
     });
 
+    const edgePath = (sourcePoint, targetPoint) => {
+      const controlOffset = Math.max(48, Math.abs(targetPoint.x - sourcePoint.x) * 0.4);
+      return `M ${sourcePoint.x} ${sourcePoint.y} C ${sourcePoint.x + controlOffset} ${sourcePoint.y}, ${targetPoint.x - controlOffset} ${targetPoint.y}, ${targetPoint.x} ${targetPoint.y}`;
+    };
+
+    const nodeFillId = (type) => {
+      if (type === "case") return "iocCaseNode";
+      if (type === "alert") return "iocAlertNode";
+      return "iocIndicatorNode";
+    };
+
+    const nodeTypeLabel = (type) => {
+      if (type === "case") return "CASE";
+      if (type === "alert") return "ALERT";
+      return "IOC";
+    };
+
     return (
-      <svg width="100%" height={height}>
-        {edges.map((e, idx) => {
-          const src = positions[e.source];
-          const tgt = positions[e.target];
-          if (!src || !tgt) return null;
-          return (
-            <line
-              key={`${e.source}-${e.target}-${idx}`}
-              x1={src.x}
-              y1={src.y}
-              x2={tgt.x}
-              y2={tgt.y}
-              stroke="var(--muted)"
-              strokeWidth="2"
-              opacity="0.7"
-            />
-          );
-        })}
-        {nodes.map((n) => {
-          const pos = positions[n.id];
-          if (!pos) return null;
-          const fill =
-            n.type === "case" ? "var(--accent-2)" : n.type === "alert" ? "var(--accent-3)" : "var(--success)";
-          return (
-            <g key={n.id}>
-              <circle cx={pos.x} cy={pos.y} r={nodeRadius} fill={fill} />
-              <text
-                x={pos.x + 28}
-                y={pos.y + 5}
-                fill="var(--text)"
-                fontSize="12"
-              >
-                {n.label}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
+      <div className="ioc-graph-wrap">
+        <svg className="ioc-graph" width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMinYMin meet">
+          <defs>
+            <radialGradient id="iocCaseNode" cx="35%" cy="30%" r="78%">
+              <stop offset="0%" stopColor="#8ea8ff" />
+              <stop offset="72%" stopColor="#4968e6" />
+              <stop offset="100%" stopColor="#263ca2" />
+            </radialGradient>
+            <radialGradient id="iocAlertNode" cx="35%" cy="30%" r="78%">
+              <stop offset="0%" stopColor="#ffaf94" />
+              <stop offset="72%" stopColor="#ea7150" />
+              <stop offset="100%" stopColor="#932d1f" />
+            </radialGradient>
+            <radialGradient id="iocIndicatorNode" cx="35%" cy="30%" r="78%">
+              <stop offset="0%" stopColor="#98ffd9" />
+              <stop offset="72%" stopColor="#21ad82" />
+              <stop offset="100%" stopColor="#0f6047" />
+            </radialGradient>
+            <linearGradient id="iocEdgeFlow" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="rgba(110, 170, 220, 0.1)" />
+              <stop offset="40%" stopColor="rgba(114, 214, 255, 0.88)" />
+              <stop offset="100%" stopColor="rgba(103, 255, 205, 0.4)" />
+            </linearGradient>
+            <filter id="iocNodeShadow" x="-40%" y="-40%" width="180%" height="180%">
+              <feDropShadow dx="0" dy="3" stdDeviation="3.4" floodColor="rgba(4, 9, 16, 0.9)" />
+            </filter>
+          </defs>
+
+          <rect x="1" y="1" width={width - 2} height={height - 2} rx="14" fill="rgba(7, 13, 24, 0.24)" stroke="rgba(121, 149, 180, 0.24)" />
+
+          {edges.map((edge, idx) => {
+            const sourcePoint = positions[edge.source];
+            const targetPoint = positions[edge.target];
+            if (!sourcePoint || !targetPoint) return null;
+            const path = edgePath(sourcePoint, targetPoint);
+            return (
+              <g key={`${edge.source}-${edge.target}-${idx}`}>
+                <path d={path} className="ioc-edge-base" />
+                <path
+                  d={path}
+                  className="ioc-edge-flow"
+                  style={{ animationDelay: `${(idx % 7) * 0.2}s` }}
+                />
+              </g>
+            );
+          })}
+
+          {nodes.map((node, idx) => {
+            const pos = positions[node.id];
+            if (!pos) return null;
+            return (
+              <g key={node.id}>
+                <circle
+                  className="ioc-node-pulse"
+                  cx={pos.x}
+                  cy={pos.y}
+                  r={nodeRadius * 1.12}
+                  style={{ animationDelay: `${(idx % 9) * 0.14}s` }}
+                />
+                <circle
+                  className="ioc-node-shell"
+                  cx={pos.x}
+                  cy={pos.y}
+                  r={nodeRadius}
+                  fill={`url(#${nodeFillId(node.type)})`}
+                  filter="url(#iocNodeShadow)"
+                />
+                <circle
+                  className="ioc-node-glint"
+                  cx={pos.x - nodeRadius * 0.36}
+                  cy={pos.y - nodeRadius * 0.36}
+                  r={nodeRadius * 0.34}
+                />
+                <text x={pos.x + 28} y={pos.y + 3} className="ioc-node-label">
+                  {node.label}
+                </text>
+                <text x={pos.x + 28} y={pos.y + 18} className="ioc-node-sub">
+                  {nodeTypeLabel(node.type)}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
     );
   };
 

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import ExecutionStream from "../components/ExecutionStream";
 import Pager from "../components/Pager";
 import {
   getAgents,
@@ -12,13 +11,7 @@ import {
   getAgentMitre,
   getAgentFim,
   getAgentSca,
-  getAlerts,
-  getActions,
-  getActionConnectorStatus,
-  requestApproval,
-  runAction,
-  validateAction,
-  testActionCapability
+  getAlerts
 } from "../api/wazuh";
 import { formatWazuhShort, formatWazuhTimestamp, nowUtcIso, parseWazuhTimestamp } from "../utils/time";
 
@@ -140,17 +133,6 @@ const toDisplay = (value, fallback = "-") => {
   return String(value);
 };
 
-const compactArgs = (value) => {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const out = {};
-  Object.entries(value).forEach(([key, v]) => {
-    if (v === null || v === undefined) return;
-    if (typeof v === "string" && v.trim() === "") return;
-    out[key] = v;
-  });
-  return out;
-};
-
 const normalizeGroupLabel = (value) => {
   if (!value) return "-";
   if (Array.isArray(value)) {
@@ -247,8 +229,6 @@ const riskClass = (risk) => {
   return "neutral";
 };
 
-const MULTILINE_INPUT_FIELDS = new Set(["command", "custom_command", "script"]);
-
 export default function Agents() {
   const navigate = useNavigate();
   const [agents, setAgents] = useState([]);
@@ -277,16 +257,12 @@ export default function Agents() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [agentPage, setAgentPage] = useState(1);
   const [agentPageSize, setAgentPageSize] = useState(25);
-  const [targetPickPage, setTargetPickPage] = useState(1);
-  const [targetPickPageSize, setTargetPickPageSize] = useState(25);
   const [compliancePage, setCompliancePage] = useState(1);
   const [compliancePageSize, setCompliancePageSize] = useState(10);
   const [scaRecommendationsPage, setScaRecommendationsPage] = useState(1);
   const [scaRecommendationsPageSize, setScaRecommendationsPageSize] = useState(10);
   const [scaChecksPage, setScaChecksPage] = useState(1);
   const [scaChecksPageSize, setScaChecksPageSize] = useState(50);
-  const [recommendationsPage, setRecommendationsPage] = useState(1);
-  const [recommendationsPageSize, setRecommendationsPageSize] = useState(10);
   const [vulnerabilitiesPage, setVulnerabilitiesPage] = useState(1);
   const [vulnerabilitiesPageSize, setVulnerabilitiesPageSize] = useState(25);
   const [alertsPage, setAlertsPage] = useState(1);
@@ -294,24 +270,8 @@ export default function Agents() {
   const [fimPage, setFimPage] = useState(1);
   const [fimPageSize, setFimPageSize] = useState(25);
 
-  const [actions, setActions] = useState([]);
-  const [actionId, setActionId] = useState("");
-  const [actionInputs, setActionInputs] = useState({});
-  const [targetMode, setTargetMode] = useState("agent");
-  const [targetValue, setTargetValue] = useState("");
-  const [targetAgentIds, setTargetAgentIds] = useState([]);
-  const [targetSearch, setTargetSearch] = useState("");
-  const [excludeAgents, setExcludeAgents] = useState("");
-  const [justification, setJustification] = useState("");
-  const [actionStatus, setActionStatus] = useState(null);
-  const [connectorStatus, setConnectorStatus] = useState(null);
-  const [connectorError, setConnectorError] = useState("");
   const [error, setError] = useState(null);
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
-  const [isActionRunning, setIsActionRunning] = useState(false);
-  const [, setCooldownTimer] = useState(0);
-  const [actionValidation, setActionValidation] = useState(null);
-  const [activeExecutionId, setActiveExecutionId] = useState(null);
   const selectedAgentRef = useRef("");
 
   useEffect(() => {
@@ -330,35 +290,6 @@ export default function Agents() {
       })
       .catch(() => setGroups([]));
   }, []);
-
-  useEffect(() => {
-    getActions()
-      .then(r => {
-        const list = r.data || [];
-        setActions(list);
-        const hasHealthcheck = list.some((item) => item?.id === "endpoint-healthcheck");
-        if (hasHealthcheck) {
-          setActionId((current) => current || "endpoint-healthcheck");
-        }
-      })
-      .catch(() => setActions([]));
-  }, []);
-
-  const loadConnectorStatus = useCallback(() => {
-    getActionConnectorStatus()
-      .then((res) => {
-        setConnectorStatus(res.data || null);
-        setConnectorError("");
-      })
-      .catch((err) => {
-        setConnectorStatus(null);
-        setConnectorError(err.response?.data?.detail || err.message || "Unable to load connector status");
-      });
-  }, []);
-
-  useEffect(() => {
-    loadConnectorStatus();
-  }, [loadConnectorStatus]);
 
   const loadAgentList = useCallback((force = false) => {
     getAgents(selectedGroup, { force, limit: 5000 })
@@ -501,38 +432,6 @@ export default function Agents() {
     loadAgentModules(selectedAgentId, true);
   }, [selectedAgentId, loadAgentModules]);
 
-  useEffect(() => {
-    const action = actions.find(a => a.id === actionId);
-    if (!action) {
-      setActionInputs({});
-      return;
-    }
-    const inputs = {};
-    (action.inputs || []).forEach(field => {
-      inputs[field.name] = "";
-    });
-    setActionInputs(inputs);
-  }, [actionId, actions]);
-
-  useEffect(() => {
-    if (targetMode === "group") {
-      setTargetValue(selectedGroup || "");
-      return;
-    }
-    if (targetMode === "multi") {
-      setTargetValue("");
-      setTargetAgentIds((prev) => (prev.length ? prev : selectedAgentId ? [selectedAgentId] : []));
-      return;
-    }
-    if (targetMode === "fleet") {
-      setTargetValue("all");
-      return;
-    }
-    setTargetValue(selectedAgentId || "");
-  }, [targetMode, selectedAgentId, selectedGroup]);
-
-  const selectedAction = actions.find(a => a.id === actionId);
-
   const filteredAgents = useMemo(() => {
     const query = agentSearch.trim().toLowerCase();
     if (!query) return agents;
@@ -552,34 +451,6 @@ export default function Agents() {
     const start = (Math.max(1, agentPage) - 1) * Math.max(1, agentPageSize);
     return filteredAgents.slice(start, start + Math.max(1, agentPageSize));
   }, [filteredAgents, agentPage, agentPageSize]);
-
-  const targetPickList = useMemo(() => {
-    const query = targetSearch.trim().toLowerCase();
-    const list = agents
-      .map((a) => {
-        const id = formatAgentId(a.id || a.agent_id || "");
-        if (!id || id === "000") return null;
-        const name = String(a.name || a.hostname || id);
-        const groupsRaw = a.groups || a.group || a.group_name || "-";
-        const group = toDisplay(groupsRaw, "-");
-        return { id, name, group };
-      })
-      .filter(Boolean);
-
-    if (!query) return list;
-    return list.filter((item) => {
-      return (
-        item.id.toLowerCase().includes(query) ||
-        item.name.toLowerCase().includes(query) ||
-        item.group.toLowerCase().includes(query)
-      );
-    });
-  }, [agents, targetSearch]);
-
-  const pagedTargetPickList = useMemo(() => {
-    const start = (Math.max(1, targetPickPage) - 1) * Math.max(1, targetPickPageSize);
-    return targetPickList.slice(start, start + Math.max(1, targetPickPageSize));
-  }, [targetPickList, targetPickPage, targetPickPageSize]);
 
   const summary = useMemo(() => {
     const fallback =
@@ -709,247 +580,6 @@ export default function Agents() {
     };
   }, [inventory, agentDetail?.name]);
 
-	  const requestAgentApproval = async () => {
-	    if (!actionId) {
-	      setActionStatus("Select an action.");
-	      return;
-	    }
-	    const target = targetMode === "multi" ? targetAgentIds : (targetValue || "").trim();
-	    if (targetMode !== "fleet" && ((Array.isArray(target) && target.length === 0) || (!Array.isArray(target) && !target))) {
-	      setActionStatus(
-	        targetMode === "group"
-	          ? "Select a group target."
-	          : targetMode === "multi"
-	            ? "Select one or more agents."
-            : "Select an agent target."
-      );
-      return;
-    }
-	    try {
-	      await requestApproval({
-	        ...(targetMode === "group"
-	          ? { group: target }
-	          : targetMode === "fleet"
-	            ? { agent_id: "all" }
-	            : targetMode === "multi"
-	              ? { agent_ids: target }
-	              : { agent_id: target }),
-	        ...(((targetMode === "fleet" || targetMode === "group") && excludeAgents.trim())
-	          ? {
-	              exclude_agent_ids: excludeAgents
-	                .split(",")
-	                .map((id) => id.trim())
-	                .filter(Boolean),
-	            }
-	          : {}),
-	        action_id: actionId,
-	        args: compactArgs(actionInputs),
-	        justification: justification || undefined
-	      });
-      setActionStatus(
-        targetMode === "fleet"
-          ? "Approval request submitted for fleet:all."
-          : targetMode === "multi"
-            ? `Approval request submitted for ${target.length} agent(s).`
-          : `Approval request submitted for ${targetMode}:${target}.`
-      );
-    } catch (err) {
-      setActionStatus(err.response?.data?.detail || err.message);
-    }
-  };
-
-	  const runAgentAction = async () => {
-	    if (!actionId) {
-	      setActionStatus("Select an action.");
-	      return;
-	    }
-	    const target = targetMode === "multi" ? targetAgentIds : (targetValue || "").trim();
-	    if (targetMode !== "fleet" && ((Array.isArray(target) && target.length === 0) || (!Array.isArray(target) && !target))) {
-	      setActionStatus(
-	        targetMode === "group"
-	          ? "Select a group target."
-	          : targetMode === "multi"
-	            ? "Select one or more agents."
-            : "Select an agent target."
-      );
-      return;
-    }
-    
-    // Check if action is already running
-    if (isActionRunning) {
-      setActionStatus("Action is already running. Please wait for completion.");
-      return;
-    }
-    
-    // Validate action prerequisites
-    try {
-      const validationPayload = {
-        action_id: actionId,
-        ...(targetMode === "group"
-          ? { group: target }
-          : targetMode === "fleet"
-            ? { agent_id: "all" }
-            : targetMode === "multi"
-              ? { agent_ids: target }
-            : { agent_id: target }),
-        args: compactArgs(actionInputs)
-      };
-      
-      const validationResponse = await validateAction(validationPayload);
-      setActionValidation(validationResponse.data);
-      
-      if (!validationResponse.data.is_valid) {
-        setActionStatus(`Validation failed: ${validationResponse.data.errors.join(", ")}`);
-        return;
-      }
-    } catch (validationErr) {
-      setActionStatus(`Validation error: ${validationErr.response?.data?.detail || validationErr.message}`);
-      return;
-    }
-    
-    setIsActionRunning(true);
-    setActionStatus("Action execution in progress...");
-    
-	    try {
-	      const res = await runAction({
-	        ...(targetMode === "group"
-	          ? { group: target }
-	          : targetMode === "fleet"
-	            ? { agent_id: "all" }
-	            : targetMode === "multi"
-	              ? { agent_ids: target }
-	            : { agent_id: target }),
-	        action_id: actionId,
-	        ...(((targetMode === "fleet" || targetMode === "group") && excludeAgents.trim())
-	          ? {
-	              exclude_agent_ids: excludeAgents
-	                .split(",")
-	                .map((id) => id.trim())
-	                .filter(Boolean),
-	            }
-	          : {}),
-	        args: compactArgs(actionInputs),
-	        justification: justification || undefined
-	      });
-	      const executionId = res?.data?.execution_id;
-      const executionStatus = String(res?.data?.status || "").toUpperCase();
-	      if (executionId) {
-	        setActiveExecutionId(executionId);
-	      }
-	      setActionStatus(
-	        executionStatus === "QUEUED"
-	          ? executionId
-	            ? `Action queued for ${targetMode === "multi" ? `${target.length} agent(s)` : `${targetMode}:${target}`} (run #${executionId}).`
-	            : "Action queued."
-	          : executionId
-	            ? targetMode === "multi"
-	              ? `Action execution completed for ${target.length} agent(s) (run #${executionId}).`
-	              : `Action execution completed for ${targetMode}:${target} (run #${executionId}).`
-	            : targetMode === "multi"
-	              ? `Action execution completed for ${target.length} agent(s).`
-	              : `Action execution completed for ${targetMode}:${target}.`
-	      );
-    } catch (err) {
-      setActionStatus(err.response?.data?.detail || err.message);
-    } finally {
-      setIsActionRunning(false);
-      // Start cooldown timer
-      setCooldownTimer(5);
-      const timer = setInterval(() => {
-        setCooldownTimer(prev => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    }
-  };
-
-  const validateConnector = async () => {
-    try {
-      const target = targetMode === "multi" ? targetAgentIds : (targetValue || "").trim();
-      if ((Array.isArray(target) && target.length === 0) || (!Array.isArray(target) && !target && targetMode !== "fleet")) {
-        setActionStatus(
-          targetMode === "group"
-            ? "Select a group target."
-            : targetMode === "multi"
-              ? "Select one or more agents."
-              : "Select an agent target."
-        );
-        return;
-      }
-      const payload =
-        targetMode === "group"
-          ? { group: target, action_id: "endpoint-healthcheck" }
-          : targetMode === "fleet"
-            ? { agent_id: "all", action_id: "endpoint-healthcheck" }
-            : targetMode === "multi"
-              ? { agent_ids: target, action_id: "endpoint-healthcheck" }
-              : { agent_id: target, action_id: "endpoint-healthcheck" };
-
-      const res = await testActionCapability(payload);
-      const mode = res?.data?.execution_mode || res?.data?.preferred_channel || "endpoint";
-      const total = res?.data?.execution_result?.total || (Array.isArray(target) ? target.length : 1);
-      setActionStatus(`Connector test passed in ${mode} mode for ${total || 1} target(s).`);
-    } catch (err) {
-      setActionStatus(err.response?.data?.detail || err.message);
-    }
-  };
-
-  const testActionWorkflow = async () => {
-    if (!actionId) {
-      setActionStatus("Select an action.");
-      return;
-    }
-    const target = targetMode === "multi" ? targetAgentIds : (targetValue || "").trim();
-    if ((Array.isArray(target) && target.length === 0) || (!Array.isArray(target) && !target && targetMode !== "fleet")) {
-      setActionStatus(
-        targetMode === "group"
-          ? "Select a group target."
-          : targetMode === "multi"
-            ? "Select one or more agents."
-            : "Select an agent target."
-      );
-      return;
-    }
-    
-    setActionStatus("Testing action workflow...");
-    
-    try {
-      const payload = {
-        action_id: actionId,
-        ...(targetMode === "group"
-          ? { group: target }
-          : targetMode === "fleet"
-            ? { agent_id: "all" }
-            : targetMode === "multi"
-              ? { agent_ids: target }
-            : { agent_id: target }),
-        args: compactArgs(actionInputs)
-      };
-      
-      const res = await testActionCapability(payload);
-      const data = res?.data || {};
-      
-      if (data.execution_status === "success") {
-        setActionStatus(
-          `Test completed successfully. Channel: ${data.execution_channel}, Mode: ${data.execution_mode}`
-        );
-      } else if (data.execution_status === "failed") {
-        setActionStatus(`Test failed: ${data.execution_error || "Unknown error"}`);
-      } else {
-        setActionStatus(
-          `Test validation ${data.validation_passed ? "passed" : "failed"}. ` +
-          `Channel: ${data.preferred_channel}, Timeout: ${data.timeout_seconds}s`
-        );
-      }
-    } catch (err) {
-      setActionStatus(`Test error: ${err.response?.data?.detail || err.message}`);
-    }
-  };
-
   const vulnSummary = useMemo(() => {
     const buckets = { critical: 0, high: 0, medium: 0, low: 0 };
     const pkgCounts = {};
@@ -989,27 +619,38 @@ export default function Agents() {
 
   const eventChart = useMemo(() => {
     if (!Array.isArray(eventSeries) || eventSeries.length === 0) {
-      return { points: "", max: 0, last: 0 };
+      return { points: "", areaPoints: "", gridLines: [], max: 0, last: 0, latestX: 0, latestY: 0 };
     }
 
     const width = 560;
-    const height = 140;
+    const chartTop = 14;
+    const chartHeight = 136;
+    const plotBottom = chartTop + chartHeight;
     const values = eventSeries.map((row) => toNumber(row?.count, 0));
     const max = Math.max(...values, 1);
     const step = values.length > 1 ? width / (values.length - 1) : width;
 
     const points = values
       .map((count, idx) => {
-        const x = idx * step;
-        const y = height - (count / max) * height;
+        const x = Math.round(idx * step);
+        const y = Math.round(plotBottom - (count / max) * chartHeight);
         return `${x},${y}`;
       })
       .join(" ");
+    const last = values[values.length - 1] || 0;
+    const latestX = Math.round((values.length - 1) * step);
+    const latestY = Math.round(plotBottom - (last / max) * chartHeight);
+    const areaPoints = `${points} ${width},${plotBottom} 0,${plotBottom}`;
+    const gridLines = [0, 0.25, 0.5, 0.75, 1].map((ratio) => Math.round(chartTop + chartHeight * ratio));
 
     return {
       points,
+      areaPoints,
+      gridLines,
       max,
-      last: values[values.length - 1] || 0,
+      last,
+      latestX,
+      latestY,
     };
   }, [eventSeries]);
 
@@ -1173,47 +814,10 @@ export default function Agents() {
     return filteredScaChecks.slice(start, start + Math.max(1, scaChecksPageSize));
   }, [filteredScaChecks, scaChecksPage, scaChecksPageSize]);
 
-  const recommendations = useMemo(() => {
-    const names = new Set((actions || []).map((a) => a.id));
-    const recs = [];
-    const osValue = String(summary.os || "").toLowerCase();
-
-    const addRec = (action, title, reason) => {
-      if (!names.has(action)) return;
-      if (recs.some((r) => r.action === action)) return;
-      recs.push({ action, title, reason });
-    };
-
-    if (vulnSummary.buckets.critical > 0 || vulnSummary.buckets.high > 50) {
-      if (osValue.includes("windows")) {
-        addRec("patch-windows", "Prioritize endpoint patching", "Critical/high vulnerabilities detected.");
-      } else {
-        addRec("patch-linux", "Prioritize endpoint patching", "Critical/high vulnerabilities detected.");
-      }
-    }
-    if (mitreTop.some((row) => String(row.tactic).toLowerCase().includes("defense evasion"))) {
-      addRec("collect-forensics", "Collect forensic triage", "Defense Evasion activity is elevated.");
-      addRec("malware-scan", "Run malware scan", "Likely stealth activity pattern in MITRE data.");
-    }
-    if (fimEvents.length >= 20) {
-      addRec("malware-scan", "Investigate mass FIM changes", "High volume of recent file/registry changes.");
-    }
-    if (agentAlerts.some((alert) => Number(alert.level) >= 10)) {
-      addRec("firewall-drop", "Contain high-severity source", "High-severity alerts detected for this endpoint.");
-    }
-
-    return recs.slice(0, 4);
-  }, [actions, agentAlerts, fimEvents.length, mitreTop, summary.os, vulnSummary]);
-
   const pagedScaRecommendations = useMemo(() => {
     const start = (Math.max(1, scaRecommendationsPage) - 1) * Math.max(1, scaRecommendationsPageSize);
     return scaRecommendations.slice(start, start + Math.max(1, scaRecommendationsPageSize));
   }, [scaRecommendations, scaRecommendationsPage, scaRecommendationsPageSize]);
-
-  const pagedRecommendations = useMemo(() => {
-    const start = (Math.max(1, recommendationsPage) - 1) * Math.max(1, recommendationsPageSize);
-    return recommendations.slice(start, start + Math.max(1, recommendationsPageSize));
-  }, [recommendations, recommendationsPage, recommendationsPageSize]);
 
   const pagedVulnerabilities = useMemo(() => {
     const start = (Math.max(1, vulnerabilitiesPage) - 1) * Math.max(1, vulnerabilitiesPageSize);
@@ -1238,13 +842,6 @@ export default function Agents() {
   }, [filteredAgents.length, agentPage, agentPageSize]);
 
   useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(targetPickList.length / Math.max(1, targetPickPageSize)));
-    if (targetPickPage > totalPages) {
-      setTargetPickPage(totalPages);
-    }
-  }, [targetPickList.length, targetPickPage, targetPickPageSize]);
-
-  useEffect(() => {
     const totalPages = Math.max(1, Math.ceil(complianceRows.length / Math.max(1, compliancePageSize)));
     if (compliancePage > totalPages) {
       setCompliancePage(totalPages);
@@ -1264,13 +861,6 @@ export default function Agents() {
       setScaChecksPage(totalPages);
     }
   }, [filteredScaChecks.length, scaChecksPage, scaChecksPageSize]);
-
-  useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(recommendations.length / Math.max(1, recommendationsPageSize)));
-    if (recommendationsPage > totalPages) {
-      setRecommendationsPage(totalPages);
-    }
-  }, [recommendations.length, recommendationsPage, recommendationsPageSize]);
 
   useEffect(() => {
     const totalPages = Math.max(1, Math.ceil(vulnerabilities.length / Math.max(1, vulnerabilitiesPageSize)));
@@ -1298,14 +888,9 @@ export default function Agents() {
   }, [agentSearch, selectedGroup]);
 
   useEffect(() => {
-    setTargetPickPage(1);
-  }, [targetMode, targetSearch, selectedAgentId]);
-
-  useEffect(() => {
     setCompliancePage(1);
     setScaRecommendationsPage(1);
     setScaChecksPage(1);
-    setRecommendationsPage(1);
     setVulnerabilitiesPage(1);
     setAlertsPage(1);
     setFimPage(1);
@@ -1320,14 +905,13 @@ export default function Agents() {
       <div className="page-header">
         <div>
           <h2>Agents</h2>
-          <p className="muted">Fleet status, vulnerabilities, and automated response.</p>
+          <p className="muted">Fleet status, vulnerabilities, and telemetry.</p>
         </div>
         <div className="page-actions">
           <button
             className="btn secondary"
             onClick={() => {
               loadAgentList(true);
-              loadConnectorStatus();
               if (selectedAgentId) {
                 loadAgentModules(selectedAgentId, true);
               }
@@ -1360,10 +944,10 @@ export default function Agents() {
         <div className="card-header">
           <div>
             <h3>Agent Inventory</h3>
-            <p className="muted">Click an agent to view details and run actions.</p>
+            <p className="muted">Click an agent to view details.</p>
           </div>
         </div>
-        <div className="table-scroll">
+        <div className="table-scroll agents-inventory-scroll">
           <table className="table">
             <thead>
               <tr>
@@ -1513,275 +1097,6 @@ export default function Agents() {
                 <div className="meta-line">Serial</div>
                 <div>{hardware.serial}</div>
               </div>
-              <div className="list-item">
-                <div className="muted">Action</div>
-                <div className="page-actions mt-8">
-                  <select
-                    className="input"
-                    value={targetMode}
-                    onChange={(e) => setTargetMode(e.target.value)}
-                  >
-                    <option value="agent">Selected Agent</option>
-                    <option value="multi">Multiple Agents</option>
-                    <option value="group">Agent Group</option>
-                    <option value="fleet">All Agents (Fleet)</option>
-                  </select>
-                </div>
-	                {targetMode === "multi" ? (
-	                  <div className="mt-8">
-	                    <div className="page-actions">
-	                      <input
-	                        className="input"
-	                        value={targetSearch}
-	                        onChange={(e) => setTargetSearch(e.target.value)}
-	                        placeholder="Search agents to select..."
-	                      />
-	                      <button
-	                        className="btn secondary"
-	                        type="button"
-	                        onClick={() => setTargetAgentIds(targetPickList.map((a) => a.id))}
-	                      >
-	                        Select All
-	                      </button>
-	                      <button
-	                        className="btn secondary"
-	                        type="button"
-	                        onClick={() => setTargetAgentIds([])}
-	                      >
-	                        Clear
-	                      </button>
-	                    </div>
-		                    <div className="meta-line mt-6">
-		                      Selected: {targetAgentIds.length}
-		                    </div>
-			                    <div className="list-scroll mt-10 h-220">
-		                      <div className="list">
-		                        {targetPickList.length === 0 ? (
-		                          <div className="empty-state">No agents match your search.</div>
-		                        ) : (
-	                          pagedTargetPickList.map((agent) => {
-	                            const checked = targetAgentIds.includes(agent.id);
-	                            return (
-	                              <label key={`target-${agent.id}`} className="list-item clickable readable">
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={(e) => {
-                                    const next = e.target.checked;
-                                    setTargetAgentIds((prev) => {
-                                      if (next) {
-                                        return prev.includes(agent.id) ? prev : [...prev, agent.id];
-                                      }
-                                      return prev.filter((id) => id !== agent.id);
-                                    });
-                                  }}
-	                                  className="mr-10"
-	                                />
-                                {agent.name} ({agent.id}) - {agent.group}
-                              </label>
-	                            );
-	                          })
-	                        )}
-	                      </div>
-	                    </div>
-                      <Pager
-                        total={targetPickList.length}
-                        page={targetPickPage}
-                        pageSize={targetPickPageSize}
-                        onPageChange={setTargetPickPage}
-                        onPageSizeChange={(size) => {
-                          setTargetPickPageSize(size);
-                          setTargetPickPage(1);
-                        }}
-                        pageSizeOptions={[10, 25, 50, 100]}
-                        label="agents"
-                      />
-	                  </div>
-	                ) : (
-                  <div className="page-actions mt-8">
-                    {targetMode === "group" ? (
-                      <select
-                        className="input"
-                        value={targetValue}
-                        onChange={(e) => setTargetValue(e.target.value)}
-                      >
-                        <option value="">Select group</option>
-                        {groups.map((g) => (
-                          <option key={`group-${g}`} value={g}>{g}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        className="input"
-                        value={targetValue}
-                        onChange={(e) => setTargetValue(e.target.value)}
-                        placeholder={targetMode === "fleet" ? "all" : "Agent ID (example: 001)"}
-                        disabled={targetMode === "fleet"}
-                      />
-                    )}
-
-                    {targetMode === "fleet" || targetMode === "group" ? (
-                      <input
-                        className="input"
-                        value={excludeAgents}
-                        onChange={(e) => setExcludeAgents(e.target.value)}
-                        placeholder="Exclude agent IDs (comma separated)"
-                      />
-                    ) : null}
-                  </div>
-                )}
-	                <select
-	                  className="input mt-8"
-	                  value={actionId}
-	                  onChange={(e) => setActionId(e.target.value)}
-	                >
-                  <option value="">Select action</option>
-                  {actions.map((action) => (
-                    <option key={action.id} value={action.id}>
-                      {toDisplay(action.label || action.id)} ({toDisplay(action.category || "response")})
-                    </option>
-                  ))}
-                </select>
-	                {selectedAction?.description && (
-	                  <div className="muted mt-8">
-	                    {toDisplay(selectedAction.description)}
-	                  </div>
-	                )}
-	                {String(selectedAction?.id || "").trim().toLowerCase() === "custom-os-command" ? (
-	                  <div className="empty-state mt-8">
-	                    Emergency fallback. This runs exactly what you type on endpoints.
-	                  </div>
-	                ) : null}
-	                {selectedAction?.docs && typeof selectedAction.docs === "object" && Object.keys(selectedAction.docs).length > 0 ? (
-	                  <div className="list-item readable mt-10">
-	                    <div className="muted">Action Guide</div>
-                    {selectedAction.docs.what_it_does ? (
-                      <div><strong>What it does:</strong> {String(selectedAction.docs.what_it_does)}</div>
-                    ) : null}
-	                    {selectedAction.docs.when_to_use ? (
-	                      <div className="mt-6"><strong>When to use:</strong> {String(selectedAction.docs.when_to_use)}</div>
-	                    ) : null}
-	                    {selectedAction.docs.impact ? (
-	                      <div className="mt-6"><strong>Impact:</strong> {String(selectedAction.docs.impact)}</div>
-	                    ) : null}
-	                    {selectedAction.docs.rollback ? (
-	                      <div className="mt-6"><strong>Rollback:</strong> {String(selectedAction.docs.rollback)}</div>
-	                    ) : null}
-	                    {selectedAction.docs.evidence ? (
-	                      <div className="mt-6"><strong>Evidence:</strong> {String(selectedAction.docs.evidence)}</div>
-	                    ) : null}
-	                  </div>
-	                ) : null}
-	                {selectedAction && (
-	                  <div className="page-actions mt-8">
-	                    <span className="chip">{toDisplay(selectedAction.category || "response")}</span>
-                    <span className={`status-pill ${riskClass(selectedAction.risk)}`}>
-                      {toDisplay(selectedAction.risk || "n/a")}
-                    </span>
-                    <span className="chip">{selectedAction.custom ? "custom command" : "built-in command"}</span>
-                  </div>
-                )}
-	                {actionValidation && (
-	                  <div className="list-item inset-panel mt-8">
-	                    <div className="muted">Validation Results</div>
-	                    <div className="grid-2 mt-4">
-                      <div>
-                        <span className={`status-pill ${actionValidation.is_valid ? "success" : "failed"}`}>
-                          {actionValidation.is_valid ? "Valid" : "Invalid"}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="chip">OS: {actionValidation.agent_os}</span>
-                        <span className="chip">Channel: {actionValidation.preferred_channel}</span>
-                        <span className="chip">Timeout: {actionValidation.timeout_seconds}s</span>
-                      </div>
-                    </div>
-	                    {!actionValidation.is_valid && (
-	                      <div className="muted mt-4">
-	                        Errors: {actionValidation.errors.join(", ")}
-	                      </div>
-	                    )}
-	                  </div>
-	                )}
-	                <div className="page-actions mt-8">
-                  <span className="chip">
-                    Mode: {toDisplay(connectorStatus?.orchestration_mode || "n/a")}
-                  </span>
-                  <span className="chip">
-                    WinRM creds: {connectorStatus?.connectors?.windows?.credentials_configured ? "configured" : "missing"}
-                  </span>
-                  <span className="chip">
-                    Linux creds: {connectorStatus?.connectors?.linux?.credentials_configured ? "configured" : "missing"}
-                  </span>
-                </div>
-	                {connectorError && (
-	                  <div className="meta-line mt-8">
-	                    Connector status error: {connectorError}
-	                  </div>
-	                )}
-	                {(selectedAction?.inputs || []).map(field => (
-	                  <div key={field.name} className="mt-10">
-	                    <div className="muted">{toDisplay(field.label || field.name)}</div>
-                    {MULTILINE_INPUT_FIELDS.has(String(field.name || "").trim().toLowerCase()) ? (
-	                      <textarea
-	                        className="input mono"
-	                        value={actionInputs[field.name] || ""}
-                        onChange={(e) =>
-                          setActionInputs(prev => ({
-                            ...prev,
-                            [field.name]: e.target.value
-                          }))
-                        }
-                        placeholder={field.placeholder || ""}
-	                        rows={4}
-	                      />
-                    ) : (
-                      <input
-                        className="input"
-                        value={actionInputs[field.name] || ""}
-                        onChange={(e) =>
-                          setActionInputs(prev => ({
-                            ...prev,
-                            [field.name]: e.target.value
-                          }))
-                        }
-                        placeholder={field.placeholder || ""}
-                      />
-                    )}
-                  </div>
-                ))}
-	                <div className="mt-10">
-	                  <div className="muted">Justification (if required)</div>
-	                  <input
-	                    className="input"
-                    value={justification}
-                    onChange={(e) => setJustification(e.target.value)}
-                    placeholder="Why is this response needed?"
-                  />
-                </div>
-	                <div className="page-actions mt-12">
-                  <button className="btn secondary" onClick={validateConnector}>
-                    Validate Connector
-                  </button>
-                  <button className="btn secondary" onClick={testActionWorkflow}>
-                    Test Action
-                  </button>
-                  <button className="btn secondary" onClick={requestAgentApproval}>
-                    Request Approval
-                  </button>
-                  <button className="btn" onClick={runAgentAction}>
-                    Run Action
-                  </button>
-                </div>
-	                {actionStatus && (
-	                  <div className="empty-state mt-12">{toDisplay(actionStatus)}</div>
-	                )}
-	                {activeExecutionId && (
-	                  <div className="mt-12">
-	                    <ExecutionStream executionId={activeExecutionId} />
-	                  </div>
-	                )}
-              </div>
             </div>
           ) : (
             <div className="empty-state">Select an agent to view details.</div>
@@ -1813,19 +1128,66 @@ export default function Agents() {
 	                <span>{eventChart.last} last bucket</span>
 	                <span className="chip">Max bucket: {eventChart.max}</span>
 	              </div>
-	              <svg viewBox="0 0 560 170" width="100%" height="180" role="img" aria-label="Events count evolution">
-	                <rect x="0" y="0" width="560" height="170" fill="var(--panel-soft)" stroke="var(--border)" rx="10" />
-	                <polyline
-	                  fill="none"
-	                  stroke="var(--accent)"
-	                  strokeWidth="3"
-	                  points={eventChart.points}
-	                  transform="translate(0,15)"
-                />
-              </svg>
-            </>
-          )}
-        </div>
+	              <div className="trend-wrap">
+	                <svg className="trend-chart-svg" viewBox="0 0 560 170" width="100%" height="180" role="img" aria-label="Events count evolution">
+	                  <defs>
+	                    <linearGradient id="agentEventsSurface" x1="0%" y1="0%" x2="0%" y2="100%">
+	                      <stop offset="0%" stopColor="rgba(31, 52, 74, 0.84)" />
+	                      <stop offset="100%" stopColor="rgba(8, 14, 26, 0.96)" />
+	                    </linearGradient>
+	                    <linearGradient id="agentEventsArea" x1="0%" y1="0%" x2="0%" y2="100%">
+	                      <stop offset="0%" stopColor="rgba(122, 221, 255, 0.52)" />
+	                      <stop offset="100%" stopColor="rgba(122, 221, 255, 0.04)" />
+	                    </linearGradient>
+	                    <linearGradient id="agentEventsLine" x1="0%" y1="0%" x2="100%" y2="0%">
+	                      <stop offset="0%" stopColor="#7addff" />
+	                      <stop offset="48%" stopColor="#49beff" />
+	                      <stop offset="100%" stopColor="#72f2cf" />
+	                    </linearGradient>
+	                    <linearGradient id="agentEventsLineGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+	                      <stop offset="0%" stopColor="rgba(122, 221, 255, 0.12)" />
+	                      <stop offset="55%" stopColor="rgba(73, 190, 255, 0.76)" />
+	                      <stop offset="100%" stopColor="rgba(114, 242, 207, 0.2)" />
+	                    </linearGradient>
+	                    <filter id="agentEventsGlow" x="-30%" y="-30%" width="160%" height="160%">
+	                      <feGaussianBlur stdDeviation="3" result="blurred" />
+	                      <feMerge>
+	                        <feMergeNode in="blurred" />
+	                        <feMergeNode in="SourceGraphic" />
+	                      </feMerge>
+	                    </filter>
+	                    <filter id="agentEventsShadow" x="-20%" y="-20%" width="140%" height="140%">
+	                      <feDropShadow dx="0" dy="2.6" stdDeviation="2.2" floodColor="rgba(3, 9, 18, 0.86)" />
+	                    </filter>
+	                  </defs>
+	                  <rect x="0" y="0" width="560" height="170" rx="10" fill="url(#agentEventsSurface)" stroke="rgba(118, 148, 176, 0.36)" />
+	                  {eventChart.gridLines.map((y, idx) => (
+	                    <line key={`agent-events-grid-${idx}`} x1="0" y1={y} x2="560" y2={y} className="trend-grid-line" />
+	                  ))}
+	                  <polygon points={eventChart.areaPoints} className="trend-area" fill="url(#agentEventsArea)" />
+	                  <polyline
+	                    className="trend-line-shadow"
+	                    fill="none"
+	                    stroke="url(#agentEventsLineGlow)"
+	                    strokeWidth="6"
+	                    points={eventChart.points}
+	                    filter="url(#agentEventsShadow)"
+	                  />
+	                  <polyline
+	                    className="trend-line-main trend-line-animated"
+	                    fill="none"
+	                    stroke="url(#agentEventsLine)"
+	                    strokeWidth="3.2"
+	                    points={eventChart.points}
+	                    filter="url(#agentEventsGlow)"
+	                  />
+	                  <circle className="trend-point-pulse" cx={eventChart.latestX} cy={eventChart.latestY} r="6.6" />
+	                  <circle className="trend-point-core" cx={eventChart.latestX} cy={eventChart.latestY} r="4" />
+	                </svg>
+	              </div>
+	            </>
+	          )}
+	        </div>
 
         <div className="card">
           <div className="card-header">
@@ -2112,49 +1474,6 @@ export default function Agents() {
               label="checks"
             />
 	        </div>
-	      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <h3>Response Recommendations</h3>
-            <p className="muted">Suggested actions from current threat and compliance context.</p>
-          </div>
-        </div>
-	        {recommendations.length === 0 ? (
-	          <div className="empty-state">No immediate recommendation from current telemetry.</div>
-	        ) : (
-	          <div className="list">
-	            {pagedRecommendations.map((rec) => (
-	              <button
-	                key={rec.action}
-	                className="list-item split clickable"
-                onClick={() => {
-                  setActionId(rec.action);
-                  setActionStatus(`Prepared action: ${rec.action}`);
-                }}
-              >
-                <div>
-                  <div>{rec.title}</div>
-                  <div className="meta-line">{rec.reason}</div>
-                </div>
-	                <span className="chip">{rec.action}</span>
-	              </button>
-	            ))}
-            <Pager
-              total={recommendations.length}
-              page={recommendationsPage}
-              pageSize={recommendationsPageSize}
-              onPageChange={setRecommendationsPage}
-              onPageSizeChange={(size) => {
-                setRecommendationsPageSize(size);
-                setRecommendationsPage(1);
-              }}
-              pageSizeOptions={[5, 10, 25]}
-              label="response recommendations"
-            />
-	          </div>
-	        )}
 	      </div>
 
       <div className="grid-2">

@@ -48,6 +48,31 @@ const toDisplay = (value, fallback = "-") => {
   return String(value);
 };
 
+const PLAYBOOK_GLOBAL_SHELL_ACTION = {
+  id: "global-shell",
+  label: "Global Shell",
+  description: "Execute a reviewed shell command on selected endpoints.",
+  category: "response",
+  risk: "critical",
+  inputs: [
+    { name: "command", label: "Command", required: true, placeholder: "Get-Service WazuhSvc" },
+    { name: "verify_kb", label: "Verify KB", placeholder: "KB5075912" },
+    { name: "verify_min_build", label: "Verify Min Build", placeholder: "19045.6937" },
+    { name: "verify_stdout_contains", label: "Verify stdout contains", placeholder: "Running" },
+    { name: "run_as_system", label: "Run as SYSTEM", placeholder: "false" },
+  ],
+  capabilities: {
+    validation: [{ field: "run_as_system", default: "false" }],
+  },
+};
+
+const normalizeStepActionId = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (raw.toLowerCase() === "custom-os-command") return "global-shell";
+  return raw;
+};
+
 function normalizeLegacyTask(task = {}, index = 0) {
   const type = task.type || "";
   if (type === "process_kill") {
@@ -95,7 +120,7 @@ function normalizePlaybook(payload) {
     description: payload.description || "Custom response workflow",
     steps: steps.map((step, idx) => ({
       id: step.id || `step_${idx + 1}`,
-      action: step.action || step.command || "endpoint-healthcheck",
+      action: normalizeStepActionId(step.action || step.command) || "endpoint-healthcheck",
       args: step.args && typeof step.args === "object" && !Array.isArray(step.args) ? step.args : {},
       reason: step.reason || "Playbook step",
     })),
@@ -119,7 +144,7 @@ const blankPlaybook = () =>
 
 const mergePlaybookActions = (items = []) => {
   const merged = new Map();
-  items.forEach((item) => {
+  [...items, PLAYBOOK_GLOBAL_SHELL_ACTION].forEach((item) => {
     const id = String(item?.id || "").trim();
     if (!id) return;
     merged.set(id, item);
@@ -289,6 +314,33 @@ export default function Playbooks() {
     return normalizedTargetValue ? { agent_id: normalizedTargetValue } : {};
   }, [normalizedGroupValue, normalizedTargetValue, selectedAgentSet, targetType]);
 
+  const executableActionIds = useMemo(
+    () => new Set(actions.map((item) => String(item?.id || "").trim().toLowerCase()).filter(Boolean)),
+    [actions]
+  );
+  const approvalActionIds = useMemo(() => {
+    const ids = new Set(executableActionIds);
+    ids.delete("global-shell");
+    return ids;
+  }, [executableActionIds]);
+
+  const findUnsupportedStepActions = useCallback(
+    (steps = [], supportedActionIds = executableActionIds) => {
+      const unsupported = [];
+      const seen = new Set();
+      (Array.isArray(steps) ? steps : []).forEach((step) => {
+        if (!step || typeof step !== "object") return;
+        const actionId = String(step.action || "").trim();
+        const key = actionId.toLowerCase();
+        if (!actionId || supportedActionIds.has(key) || seen.has(key)) return;
+        seen.add(key);
+        unsupported.push(actionId);
+      });
+      return unsupported;
+    },
+    [executableActionIds]
+  );
+
   const loadPlaybook = async (name) => {
     setStatus("");
     try {
@@ -446,6 +498,13 @@ export default function Playbooks() {
       setStatus("Build or load a playbook before requesting approvals.");
       return;
     }
+    const unsupported = findUnsupportedStepActions(draft.steps, approvalActionIds);
+    if (unsupported.length) {
+      setStatus(
+        `Cannot request approvals for unsupported actions (${unsupported.join(", ")}). Replace these steps or execute the playbook directly.`
+      );
+      return;
+    }
     const target = ensureRunnableTarget();
     if (!target) return;
 
@@ -477,6 +536,13 @@ export default function Playbooks() {
   const handleExecutePlaybook = async () => {
     if (!draft?.steps?.length) {
       setStatus("Build or load a playbook before execution.");
+      return;
+    }
+    const unsupported = findUnsupportedStepActions(draft.steps);
+    if (unsupported.length) {
+      setStatus(
+        `Cannot execute with non-executable actions (${unsupported.join(", ")}). Map these steps to catalog actions or global-shell.`
+      );
       return;
     }
     const target = ensureRunnableTarget();
@@ -525,7 +591,7 @@ export default function Playbooks() {
         <div>
           <h2>Playbooks</h2>
           <p className="muted">Generate or manually build playbooks, then run them across single agents, groups, or the fleet.</p>
-          <p className="muted">Custom shell-style steps are blocked. Playbooks can use approved catalog actions only.</p>
+          <p className="muted">Custom JSON steps are allowed for drafting. Execution requires catalog actions or global-shell steps.</p>
         </div>
         <div className="page-actions">
           <button className="btn secondary" onClick={refresh} disabled={loading}>
@@ -667,7 +733,7 @@ export default function Playbooks() {
               : (aiDisabledReason || "AI is disabled. Enable it in Org Admin / Platform AI Configuration.")}
           </div>
           <div className="meta-line mt-8">
-            Prompt mode can include non-catalog action IDs in JSON when needed. Map or edit those steps before execution.
+            Prompt mode can include non-catalog action IDs and global-shell steps when needed. Review and map steps before execution.
           </div>
         </div>
       </div>

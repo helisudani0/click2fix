@@ -628,7 +628,11 @@ def _normalize_steps(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     return []
 
 
-def _validated_playbook_steps(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _validated_playbook_steps(
+    payload: Dict[str, Any],
+    *,
+    require_known_actions: bool = True,
+) -> List[Dict[str, Any]]:
     steps = _normalize_steps(payload)
     if not steps:
         return []
@@ -648,7 +652,19 @@ def _validated_playbook_steps(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
             if step_action.strip().lower() == "global-shell"
             else step_action
         )
-        get_action(resolved_action)
+        if require_known_actions:
+            try:
+                get_action(resolved_action)
+            except HTTPException as exc:
+                if int(getattr(exc, "status_code", 0) or 0) == 404:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Playbook step '{step_id}' uses unsupported action '{step_action}'. "
+                            "Map it to a catalog action or use 'global-shell'."
+                        ),
+                    ) from exc
+                raise
         raw_args = step.get("args")
         if raw_args is None:
             raw_args = {}
@@ -776,7 +792,7 @@ async def create_playbook(request: Request, user=Depends(require_role("admin")))
 
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Invalid playbook payload")
-    steps = _validated_playbook_steps(payload)
+    steps = _validated_playbook_steps(payload, require_known_actions=False)
     if not steps:
         raise HTTPException(status_code=400, detail="Playbook has no valid steps")
     payload = {
@@ -867,7 +883,7 @@ async def execute_playbook(request: Request, user=Depends(require_role("admin"))
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Invalid playbook payload")
 
-    steps = _validated_playbook_steps(payload)
+    steps = _validated_playbook_steps(payload, require_known_actions=True)
     if not steps:
         raise HTTPException(status_code=400, detail="Playbook has no steps to execute")
 

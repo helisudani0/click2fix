@@ -12,8 +12,31 @@ from core.time_utils import utc_iso_now, utc_now
 from db.database import connect
 
 
+_PLAYBOOK_VIRTUAL_ACTIONS: Dict[str, Dict[str, Any]] = {
+    "global-shell": {
+        "id": "global-shell",
+        "label": "Global Shell",
+        "description": "Execute a reviewed shell command on selected endpoints.",
+        "category": "response",
+        "risk": "critical",
+        "inputs": [
+            {"name": "command", "required": True},
+            {"name": "verify_kb", "required": False},
+            {"name": "verify_min_build", "required": False},
+            {"name": "verify_stdout_contains", "required": False},
+            {"name": "run_as_system", "required": False},
+        ],
+    }
+}
+
+
 def _collect_actions() -> Dict[str, Dict]:
-    return {a["id"]: a for a in list_actions() if a.get("id")}
+    actions = {a["id"]: a for a in list_actions() if a.get("id")}
+    for action_id, action in _PLAYBOOK_VIRTUAL_ACTIONS.items():
+        if action_id in actions:
+            continue
+        actions[action_id] = dict(action)
+    return actions
 
 
 def _text(value: Any) -> str:

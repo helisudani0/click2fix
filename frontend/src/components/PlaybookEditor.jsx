@@ -97,9 +97,16 @@ const buildSampleArgs = (action) => {
   return args;
 };
 
+const normalizeActionId = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (raw.toLowerCase() === "custom-os-command") return "global-shell";
+  return raw;
+};
+
 const normalizeStep = (step = {}, index = 0) => ({
   id: step.id || `step_${index + 1}`,
-  action: step.action || step.command || "endpoint-healthcheck",
+  action: normalizeActionId(step.action || step.command) || "endpoint-healthcheck",
   args: step.args && typeof step.args === "object" && !Array.isArray(step.args) ? step.args : {},
   reason: step.reason || "Playbook step",
 });
@@ -114,7 +121,10 @@ function PlaybookStepEditor({
   onRemove,
 }) {
   const selectedAction = useMemo(
-    () => actions.find((item) => item.id === step.action) || null,
+    () =>
+      actions.find(
+        (item) => String(item?.id || "").trim().toLowerCase() === String(step.action || "").trim().toLowerCase()
+      ) || null,
     [actions, step.action]
   );
   const hasCustomAction = Boolean(step.action) && !selectedAction;
@@ -224,22 +234,23 @@ function PlaybookStepEditor({
         </div>
       </div>
 
+      <div className="mt-10">
+        <div className="muted">Action ID (editable)</div>
+        <input
+          className="input mt-8 mono"
+          value={step.action}
+          onChange={(event) => onChange(index, { ...step, action: event.target.value })}
+          placeholder="endpoint-healthcheck | global-shell | custom-action-id"
+        />
+      </div>
+
       {selectedAction?.description ? (
         <div className="empty-state mt-10">{String(selectedAction.description)}</div>
       ) : null}
 
       {hasCustomAction ? (
-        <div className="mt-10">
-          <div className="muted">Custom Action ID</div>
-          <input
-            className="input mt-8 mono"
-            value={step.action}
-            onChange={(event) => onChange(index, { ...step, action: event.target.value })}
-            placeholder="custom-action-id"
-          />
-          <div className="meta-line mt-8">
-            This action is not in the current catalog. Keep it as JSON draft or map it to a supported action before execution.
-          </div>
+        <div className="meta-line mt-8">
+          This action is not in the current catalog. Keep it as custom JSON draft or map it to a supported action/global-shell before execution.
         </div>
       ) : null}
 
@@ -358,6 +369,22 @@ export default function PlaybookEditor({ playbook, onChange, actions = [] }) {
     updatePlaybook({ steps: nextSteps });
   };
 
+  const addCustomStep = () => {
+    const nextSteps = [
+      ...steps,
+      normalizeStep(
+        {
+          id: `step_${steps.length + 1}`,
+          action: `custom-step-${steps.length + 1}`,
+          args: {},
+          reason: "Custom JSON playbook step",
+        },
+        steps.length
+      ),
+    ];
+    updatePlaybook({ steps: nextSteps });
+  };
+
   return (
     <div className="list">
       <div className="list-item readable">
@@ -396,6 +423,9 @@ export default function PlaybookEditor({ playbook, onChange, actions = [] }) {
       <div className="page-actions">
         <button type="button" className="btn secondary" onClick={addStep}>
           Add Step
+        </button>
+        <button type="button" className="btn secondary" onClick={addCustomStep}>
+          Add Custom JSON Step
         </button>
         <span className="muted">{steps.length} step(s)</span>
       </div>

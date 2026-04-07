@@ -95,3 +95,17 @@ def test_generate_playbook_prompt_returns_unmapped_actions(monkeypatch):
     assert out["source"]["generation_mode"] == "ai_prompt"
     assert out["source"]["unmapped_actions"] == ["custom-remediate.script"]
     assert out["steps"][0]["action"] == "custom-remediate.script"
+
+
+def test_collect_actions_includes_virtual_global_shell(monkeypatch):
+    monkeypatch.setattr(
+        playbook_gen,
+        "list_actions",
+        lambda: [{"id": "endpoint-healthcheck", "label": "Endpoint Healthcheck"}],
+    )
+
+    actions = playbook_gen._collect_actions()
+
+    assert "endpoint-healthcheck" in actions
+    assert "global-shell" in actions
+    assert actions["global-shell"]["id"] == "global-shell"

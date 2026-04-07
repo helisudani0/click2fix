@@ -11,6 +11,8 @@ import {
 } from "../api/wazuh";
 import { formatWazuhTimestamp, parseWazuhTimestamp } from "../utils/time";
 import { formatApiError } from "../utils/httpErrors";
+import EChartLinePanel from "../components/EChartLinePanel";
+import EChart3DPanel from "../components/EChart3DPanel";
 
 const statusClass = status => {
   if (status === "spike" || status === "drop") return "failed";
@@ -34,6 +36,123 @@ const errorText = (err, fallback) => formatApiError(err, fallback);
 
 const isNotFoundResult = (result) =>
   result?.status === "rejected" && Number(result?.reason?.response?.status || 0) === 404;
+
+const formatTickTime = (raw) => {
+  const parsed = parseWazuhTimestamp(raw);
+  if (!parsed) return String(raw || "-");
+  const day = parsed.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const time = parsed.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+  return `${day} ${time}`;
+};
+
+const buildBar3DOption = ({
+  labels,
+  values,
+  metricLabel,
+  palette = ["#73daff", "#5db9ff", "#64ffd8"],
+}) => {
+  if (!Array.isArray(labels) || !Array.isArray(values) || !labels.length || !values.length) return null;
+  const maxValue = Math.max(...values.map((value) => Number(value || 0)), 1);
+  const labelStep = Math.max(1, Math.ceil(labels.length / 8));
+  return {
+    animationDurationUpdate: 420,
+    animationDuration: 520,
+    tooltip: {
+      formatter: (params) => {
+        const tuple = Array.isArray(params?.value) ? params.value : [];
+        const idx = Number(tuple[0] || 0);
+        const val = Number(tuple[2] || 0);
+        return `${labels[idx] || "bucket"}<br/>${metricLabel}: ${val}`;
+      },
+      backgroundColor: "rgba(6, 12, 21, 0.94)",
+      borderColor: "rgba(122, 166, 201, 0.62)",
+      borderWidth: 1,
+      textStyle: { color: "#d7ebff" },
+    },
+    xAxis3D: {
+      type: "category",
+      data: labels,
+      axisLabel: {
+        color: "#8ea7c2",
+        interval: 0,
+        formatter: (value, idx) => (idx % labelStep === 0 ? value : ""),
+      },
+      axisLine: { lineStyle: { color: "rgba(124, 159, 188, 0.44)" } },
+    },
+    yAxis3D: {
+      type: "category",
+      data: [metricLabel],
+      axisLabel: { show: false },
+      axisLine: { lineStyle: { color: "rgba(124, 159, 188, 0.26)" } },
+    },
+    zAxis3D: {
+      type: "value",
+      min: 0,
+      max: Math.max(4, Math.round(maxValue * 1.15)),
+      axisLabel: { color: "#8ea7c2" },
+      axisLine: { lineStyle: { color: "rgba(124, 159, 188, 0.44)" } },
+      splitLine: { lineStyle: { color: "rgba(120, 159, 188, 0.16)" } },
+    },
+    grid3D: {
+      boxWidth: Math.max(86, Math.min(152, labels.length * 2.1)),
+      boxDepth: 28,
+      boxHeight: 56,
+      viewControl: {
+        projection: "perspective",
+        alpha: 23,
+        beta: 28,
+        panSensitivity: 0.9,
+        rotateSensitivity: 1,
+        zoomSensitivity: 0.65,
+        autoRotate: false,
+      },
+      light: {
+        main: { intensity: 1.05, shadow: false },
+        ambient: { intensity: 0.48 },
+      },
+      axisPointer: {
+        show: true,
+        lineStyle: { color: "rgba(132, 216, 255, 0.66)" },
+      },
+    },
+    series: [
+      {
+        type: "bar3D",
+        shading: "lambert",
+        data: values.map((value, idx) => ({
+          value: [idx, 0, Number(value || 0)],
+          itemStyle: {
+            color: {
+              type: "linear",
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: palette[0] },
+                { offset: 0.5, color: palette[1] },
+                { offset: 1, color: palette[2] },
+              ],
+            },
+            opacity: 0.96,
+          },
+        })),
+        label: { show: false },
+        emphasis: {
+          label: {
+            show: true,
+            distance: 2,
+            formatter: (params) => `${Number(params?.value?.[2] || 0)}`,
+            textStyle: { color: "#d5ebff", fontSize: 11, fontWeight: 700 },
+          },
+          itemStyle: {
+            color: "#a0e6ff",
+          },
+        },
+      },
+    ],
+  };
+};
 
 export default function Analytics() {
   const [overview, setOverview] = useState(null);
@@ -70,6 +189,17 @@ export default function Analytics() {
   const [aiDisabledReason, setAiDisabledReason] = useState(
     "AI is disabled. Enable it in Org Admin / Platform AI Configuration."
   );
+  const [threeDMode, setThreeDMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const saved = window.localStorage.getItem("soar.analytics.3d");
+    if (saved === null) return true;
+    return saved === "1";
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("soar.analytics.3d", threeDMode ? "1" : "0");
+  }, [threeDMode]);
 
   const refreshOverview = () => {
     setLoading(true);
@@ -283,37 +413,15 @@ export default function Analytics() {
   const hourlyChart = useMemo(() => {
     if (!normalizedHourly.length) return null;
     const series = normalizedHourly.slice(-72);
-    const width = 920;
-    const chartTop = 12;
-    const chartHeight = 152;
-    const plotBottom = chartTop + chartHeight;
     const values = series.map((row) => Number(row.count || 0));
     const max = Math.max(...values, 1);
-    const step = series.length > 1 ? width / (series.length - 1) : width;
-    const points = values
-      .map((value, idx) => {
-        const x = Math.round(idx * step);
-        const y = Math.round(plotBottom - (value / max) * chartHeight);
-        return `${x},${y}`;
-      })
-      .join(" ");
     const latest = series[series.length - 1];
-    const latestValue = Number(latest?.count || 0);
-    const latestX = Math.round((series.length - 1) * step);
-    const latestY = Math.round(plotBottom - (latestValue / max) * chartHeight);
-    const areaPoints = `${points} ${width},${plotBottom} 0,${plotBottom}`;
-    const gridLines = [0, 0.25, 0.5, 0.75, 1].map((ratio) => Math.round(chartTop + chartHeight * ratio));
     const average = values.reduce((sum, value) => sum + value, 0) / values.length;
     return {
       series,
       max,
       latest,
-      latestX,
-      latestY,
       average: Math.round(average),
-      points,
-      areaPoints,
-      gridLines,
       from: series[0]?.hour,
       to: latest?.hour,
     };
@@ -339,37 +447,15 @@ export default function Analytics() {
   const dataLayerChart = useMemo(() => {
     if (!normalizedEventSeries.length) return null;
     const series = normalizedEventSeries.slice(-120);
-    const width = 920;
-    const chartTop = 12;
-    const chartHeight = 152;
-    const plotBottom = chartTop + chartHeight;
     const values = series.map((row) => Number(row.count || 0));
     const max = Math.max(...values, 1);
-    const step = series.length > 1 ? width / (series.length - 1) : width;
-    const points = values
-      .map((value, idx) => {
-        const x = Math.round(idx * step);
-        const y = Math.round(plotBottom - (value / max) * chartHeight);
-        return `${x},${y}`;
-      })
-      .join(" ");
     const latest = series[series.length - 1];
-    const latestValue = Number(latest?.count || 0);
-    const latestX = Math.round((series.length - 1) * step);
-    const latestY = Math.round(plotBottom - (latestValue / max) * chartHeight);
-    const areaPoints = `${points} ${width},${plotBottom} 0,${plotBottom}`;
-    const gridLines = [0, 0.25, 0.5, 0.75, 1].map((ratio) => Math.round(chartTop + chartHeight * ratio));
     const average = values.reduce((sum, value) => sum + value, 0) / values.length;
     return {
       series,
       max,
       latest,
-      latestX,
-      latestY,
       average: Math.round(average),
-      points,
-      areaPoints,
-      gridLines,
       from: series[0]?.bucket,
       to: latest?.bucket,
     };
@@ -379,6 +465,299 @@ export default function Analytics() {
     () => (Array.isArray(eventCorrelationGroups) ? eventCorrelationGroups.slice(0, 12) : []),
     [eventCorrelationGroups],
   );
+
+  const dataLayerChartOption = useMemo(() => {
+    if (!dataLayerChart?.series?.length) return null;
+    const labels = dataLayerChart.series.map((row) => formatTickTime(row.bucket));
+    const values = dataLayerChart.series.map((row) => Number(row.count || 0));
+    return {
+      animationDuration: 650,
+      grid: { top: 18, right: 18, bottom: 46, left: 56 },
+      tooltip: {
+        trigger: "axis",
+        backgroundColor: "rgba(6, 12, 21, 0.94)",
+        borderColor: "rgba(122, 166, 201, 0.62)",
+        borderWidth: 1,
+        textStyle: { color: "#d7ebff" },
+        axisPointer: {
+          type: "cross",
+          lineStyle: { color: "rgba(121, 166, 203, 0.62)", width: 1 },
+          crossStyle: { color: "rgba(121, 166, 203, 0.62)" },
+          label: { backgroundColor: "rgba(7, 14, 24, 0.9)" },
+        },
+      },
+      xAxis: {
+        type: "category",
+        boundaryGap: false,
+        data: labels,
+        axisLine: { lineStyle: { color: "rgba(109, 143, 173, 0.4)" } },
+        axisLabel: { color: "#8ea7c2", fontSize: 10, hideOverlap: true },
+      },
+      yAxis: {
+        type: "value",
+        axisLine: { show: false },
+        splitLine: { lineStyle: { color: "rgba(108, 138, 167, 0.22)", type: "dashed" } },
+        axisLabel: { color: "#8ea7c2", fontSize: 10 },
+      },
+      dataZoom: [
+        { type: "inside", zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: true },
+        { type: "slider", height: 14, bottom: 10, borderColor: "rgba(109, 143, 173, 0.3)", fillerColor: "rgba(66, 160, 232, 0.22)" },
+      ],
+      series: [
+        {
+          type: "line",
+          smooth: 0.24,
+          symbol: "circle",
+          symbolSize: 6,
+          showSymbol: false,
+          data: values,
+          lineStyle: {
+            width: 3,
+            color: {
+              type: "linear",
+              x: 0,
+              y: 0,
+              x2: 1,
+              y2: 0,
+              colorStops: [
+                { offset: 0, color: "#74d9ff" },
+                { offset: 0.5, color: "#46b8ff" },
+                { offset: 1, color: "#58f0c7" },
+              ],
+            },
+            shadowBlur: 10,
+            shadowColor: "rgba(83, 203, 255, 0.52)",
+          },
+          itemStyle: { color: "#8ee8ff", borderColor: "#143047", borderWidth: 1 },
+          emphasis: { focus: "series", scale: true },
+          areaStyle: {
+            color: {
+              type: "linear",
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: "rgba(108, 215, 255, 0.45)" },
+                { offset: 1, color: "rgba(108, 215, 255, 0.04)" },
+              ],
+            },
+          },
+        },
+      ],
+    };
+  }, [dataLayerChart]);
+
+  const hourlyChartOption = useMemo(() => {
+    if (!hourlyChart?.series?.length) return null;
+    const labels = hourlyChart.series.map((row) => formatTickTime(row.hour));
+    const values = hourlyChart.series.map((row) => Number(row.count || 0));
+    return {
+      animationDuration: 650,
+      grid: { top: 18, right: 18, bottom: 46, left: 56 },
+      tooltip: {
+        trigger: "axis",
+        backgroundColor: "rgba(6, 12, 21, 0.94)",
+        borderColor: "rgba(122, 166, 201, 0.62)",
+        borderWidth: 1,
+        textStyle: { color: "#d7ebff" },
+        axisPointer: {
+          type: "cross",
+          lineStyle: { color: "rgba(121, 166, 203, 0.62)", width: 1 },
+          crossStyle: { color: "rgba(121, 166, 203, 0.62)" },
+          label: { backgroundColor: "rgba(7, 14, 24, 0.9)" },
+        },
+      },
+      xAxis: {
+        type: "category",
+        boundaryGap: false,
+        data: labels,
+        axisLine: { lineStyle: { color: "rgba(109, 143, 173, 0.4)" } },
+        axisLabel: { color: "#8ea7c2", fontSize: 10, hideOverlap: true },
+      },
+      yAxis: {
+        type: "value",
+        axisLine: { show: false },
+        splitLine: { lineStyle: { color: "rgba(108, 138, 167, 0.22)", type: "dashed" } },
+        axisLabel: { color: "#8ea7c2", fontSize: 10 },
+      },
+      dataZoom: [
+        { type: "inside", zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: true },
+        { type: "slider", height: 14, bottom: 10, borderColor: "rgba(109, 143, 173, 0.3)", fillerColor: "rgba(92, 214, 182, 0.22)" },
+      ],
+      series: [
+        {
+          type: "line",
+          smooth: 0.24,
+          symbol: "circle",
+          symbolSize: 6,
+          showSymbol: false,
+          data: values,
+          lineStyle: {
+            width: 3,
+            color: {
+              type: "linear",
+              x: 0,
+              y: 0,
+              x2: 1,
+              y2: 0,
+              colorStops: [
+                { offset: 0, color: "#8be8c9" },
+                { offset: 0.55, color: "#59d0f7" },
+                { offset: 1, color: "#64a7ff" },
+              ],
+            },
+            shadowBlur: 10,
+            shadowColor: "rgba(95, 200, 241, 0.48)",
+          },
+          itemStyle: { color: "#aaf6d9", borderColor: "#143047", borderWidth: 1 },
+          emphasis: { focus: "series", scale: true },
+          areaStyle: {
+            color: {
+              type: "linear",
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: "rgba(138, 232, 201, 0.36)" },
+                { offset: 1, color: "rgba(138, 232, 201, 0.04)" },
+              ],
+            },
+          },
+        },
+      ],
+    };
+  }, [hourlyChart]);
+
+  const severityChart = useMemo(() => {
+    const rows = Array.isArray(overview?.severity) ? overview.severity : [];
+    const series = rows
+      .map((row, idx) => ({
+        level: Number(
+          Array.isArray(row)
+            ? (row[0] ?? idx)
+            : (row?.level ?? idx)
+        ),
+        count: Number(
+          Array.isArray(row)
+            ? (row[1] ?? 0)
+            : (row?.count ?? 0)
+        ),
+      }))
+      .filter((row) => Number.isFinite(row.level));
+    if (!series.length) return null;
+    series.sort((left, right) => left.level - right.level);
+    const values = series.map((row) => Number(row.count || 0));
+    return {
+      series,
+      total: values.reduce((sum, value) => sum + value, 0),
+      max: Math.max(...values, 1),
+    };
+  }, [overview]);
+
+  const severityChartOption = useMemo(() => {
+    if (!severityChart?.series?.length) return null;
+    const labels = severityChart.series.map((row) => `L${row.level}`);
+    const values = severityChart.series.map((row) => Number(row.count || 0));
+    return {
+      animationDuration: 600,
+      grid: { top: 20, right: 18, bottom: 34, left: 56 },
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        backgroundColor: "rgba(6, 12, 21, 0.94)",
+        borderColor: "rgba(122, 166, 201, 0.62)",
+        borderWidth: 1,
+        textStyle: { color: "#d7ebff" },
+      },
+      xAxis: {
+        type: "category",
+        data: labels,
+        axisLine: { lineStyle: { color: "rgba(109, 143, 173, 0.4)" } },
+        axisLabel: { color: "#8ea7c2", fontSize: 11 },
+      },
+      yAxis: {
+        type: "value",
+        axisLine: { show: false },
+        axisLabel: { color: "#8ea7c2", fontSize: 10 },
+        splitLine: { lineStyle: { color: "rgba(108, 138, 167, 0.22)", type: "dashed" } },
+      },
+      series: [
+        {
+          type: "bar",
+          barWidth: "64%",
+          data: values,
+          label: {
+            show: true,
+            position: "top",
+            color: "#cfe8ff",
+            fontSize: 10,
+          },
+          itemStyle: {
+            borderRadius: [8, 8, 4, 4],
+            color: {
+              type: "linear",
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: "#8cedd5" },
+                { offset: 0.45, color: "#5ac8ff" },
+                { offset: 1, color: "#4d7dff" },
+              ],
+            },
+            shadowBlur: 12,
+            shadowColor: "rgba(88, 188, 252, 0.35)",
+          },
+          emphasis: {
+            focus: "series",
+            itemStyle: {
+              shadowBlur: 16,
+              shadowColor: "rgba(122, 213, 255, 0.58)",
+            },
+          },
+        },
+      ],
+    };
+  }, [severityChart]);
+
+  const dataLayerChart3DOption = useMemo(() => {
+    if (!dataLayerChart?.series?.length) return null;
+    const labels = dataLayerChart.series.map((row) => formatTickTime(row.bucket));
+    const values = dataLayerChart.series.map((row) => Number(row.count || 0));
+    return buildBar3DOption({
+      labels,
+      values,
+      metricLabel: "events",
+      palette: ["#79ddff", "#59bfff", "#57f3cf"],
+    });
+  }, [dataLayerChart]);
+
+  const hourlyChart3DOption = useMemo(() => {
+    if (!hourlyChart?.series?.length) return null;
+    const labels = hourlyChart.series.map((row) => formatTickTime(row.hour));
+    const values = hourlyChart.series.map((row) => Number(row.count || 0));
+    return buildBar3DOption({
+      labels,
+      values,
+      metricLabel: "alerts",
+      palette: ["#9aeccf", "#69cff6", "#6aafff"],
+    });
+  }, [hourlyChart]);
+
+  const severityChart3DOption = useMemo(() => {
+    if (!severityChart?.series?.length) return null;
+    const labels = severityChart.series.map((row) => `L${row.level}`);
+    const values = severityChart.series.map((row) => Number(row.count || 0));
+    return buildBar3DOption({
+      labels,
+      values,
+      metricLabel: "alerts",
+      palette: ["#8af1da", "#65c9ff", "#4f82ff"],
+    });
+  }, [severityChart]);
 
   return (
     <div className="page page-route-analytics">
@@ -390,6 +769,13 @@ export default function Analytics() {
           </p>
         </div>
         <div className="page-actions">
+          <button
+            className="btn secondary"
+            type="button"
+            onClick={() => setThreeDMode((value) => !value)}
+          >
+            {threeDMode ? "3D Charts: ON" : "3D Charts: OFF"}
+          </button>
           <button
             className="btn secondary"
             onClick={() => {
@@ -505,7 +891,6 @@ export default function Analytics() {
         )}
       </div>
 
-      {dataLayerSupported ? (
       <div className="grid-2">
         <div className="card">
           <div className="card-header">
@@ -514,225 +899,181 @@ export default function Analytics() {
               <p className="muted">Indexed event buckets for short-window detection analytics.</p>
             </div>
           </div>
-
-          <div className="page-actions mb-12">
-            <input
-              className="input w-240"
-              placeholder="Tenant ID (optional)"
-              value={tenantIdOverride}
-              onChange={(event) => setTenantIdOverride(event.target.value)}
-            />
-            <select
-              className="input w-240"
-              value={timeSeriesBucket}
-              onChange={(event) => setTimeSeriesBucket(event.target.value)}
-            >
-              {DATA_LAYER_BUCKETS.map((bucket) => (
-                <option key={bucket} value={bucket}>{bucket}</option>
-              ))}
-            </select>
-            <button className="btn secondary" onClick={refreshDataLayer} disabled={loadingDataLayer}>
-              {loadingDataLayer ? "Loading..." : "Refresh Data Layer"}
-            </button>
-          </div>
-
-          {dataLayerError ? <div className="empty-state mb-12">{dataLayerError}</div> : null}
-
-          <div className="list">
-            <div className="list-item split">
-              <span>Total Events (72h)</span>
-              <span className="chip">{eventTimeSeriesMeta.total_count || 0}</span>
+          {!dataLayerSupported ? (
+            <div className="empty-state">
+              Data Layer Time-Series is unavailable in this environment.
+              The backend indexed-event endpoints are disabled (404), so only core analytics charts are shown.
             </div>
-            <div className="list-item split">
-              <span>Series Points</span>
-              <span className="muted">{eventTimeSeriesMeta.total_points || 0}</span>
-            </div>
-            <div className="list-item split">
-              <span>Bucket Size</span>
-              <span className="muted">{eventTimeSeriesMeta.bucket || timeSeriesBucket}</span>
-            </div>
-          </div>
-
-          {dataLayerChart ? (
+          ) : (
             <>
-              <div className="list-item split mt-12">
-                <span>Latest bucket: {dataLayerChart.latest?.count || 0} events</span>
-                <span className="chip">Peak: {dataLayerChart.max}</span>
-              </div>
-              <div className="trend-wrap">
-                <svg className="trend-chart-svg" viewBox="0 0 920 180" width="100%" height="200" role="img" aria-label="Event data-layer time-series chart">
-                  <defs>
-                    <linearGradient id="dataLayerSurface" x1="0%" y1="0%" x2="0%" y2="100%">
-                      <stop offset="0%" stopColor="rgba(34, 54, 77, 0.82)" />
-                      <stop offset="100%" stopColor="rgba(9, 16, 29, 0.96)" />
-                    </linearGradient>
-                    <linearGradient id="dataLayerArea" x1="0%" y1="0%" x2="0%" y2="100%">
-                      <stop offset="0%" stopColor="rgba(107, 215, 255, 0.56)" />
-                      <stop offset="100%" stopColor="rgba(107, 215, 255, 0.03)" />
-                    </linearGradient>
-                    <linearGradient id="dataLayerLine" x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stopColor="#74d9ff" />
-                      <stop offset="50%" stopColor="#46b8ff" />
-                      <stop offset="100%" stopColor="#58f0c7" />
-                    </linearGradient>
-                    <linearGradient id="dataLayerLineGlow" x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stopColor="rgba(116, 217, 255, 0.1)" />
-                      <stop offset="50%" stopColor="rgba(70, 184, 255, 0.78)" />
-                      <stop offset="100%" stopColor="rgba(88, 240, 199, 0.2)" />
-                    </linearGradient>
-                    <filter id="dataLayerGlow" x="-30%" y="-30%" width="160%" height="160%">
-                      <feGaussianBlur stdDeviation="3.2" result="blurred" />
-                      <feMerge>
-                        <feMergeNode in="blurred" />
-                        <feMergeNode in="SourceGraphic" />
-                      </feMerge>
-                    </filter>
-                    <filter id="dataLayerShadow" x="-20%" y="-20%" width="140%" height="140%">
-                      <feDropShadow dx="0" dy="3" stdDeviation="2.6" floodColor="rgba(4, 10, 18, 0.85)" />
-                    </filter>
-                  </defs>
-                  <rect x="0" y="0" width="920" height="180" rx="12" fill="url(#dataLayerSurface)" stroke="rgba(118, 148, 176, 0.38)" />
-                  {dataLayerChart.gridLines.map((y, idx) => (
-                    <line key={`data-layer-grid-${idx}`} x1="0" y1={y} x2="920" y2={y} className="trend-grid-line" />
+              <div className="page-actions mb-12">
+                <input
+                  className="input w-240"
+                  placeholder="Tenant ID (optional)"
+                  value={tenantIdOverride}
+                  onChange={(event) => setTenantIdOverride(event.target.value)}
+                />
+                <select
+                  className="input w-240"
+                  value={timeSeriesBucket}
+                  onChange={(event) => setTimeSeriesBucket(event.target.value)}
+                >
+                  {DATA_LAYER_BUCKETS.map((bucket) => (
+                    <option key={bucket} value={bucket}>{bucket}</option>
                   ))}
-                  <polygon points={dataLayerChart.areaPoints} className="trend-area" fill="url(#dataLayerArea)" />
-                  <polyline
-                    className="trend-line-shadow"
-                    fill="none"
-                    stroke="url(#dataLayerLineGlow)"
-                    strokeWidth="6"
-                    points={dataLayerChart.points}
-                    filter="url(#dataLayerShadow)"
-                  />
-                  <polyline
-                    className="trend-line-main trend-line-animated"
-                    fill="none"
-                    stroke="url(#dataLayerLine)"
-                    strokeWidth="3.2"
-                    points={dataLayerChart.points}
-                    filter="url(#dataLayerGlow)"
-                  />
-                  <circle className="trend-point-pulse" cx={dataLayerChart.latestX} cy={dataLayerChart.latestY} r="7.2" />
-                  <circle className="trend-point-core" cx={dataLayerChart.latestX} cy={dataLayerChart.latestY} r="4.2" />
-                </svg>
-                <div className="trend-legend">
-                  <span>{formatWazuhTimestamp(dataLayerChart.from)}</span>
-                  <span>Avg {dataLayerChart.average}/bucket</span>
-                  <span>{formatWazuhTimestamp(dataLayerChart.to)}</span>
+                </select>
+                <button className="btn secondary" onClick={refreshDataLayer} disabled={loadingDataLayer}>
+                  {loadingDataLayer ? "Loading..." : "Refresh Data Layer"}
+                </button>
+              </div>
+
+              {dataLayerError ? <div className="empty-state mb-12">{dataLayerError}</div> : null}
+
+              <div className="list">
+                <div className="list-item split">
+                  <span>Total Events (72h)</span>
+                  <span className="chip">{eventTimeSeriesMeta.total_count || 0}</span>
+                </div>
+                <div className="list-item split">
+                  <span>Series Points</span>
+                  <span className="muted">{eventTimeSeriesMeta.total_points || 0}</span>
+                </div>
+                <div className="list-item split">
+                  <span>Bucket Size</span>
+                  <span className="muted">{eventTimeSeriesMeta.bucket || timeSeriesBucket}</span>
                 </div>
               </div>
-            </>
-          ) : (
-            <div className="empty-state mt-12">No indexed time-series data yet.</div>
-          )}
 
-          <div className="table-scroll mt-12">
-            <table className="table compact">
-              <thead>
-                <tr>
-                  <th>Severity</th>
-                  <th>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {eventTimeSeriesTotals.length === 0 ? (
-                  <tr>
-                    <td colSpan={2} className="muted">No grouped totals.</td>
-                  </tr>
-                ) : (
-                  eventTimeSeriesTotals.map((row, idx) => (
-                    <tr key={`${row.group || "group"}-${idx}`}>
-                      <td>{row.group || "unknown"}</td>
-                      <td>{Number(row.count || 0)}</td>
+              {dataLayerChart ? (
+                <>
+                  <div className="list-item split mt-12">
+                    <span>Latest bucket: {dataLayerChart.latest?.count || 0} events</span>
+                    <span className="chip">Peak: {dataLayerChart.max}</span>
+                  </div>
+                  <div className="trend-wrap">
+                    {threeDMode ? (
+                      <EChart3DPanel option={dataLayerChart3DOption} style={{ width: "100%", height: 260 }} loading={loadingDataLayer} />
+                    ) : (
+                      <EChartLinePanel option={dataLayerChartOption} style={{ width: "100%", height: 260 }} loading={loadingDataLayer} />
+                    )}
+                    <div className="trend-legend">
+                      <span>{formatWazuhTimestamp(dataLayerChart.from)}</span>
+                      <span>Avg {dataLayerChart.average}/bucket</span>
+                      <span>{formatWazuhTimestamp(dataLayerChart.to)}</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="empty-state mt-12">No indexed time-series data yet.</div>
+              )}
+
+              <div className="table-scroll mt-12">
+                <table className="table compact">
+                  <thead>
+                    <tr>
+                      <th>Severity</th>
+                      <th>Total</th>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  </thead>
+                  <tbody>
+                    {eventTimeSeriesTotals.length === 0 ? (
+                      <tr>
+                        <td colSpan={2} className="muted">No grouped totals.</td>
+                      </tr>
+                    ) : (
+                      eventTimeSeriesTotals.map((row, idx) => (
+                        <tr key={`${row.group || "group"}-${idx}`}>
+                          <td>{row.group || "unknown"}</td>
+                          <td>{Number(row.count || 0)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="card">
           <div className="card-header">
             <div>
-              <h3>High-Speed Correlation</h3>
-              <p className="muted">Cross-domain correlated clusters across indexed events.</p>
+              <h3>{dataLayerSupported ? "High-Speed Correlation" : "Advanced Correlation"}</h3>
+              <p className="muted">
+                {dataLayerSupported
+                  ? "Cross-domain correlated clusters across indexed events."
+                  : "Data-layer correlation is disabled in this deployment."}
+              </p>
             </div>
           </div>
-
-          <div className="page-actions mb-12">
-            <select
-              className="input w-240"
-              value={correlationWindow}
-              onChange={(event) => setCorrelationWindow(event.target.value)}
-            >
-              {DATA_LAYER_BUCKETS.map((window) => (
-                <option key={window} value={window}>{window}</option>
-              ))}
-            </select>
-            <button className="btn secondary" onClick={refreshDataLayer} disabled={loadingDataLayer}>
-              {loadingDataLayer ? "Loading..." : "Refresh Correlation"}
-            </button>
-          </div>
-
-          <div className="grid-3">
-            <div className="list-item readable">
-              <div className="muted">Window</div>
-              <div className="meta-line">{eventCorrelationMeta.window || correlationWindow}</div>
+          {!dataLayerSupported ? (
+            <div className="empty-state">
+              Core analytics is active. Advanced indexed correlation endpoints are not enabled for this v1 deployment.
             </div>
-            <div className="list-item readable">
-              <div className="muted">Groups</div>
-              <div className="meta-line">{eventCorrelationMeta.total_groups || 0}</div>
-            </div>
-            <div className="list-item readable">
-              <div className="muted">Correlated Events</div>
-              <div className="meta-line">{eventCorrelationMeta.correlated_events || 0}</div>
-            </div>
-          </div>
-
-          {topCorrelationGroups.length === 0 ? (
-            <div className="empty-state mt-12">No correlated groups found for the current window.</div>
           ) : (
-            <div className="table-scroll mt-12">
-              <table className="table compact">
-                <thead>
-                  <tr>
-                    <th>Window</th>
-                    <th>Correlation Key</th>
-                    <th>Events</th>
-                    <th>Agents</th>
-                    <th>Score</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {topCorrelationGroups.map((group, idx) => (
-                    <tr key={`${group.correlation_key || "key"}-${group.window_start || idx}`}>
-                      <td>{formatWazuhTimestamp(group.window_start)}</td>
-                      <td>{group.correlation_key || "-"}</td>
-                      <td>{Number(group.event_count || 0)}</td>
-                      <td>{Number(group.unique_agents || 0)}</td>
-                      <td>{Number(group.score || 0)}</td>
-                    </tr>
+            <>
+              <div className="page-actions mb-12">
+                <select
+                  className="input w-240"
+                  value={correlationWindow}
+                  onChange={(event) => setCorrelationWindow(event.target.value)}
+                >
+                  {DATA_LAYER_BUCKETS.map((window) => (
+                    <option key={window} value={window}>{window}</option>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </select>
+                <button className="btn secondary" onClick={refreshDataLayer} disabled={loadingDataLayer}>
+                  {loadingDataLayer ? "Loading..." : "Refresh Correlation"}
+                </button>
+              </div>
+
+              <div className="grid-3">
+                <div className="list-item readable">
+                  <div className="muted">Window</div>
+                  <div className="meta-line">{eventCorrelationMeta.window || correlationWindow}</div>
+                </div>
+                <div className="list-item readable">
+                  <div className="muted">Groups</div>
+                  <div className="meta-line">{eventCorrelationMeta.total_groups || 0}</div>
+                </div>
+                <div className="list-item readable">
+                  <div className="muted">Correlated Events</div>
+                  <div className="meta-line">{eventCorrelationMeta.correlated_events || 0}</div>
+                </div>
+              </div>
+
+              {topCorrelationGroups.length === 0 ? (
+                <div className="empty-state mt-12">No correlated groups found for the current window.</div>
+              ) : (
+                <div className="table-scroll mt-12">
+                  <table className="table compact">
+                    <thead>
+                      <tr>
+                        <th>Window</th>
+                        <th>Correlation Key</th>
+                        <th>Events</th>
+                        <th>Agents</th>
+                        <th>Score</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {topCorrelationGroups.map((group, idx) => (
+                        <tr key={`${group.correlation_key || "key"}-${group.window_start || idx}`}>
+                          <td>{formatWazuhTimestamp(group.window_start)}</td>
+                          <td>{group.correlation_key || "-"}</td>
+                          <td>{Number(group.event_count || 0)}</td>
+                          <td>{Number(group.unique_agents || 0)}</td>
+                          <td>{Number(group.score || 0)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
-      ) : (
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h3>Advanced Correlation</h3>
-              <p className="muted">Data-layer correlation is disabled in this deployment.</p>
-            </div>
-          </div>
-          <div className="empty-state">
-            Core analytics is active. Advanced indexed correlation endpoints are not enabled for this v1 deployment.
-          </div>
-        </div>
-      )}
 
       <div className="grid-2">
         <div className="card">
@@ -786,15 +1127,38 @@ export default function Analytics() {
               <p className="muted">Alert severity levels in the last 7 days</p>
             </div>
           </div>
-          {overview?.severity?.length ? (
-            <ul className="list">
-              {overview.severity.map((row, idx) => (
-                <li className="list-item" key={idx}>
-                  <div>Level {row[0]}</div>
-                  <div className="muted">{row[1]} alerts</div>
-                </li>
-              ))}
-            </ul>
+          {severityChart ? (
+            <>
+              <div className="list-item split">
+                <span>Total alerts: {severityChart.total}</span>
+                <span className="chip">Peak bucket: {severityChart.max}</span>
+              </div>
+              <div className="trend-wrap">
+                {threeDMode ? (
+                  <EChart3DPanel option={severityChart3DOption} style={{ width: "100%", height: 260 }} />
+                ) : (
+                  <EChartLinePanel option={severityChartOption} style={{ width: "100%", height: 260 }} />
+                )}
+              </div>
+              <div className="table-scroll">
+                <table className="table compact">
+                  <thead>
+                    <tr>
+                      <th>Level</th>
+                      <th>Alerts</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {severityChart.series.slice().reverse().map((row) => (
+                      <tr key={`severity-${row.level}`}>
+                        <td>{row.level}</td>
+                        <td>{row.count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           ) : (
             <div className="empty-state">No severity data yet.</div>
           )}
@@ -814,61 +1178,11 @@ export default function Analytics() {
                 <span className="chip">Peak: {hourlyChart.max}</span>
               </div>
               <div className="trend-wrap">
-                <svg className="trend-chart-svg" viewBox="0 0 920 180" width="100%" height="200" role="img" aria-label="Hourly alert volume chart">
-                  <defs>
-                    <linearGradient id="hourlySurface" x1="0%" y1="0%" x2="0%" y2="100%">
-                      <stop offset="0%" stopColor="rgba(32, 52, 76, 0.84)" />
-                      <stop offset="100%" stopColor="rgba(9, 15, 27, 0.97)" />
-                    </linearGradient>
-                    <linearGradient id="hourlyArea" x1="0%" y1="0%" x2="0%" y2="100%">
-                      <stop offset="0%" stopColor="rgba(138, 232, 201, 0.5)" />
-                      <stop offset="100%" stopColor="rgba(138, 232, 201, 0.03)" />
-                    </linearGradient>
-                    <linearGradient id="hourlyLine" x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stopColor="#8be8c9" />
-                      <stop offset="55%" stopColor="#59d0f7" />
-                      <stop offset="100%" stopColor="#64a7ff" />
-                    </linearGradient>
-                    <linearGradient id="hourlyLineGlow" x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stopColor="rgba(139, 232, 201, 0.16)" />
-                      <stop offset="50%" stopColor="rgba(89, 208, 247, 0.72)" />
-                      <stop offset="100%" stopColor="rgba(100, 167, 255, 0.24)" />
-                    </linearGradient>
-                    <filter id="hourlyGlow" x="-30%" y="-30%" width="160%" height="160%">
-                      <feGaussianBlur stdDeviation="3.1" result="blurred" />
-                      <feMerge>
-                        <feMergeNode in="blurred" />
-                        <feMergeNode in="SourceGraphic" />
-                      </feMerge>
-                    </filter>
-                    <filter id="hourlyShadow" x="-20%" y="-20%" width="140%" height="140%">
-                      <feDropShadow dx="0" dy="3" stdDeviation="2.4" floodColor="rgba(3, 9, 18, 0.86)" />
-                    </filter>
-                  </defs>
-                  <rect x="0" y="0" width="920" height="180" rx="12" fill="url(#hourlySurface)" stroke="rgba(118, 148, 176, 0.38)" />
-                  {hourlyChart.gridLines.map((y, idx) => (
-                    <line key={`hourly-grid-${idx}`} x1="0" y1={y} x2="920" y2={y} className="trend-grid-line" />
-                  ))}
-                  <polygon points={hourlyChart.areaPoints} className="trend-area" fill="url(#hourlyArea)" />
-                  <polyline
-                    className="trend-line-shadow"
-                    fill="none"
-                    stroke="url(#hourlyLineGlow)"
-                    strokeWidth="6"
-                    points={hourlyChart.points}
-                    filter="url(#hourlyShadow)"
-                  />
-                  <polyline
-                    className="trend-line-main trend-line-animated"
-                    fill="none"
-                    stroke="url(#hourlyLine)"
-                    strokeWidth="3.2"
-                    points={hourlyChart.points}
-                    filter="url(#hourlyGlow)"
-                  />
-                  <circle className="trend-point-pulse" cx={hourlyChart.latestX} cy={hourlyChart.latestY} r="7.2" />
-                  <circle className="trend-point-core" cx={hourlyChart.latestX} cy={hourlyChart.latestY} r="4.2" />
-                </svg>
+                {threeDMode ? (
+                  <EChart3DPanel option={hourlyChart3DOption} style={{ width: "100%", height: 260 }} loading={loading} />
+                ) : (
+                  <EChartLinePanel option={hourlyChartOption} style={{ width: "100%", height: 260 }} loading={loading} />
+                )}
                 <div className="trend-legend">
                   <span>{formatWazuhTimestamp(hourlyChart.from)}</span>
                   <span>Avg {hourlyChart.average}/h</span>

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Pager from "../components/Pager";
+import EChartLinePanel from "../components/EChartLinePanel";
+import EChart3DPanel from "../components/EChart3DPanel";
 import {
   getAgents,
   getAgentGroups,
@@ -99,14 +101,6 @@ const normalizeScaResult = (value) => {
   return token || "unknown";
 };
 
-const scaResultClass = (value) => {
-  const result = normalizeScaResult(value);
-  if (result === "passed") return "success";
-  if (result === "failed") return "failed";
-  if (result === "not applicable") return "pending";
-  return "neutral";
-};
-
 const formatAgentId = (raw) => {
   if (raw === null || raw === undefined) return "";
   if (typeof raw === "number") return String(raw).padStart(3, "0");
@@ -154,6 +148,110 @@ const normalizeGroupLabel = (value) => {
 const toNumber = (value, fallback = 0) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
+};
+
+const buildBar3DOption = ({
+  labels,
+  values,
+  metricLabel = "alerts",
+  palette = ["#7fe0ff", "#56c3ff", "#64f5d1"],
+}) => {
+  if (!Array.isArray(labels) || !Array.isArray(values) || !labels.length || !values.length) return null;
+  const maxValue = Math.max(...values.map((value) => Number(value || 0)), 1);
+  const labelStep = Math.max(1, Math.ceil(labels.length / 7));
+  return {
+    animationDuration: 520,
+    animationDurationUpdate: 420,
+    tooltip: {
+      formatter: (params) => {
+        const tuple = Array.isArray(params?.value) ? params.value : [];
+        const idx = Number(tuple[0] || 0);
+        const val = Number(tuple[2] || 0);
+        return `${labels[idx] || "bucket"}<br/>${metricLabel}: ${val}`;
+      },
+      backgroundColor: "rgba(6, 12, 21, 0.94)",
+      borderColor: "rgba(122, 166, 201, 0.62)",
+      borderWidth: 1,
+      textStyle: { color: "#d7ebff" },
+    },
+    xAxis3D: {
+      type: "category",
+      data: labels,
+      axisLabel: {
+        color: "#8ea7c2",
+        interval: 0,
+        formatter: (value, idx) => (idx % labelStep === 0 ? value : ""),
+      },
+      axisLine: { lineStyle: { color: "rgba(109, 143, 173, 0.46)" } },
+    },
+    yAxis3D: {
+      type: "category",
+      data: [metricLabel],
+      axisLabel: { show: false },
+      axisLine: { lineStyle: { color: "rgba(109, 143, 173, 0.28)" } },
+    },
+    zAxis3D: {
+      type: "value",
+      min: 0,
+      max: Math.max(4, Math.round(maxValue * 1.18)),
+      axisLabel: { color: "#8ea7c2" },
+      axisLine: { lineStyle: { color: "rgba(109, 143, 173, 0.46)" } },
+      splitLine: { lineStyle: { color: "rgba(109, 143, 173, 0.18)" } },
+    },
+    grid3D: {
+      boxWidth: Math.max(86, Math.min(152, labels.length * 2.4)),
+      boxDepth: 30,
+      boxHeight: 54,
+      viewControl: {
+        projection: "perspective",
+        alpha: 21,
+        beta: 29,
+        panSensitivity: 0.9,
+        rotateSensitivity: 1,
+        zoomSensitivity: 0.68,
+        autoRotate: false,
+      },
+      light: {
+        main: { intensity: 1.05, shadow: false },
+        ambient: { intensity: 0.46 },
+      },
+      axisPointer: {
+        show: true,
+        lineStyle: { color: "rgba(132, 216, 255, 0.66)" },
+      },
+    },
+    series: [
+      {
+        type: "bar3D",
+        shading: "lambert",
+        data: values.map((value, idx) => ({
+          value: [idx, 0, Number(value || 0)],
+          itemStyle: {
+            color: {
+              type: "linear",
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: palette[0] },
+                { offset: 0.52, color: palette[1] },
+                { offset: 1, color: palette[2] },
+              ],
+            },
+            opacity: 0.96,
+          },
+        })),
+        emphasis: {
+          label: {
+            show: true,
+            formatter: (params) => `${Number(params?.value?.[2] || 0)}`,
+            textStyle: { color: "#d6ebff", fontSize: 11, fontWeight: 700 },
+          },
+        },
+      },
+    ],
+  };
 };
 
 const formatMemoryValue = (value) => {
@@ -221,14 +319,6 @@ const latestKeepaliveTimestamp = (...records) => {
   return latestTimestamp(candidates);
 };
 
-const riskClass = (risk) => {
-  const value = String(risk || "").toLowerCase();
-  if (value === "critical" || value === "high") return "failed";
-  if (value === "medium") return "pending";
-  if (value === "low") return "success";
-  return "neutral";
-};
-
 export default function Agents() {
   const navigate = useNavigate();
   const [agents, setAgents] = useState([]);
@@ -250,8 +340,6 @@ export default function Agents() {
   const [scaPolicies, setScaPolicies] = useState([]);
   const [scaRecommendations, setScaRecommendations] = useState([]);
   const [scaTelemetry, setScaTelemetry] = useState({});
-  const [scaCheckFilter, setScaCheckFilter] = useState("failed");
-  const [scaCheckSearch, setScaCheckSearch] = useState("");
   const [agentAlerts, setAgentAlerts] = useState([]);
   const [detailError, setDetailError] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -259,20 +347,27 @@ export default function Agents() {
   const [agentPageSize, setAgentPageSize] = useState(25);
   const [compliancePage, setCompliancePage] = useState(1);
   const [compliancePageSize, setCompliancePageSize] = useState(10);
-  const [scaRecommendationsPage, setScaRecommendationsPage] = useState(1);
-  const [scaRecommendationsPageSize, setScaRecommendationsPageSize] = useState(10);
-  const [scaChecksPage, setScaChecksPage] = useState(1);
-  const [scaChecksPageSize, setScaChecksPageSize] = useState(50);
   const [vulnerabilitiesPage, setVulnerabilitiesPage] = useState(1);
   const [vulnerabilitiesPageSize, setVulnerabilitiesPageSize] = useState(25);
   const [alertsPage, setAlertsPage] = useState(1);
   const [alertsPageSize, setAlertsPageSize] = useState(25);
   const [fimPage, setFimPage] = useState(1);
   const [fimPageSize, setFimPageSize] = useState(25);
+  const [threeDMode, setThreeDMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const saved = window.localStorage.getItem("soar.agents.events.3d");
+    if (saved === null) return true;
+    return saved === "1";
+  });
 
   const [error, setError] = useState(null);
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
   const selectedAgentRef = useRef("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("soar.agents.events.3d", threeDMode ? "1" : "0");
+  }, [threeDMode]);
 
   useEffect(() => {
     selectedAgentRef.current = selectedAgentId;
@@ -619,40 +714,110 @@ export default function Agents() {
 
   const eventChart = useMemo(() => {
     if (!Array.isArray(eventSeries) || eventSeries.length === 0) {
-      return { points: "", areaPoints: "", gridLines: [], max: 0, last: 0, latestX: 0, latestY: 0 };
+      return { series: [], max: 0, last: 0 };
     }
 
-    const width = 560;
-    const chartTop = 14;
-    const chartHeight = 136;
-    const plotBottom = chartTop + chartHeight;
-    const values = eventSeries.map((row) => toNumber(row?.count, 0));
+    const series = eventSeries.map((row, idx) => ({
+      bucket: row?.hour || row?.bucket || row?.ts || String(idx),
+      count: toNumber(row?.count, 0),
+    }));
+    const values = series.map((row) => row.count);
     const max = Math.max(...values, 1);
-    const step = values.length > 1 ? width / (values.length - 1) : width;
-
-    const points = values
-      .map((count, idx) => {
-        const x = Math.round(idx * step);
-        const y = Math.round(plotBottom - (count / max) * chartHeight);
-        return `${x},${y}`;
-      })
-      .join(" ");
     const last = values[values.length - 1] || 0;
-    const latestX = Math.round((values.length - 1) * step);
-    const latestY = Math.round(plotBottom - (last / max) * chartHeight);
-    const areaPoints = `${points} ${width},${plotBottom} 0,${plotBottom}`;
-    const gridLines = [0, 0.25, 0.5, 0.75, 1].map((ratio) => Math.round(chartTop + chartHeight * ratio));
-
-    return {
-      points,
-      areaPoints,
-      gridLines,
-      max,
-      last,
-      latestX,
-      latestY,
-    };
+    return { series, max, last };
   }, [eventSeries]);
+
+  const eventChartOption = useMemo(() => {
+    if (!eventChart.series.length) return null;
+    const labels = eventChart.series.map((row) => formatWazuhTimestamp(row.bucket));
+    const values = eventChart.series.map((row) => Number(row.count || 0));
+    return {
+      animationDuration: 620,
+      grid: { top: 18, right: 16, bottom: 44, left: 54 },
+      tooltip: {
+        trigger: "axis",
+        backgroundColor: "rgba(6, 12, 21, 0.94)",
+        borderColor: "rgba(122, 166, 201, 0.62)",
+        borderWidth: 1,
+        textStyle: { color: "#d7ebff" },
+        axisPointer: {
+          type: "cross",
+          lineStyle: { color: "rgba(121, 166, 203, 0.62)", width: 1 },
+          label: { backgroundColor: "rgba(7, 14, 24, 0.9)" },
+        },
+      },
+      xAxis: {
+        type: "category",
+        boundaryGap: false,
+        data: labels,
+        axisLine: { lineStyle: { color: "rgba(109, 143, 173, 0.4)" } },
+        axisLabel: { color: "#8ea7c2", fontSize: 10, hideOverlap: true },
+      },
+      yAxis: {
+        type: "value",
+        axisLine: { show: false },
+        axisLabel: { color: "#8ea7c2", fontSize: 10 },
+        splitLine: { lineStyle: { color: "rgba(108, 138, 167, 0.22)", type: "dashed" } },
+      },
+      dataZoom: [
+        { type: "inside", zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: true },
+        { type: "slider", height: 14, bottom: 8, borderColor: "rgba(109, 143, 173, 0.3)", fillerColor: "rgba(75, 196, 239, 0.24)" },
+      ],
+      series: [
+        {
+          type: "line",
+          smooth: 0.2,
+          symbol: "circle",
+          symbolSize: 5,
+          showSymbol: false,
+          data: values,
+          lineStyle: {
+            width: 3,
+            color: {
+              type: "linear",
+              x: 0,
+              y: 0,
+              x2: 1,
+              y2: 0,
+              colorStops: [
+                { offset: 0, color: "#7addff" },
+                { offset: 0.48, color: "#49beff" },
+                { offset: 1, color: "#72f2cf" },
+              ],
+            },
+            shadowBlur: 10,
+            shadowColor: "rgba(90, 210, 255, 0.45)",
+          },
+          itemStyle: { color: "#a8ebff", borderColor: "#132f44", borderWidth: 1 },
+          areaStyle: {
+            color: {
+              type: "linear",
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [
+                { offset: 0, color: "rgba(122, 221, 255, 0.4)" },
+                { offset: 1, color: "rgba(122, 221, 255, 0.04)" },
+              ],
+            },
+          },
+        },
+      ],
+    };
+  }, [eventChart]);
+
+  const eventChart3DOption = useMemo(() => {
+    if (!eventChart.series.length) return null;
+    const labels = eventChart.series.map((row) => formatWazuhTimestamp(row.bucket));
+    const values = eventChart.series.map((row) => Number(row.count || 0));
+    return buildBar3DOption({
+      labels,
+      values,
+      metricLabel: "alerts",
+      palette: ["#7fe0ff", "#57c3ff", "#68f7d4"],
+    });
+  }, [eventChart]);
 
   const mitreTop = useMemo(() => {
     const rows = Array.isArray(mitreTactics) ? mitreTactics : [];
@@ -751,73 +916,22 @@ export default function Agents() {
     };
   }, [complianceRows]);
 
-  const scaChecks = useMemo(() => {
-    if (!Array.isArray(scaPolicies) || scaPolicies.length === 0) return [];
-    const rows = [];
-    scaPolicies.forEach((policy) => {
-      const checks = Array.isArray(policy?.checks) ? policy.checks : [];
-      checks.forEach((check, idx) => {
-        rows.push({
-          key: `${policy?.policy_id || policy?.policy_name || "policy"}-${check?.id || idx + 1}-${idx}`,
-          policyId: policy?.policy_id || "",
-          policyName: toDisplay(policy?.policy_name || policy?.name || policy?.policy_id, "Policy"),
-          id: toDisplay(check?.id || check?.check_id, String(idx + 1)),
-          title: toDisplay(check?.title || check?.name, `Check ${idx + 1}`),
-          result: normalizeScaResult(check?.result || check?.status),
-          reason: toDisplay(check?.reason, ""),
-          description: toDisplay(check?.description, ""),
-          remediation: toDisplay(check?.remediation, ""),
-        });
-      });
-    });
-    return rows;
-  }, [scaPolicies]);
-
   const scaChecksSummary = useMemo(() => {
     const summary = { passed: 0, failed: 0, notApplicable: 0, unknown: 0, total: 0 };
-    scaChecks.forEach((check) => {
-      const result = normalizeScaResult(check?.result);
-      if (result === "passed") summary.passed += 1;
-      else if (result === "failed") summary.failed += 1;
-      else if (result === "not applicable") summary.notApplicable += 1;
-      else summary.unknown += 1;
+    if (!Array.isArray(scaPolicies) || scaPolicies.length === 0) return summary;
+    scaPolicies.forEach((policy) => {
+      const checks = Array.isArray(policy?.checks) ? policy.checks : [];
+      checks.forEach((check) => {
+        const result = normalizeScaResult(check?.result || check?.status);
+        if (result === "passed") summary.passed += 1;
+        else if (result === "failed") summary.failed += 1;
+        else if (result === "not applicable") summary.notApplicable += 1;
+        else summary.unknown += 1;
+      });
     });
     summary.total = summary.passed + summary.failed + summary.notApplicable + summary.unknown;
     return summary;
-  }, [scaChecks]);
-
-  const filteredScaChecks = useMemo(() => {
-    const filterValue = normalizeScaResult(scaCheckFilter);
-    const query = String(scaCheckSearch || "").trim().toLowerCase();
-    return scaChecks.filter((check) => {
-      const result = normalizeScaResult(check?.result);
-      if (filterValue !== "all" && result !== filterValue) return false;
-      if (!query) return true;
-      const haystack = [
-        check?.policyName,
-        check?.policyId,
-        check?.id,
-        check?.title,
-        check?.reason,
-        check?.description,
-        check?.remediation,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [scaCheckFilter, scaCheckSearch, scaChecks]);
-
-  const pagedFilteredScaChecks = useMemo(() => {
-    const start = (Math.max(1, scaChecksPage) - 1) * Math.max(1, scaChecksPageSize);
-    return filteredScaChecks.slice(start, start + Math.max(1, scaChecksPageSize));
-  }, [filteredScaChecks, scaChecksPage, scaChecksPageSize]);
-
-  const pagedScaRecommendations = useMemo(() => {
-    const start = (Math.max(1, scaRecommendationsPage) - 1) * Math.max(1, scaRecommendationsPageSize);
-    return scaRecommendations.slice(start, start + Math.max(1, scaRecommendationsPageSize));
-  }, [scaRecommendations, scaRecommendationsPage, scaRecommendationsPageSize]);
+  }, [scaPolicies]);
 
   const pagedVulnerabilities = useMemo(() => {
     const start = (Math.max(1, vulnerabilitiesPage) - 1) * Math.max(1, vulnerabilitiesPageSize);
@@ -849,20 +963,6 @@ export default function Agents() {
   }, [complianceRows.length, compliancePage, compliancePageSize]);
 
   useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(scaRecommendations.length / Math.max(1, scaRecommendationsPageSize)));
-    if (scaRecommendationsPage > totalPages) {
-      setScaRecommendationsPage(totalPages);
-    }
-  }, [scaRecommendations.length, scaRecommendationsPage, scaRecommendationsPageSize]);
-
-  useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(filteredScaChecks.length / Math.max(1, scaChecksPageSize)));
-    if (scaChecksPage > totalPages) {
-      setScaChecksPage(totalPages);
-    }
-  }, [filteredScaChecks.length, scaChecksPage, scaChecksPageSize]);
-
-  useEffect(() => {
     const totalPages = Math.max(1, Math.ceil(vulnerabilities.length / Math.max(1, vulnerabilitiesPageSize)));
     if (vulnerabilitiesPage > totalPages) {
       setVulnerabilitiesPage(totalPages);
@@ -889,16 +989,10 @@ export default function Agents() {
 
   useEffect(() => {
     setCompliancePage(1);
-    setScaRecommendationsPage(1);
-    setScaChecksPage(1);
     setVulnerabilitiesPage(1);
     setAlertsPage(1);
     setFimPage(1);
   }, [selectedAgentId]);
-
-  useEffect(() => {
-    setScaChecksPage(1);
-  }, [scaCheckFilter, scaCheckSearch]);
 
   return (
     <div className="page page-route-agents">
@@ -1111,14 +1205,23 @@ export default function Agents() {
               <h3>Events Count Evolution</h3>
               <p className="muted">Alert volume in the last 24 hours (30 min buckets).</p>
             </div>
-            <button
-              className="btn secondary"
-              onClick={() =>
-                navigate(`/alerts?query=${encodeURIComponent(`agent.id:${selectedAgentId || "*"}`)}`)
-              }
-            >
-              Hunt
-            </button>
+            <div className="page-actions">
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => setThreeDMode((value) => !value)}
+              >
+                {threeDMode ? "3D: ON" : "3D: OFF"}
+              </button>
+              <button
+                className="btn secondary"
+                onClick={() =>
+                  navigate(`/alerts?query=${encodeURIComponent(`agent.id:${selectedAgentId || "*"}`)}`)
+                }
+              >
+                Hunt
+              </button>
+            </div>
           </div>
           {eventSeries.length === 0 ? (
             <div className="empty-state">No event histogram data available.</div>
@@ -1129,61 +1232,11 @@ export default function Agents() {
 	                <span className="chip">Max bucket: {eventChart.max}</span>
 	              </div>
 	              <div className="trend-wrap">
-	                <svg className="trend-chart-svg" viewBox="0 0 560 170" width="100%" height="180" role="img" aria-label="Events count evolution">
-	                  <defs>
-	                    <linearGradient id="agentEventsSurface" x1="0%" y1="0%" x2="0%" y2="100%">
-	                      <stop offset="0%" stopColor="rgba(31, 52, 74, 0.84)" />
-	                      <stop offset="100%" stopColor="rgba(8, 14, 26, 0.96)" />
-	                    </linearGradient>
-	                    <linearGradient id="agentEventsArea" x1="0%" y1="0%" x2="0%" y2="100%">
-	                      <stop offset="0%" stopColor="rgba(122, 221, 255, 0.52)" />
-	                      <stop offset="100%" stopColor="rgba(122, 221, 255, 0.04)" />
-	                    </linearGradient>
-	                    <linearGradient id="agentEventsLine" x1="0%" y1="0%" x2="100%" y2="0%">
-	                      <stop offset="0%" stopColor="#7addff" />
-	                      <stop offset="48%" stopColor="#49beff" />
-	                      <stop offset="100%" stopColor="#72f2cf" />
-	                    </linearGradient>
-	                    <linearGradient id="agentEventsLineGlow" x1="0%" y1="0%" x2="100%" y2="0%">
-	                      <stop offset="0%" stopColor="rgba(122, 221, 255, 0.12)" />
-	                      <stop offset="55%" stopColor="rgba(73, 190, 255, 0.76)" />
-	                      <stop offset="100%" stopColor="rgba(114, 242, 207, 0.2)" />
-	                    </linearGradient>
-	                    <filter id="agentEventsGlow" x="-30%" y="-30%" width="160%" height="160%">
-	                      <feGaussianBlur stdDeviation="3" result="blurred" />
-	                      <feMerge>
-	                        <feMergeNode in="blurred" />
-	                        <feMergeNode in="SourceGraphic" />
-	                      </feMerge>
-	                    </filter>
-	                    <filter id="agentEventsShadow" x="-20%" y="-20%" width="140%" height="140%">
-	                      <feDropShadow dx="0" dy="2.6" stdDeviation="2.2" floodColor="rgba(3, 9, 18, 0.86)" />
-	                    </filter>
-	                  </defs>
-	                  <rect x="0" y="0" width="560" height="170" rx="10" fill="url(#agentEventsSurface)" stroke="rgba(118, 148, 176, 0.36)" />
-	                  {eventChart.gridLines.map((y, idx) => (
-	                    <line key={`agent-events-grid-${idx}`} x1="0" y1={y} x2="560" y2={y} className="trend-grid-line" />
-	                  ))}
-	                  <polygon points={eventChart.areaPoints} className="trend-area" fill="url(#agentEventsArea)" />
-	                  <polyline
-	                    className="trend-line-shadow"
-	                    fill="none"
-	                    stroke="url(#agentEventsLineGlow)"
-	                    strokeWidth="6"
-	                    points={eventChart.points}
-	                    filter="url(#agentEventsShadow)"
-	                  />
-	                  <polyline
-	                    className="trend-line-main trend-line-animated"
-	                    fill="none"
-	                    stroke="url(#agentEventsLine)"
-	                    strokeWidth="3.2"
-	                    points={eventChart.points}
-	                    filter="url(#agentEventsGlow)"
-	                  />
-	                  <circle className="trend-point-pulse" cx={eventChart.latestX} cy={eventChart.latestY} r="6.6" />
-	                  <circle className="trend-point-core" cx={eventChart.latestX} cy={eventChart.latestY} r="4" />
-	                </svg>
+	                {threeDMode ? (
+	                  <EChart3DPanel option={eventChart3DOption} style={{ width: "100%", height: 238 }} loading={detailLoading} />
+	                ) : (
+	                  <EChartLinePanel option={eventChartOption} style={{ width: "100%", height: 238 }} loading={detailLoading} />
+	                )}
 	              </div>
 	            </>
 	          )}
@@ -1310,173 +1363,44 @@ export default function Agents() {
 	        </div>
       </div>
 
-      <div className="grid-2">
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h3>SCA Hardening Priorities</h3>
-              <p className="muted">Failed checks ranked from this agent's alerts, vulnerabilities, FIM, and MITRE context.</p>
-            </div>
-            <span className="chip">Top {scaRecommendations.length}</span>
+      <div className="card">
+        <div className="card-header">
+          <div>
+            <h3>SCA Workspace</h3>
+            <p className="muted">Deep SCA analysis moved to a dedicated page for better readability.</p>
           </div>
-          <div className="grid-4 mb-12">
-            <div className="stat-card">
-              <div className="stat-label">High Alerts</div>
-              <div className="stat-value">{toNumber(scaTelemetry?.alerts_high, 0)}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Critical Vulns</div>
-              <div className="stat-value">{toNumber(scaTelemetry?.vulnerabilities_critical, 0)}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">FIM Events</div>
-              <div className="stat-value">{toNumber(scaTelemetry?.fim_events, 0)}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Failed Checks</div>
-              <div className="stat-value">{scaChecksSummary.failed}</div>
-            </div>
-          </div>
-	          {scaRecommendations.length === 0 ? (
-	            <div className="empty-state">No ranked failed checks available for this agent yet.</div>
-	          ) : (
-	            <div className="list">
-	              {pagedScaRecommendations.map((rec) => (
-	                <div key={`${rec.policy_id || rec.policy_name}-${rec.check_id}-${rec.rank}`} className="list-item">
-	                  <div className="list-item split">
-                    <div>
-                      <strong>
-                        #{toDisplay(rec.rank)} | {toDisplay(rec.policy_name)} | Check {toDisplay(rec.check_id)}
-                      </strong>
-                      <div className="meta-line">{toDisplay(rec.title)}</div>
-                    </div>
-                    <span className={`status-pill ${riskClass(rec.priority)}`}>
-                      {toDisplay(rec.priority)}
-                    </span>
-                  </div>
-                  <div className="meta-line mt-6">{toDisplay(rec.reason)}</div>
-                  {rec.remediation && (
-                    <div className="meta-line mt-6">
-                      Remediation: {toDisplay(rec.remediation)}
-                    </div>
-	                  )}
-	                </div>
-	              ))}
-              <Pager
-                total={scaRecommendations.length}
-                page={scaRecommendationsPage}
-                pageSize={scaRecommendationsPageSize}
-                onPageChange={setScaRecommendationsPage}
-                onPageSizeChange={(size) => {
-                  setScaRecommendationsPageSize(size);
-                  setScaRecommendationsPage(1);
-                }}
-                pageSizeOptions={[5, 10, 25, 50]}
-                label="recommendations"
-              />
-	            </div>
-	          )}
-	        </div>
-
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h3>Full SCA Checks</h3>
-              <p className="muted">All checks from all policy snapshots for this agent.</p>
-            </div>
-            <span className="chip">Total {scaChecksSummary.total}</span>
-          </div>
-          <div className="page-actions mb-12">
-            <select
-              className="input"
-              value={scaCheckFilter}
-              onChange={(e) => setScaCheckFilter(e.target.value)}
+          <div className="page-actions">
+            <button
+              className="btn"
+              type="button"
+              onClick={() => navigate(`/agents/${selectedAgentId}/sca`)}
+              disabled={!selectedAgentId}
             >
-              <option value="failed">Failed only</option>
-              <option value="passed">Passed only</option>
-              <option value="not applicable">Not applicable</option>
-              <option value="unknown">Unknown</option>
-              <option value="all">All</option>
-            </select>
-            <input
-              className="input"
-              value={scaCheckSearch}
-              onChange={(e) => setScaCheckSearch(e.target.value)}
-              placeholder="Search check ID, title, remediation, policy"
-            />
+              Open SCA Workspace
+            </button>
           </div>
-          <div className="grid-4 mb-12">
-            <div className="stat-card">
-              <div className="stat-label">Passed</div>
-              <div className="stat-value">{scaChecksSummary.passed}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Failed</div>
-              <div className="stat-value">{scaChecksSummary.failed}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Not Applicable</div>
-              <div className="stat-value">{scaChecksSummary.notApplicable}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Unknown</div>
-              <div className="stat-value">{scaChecksSummary.unknown}</div>
-            </div>
+        </div>
+        <div className="grid-4">
+          <div className="stat-card">
+            <div className="stat-label">Recommendations</div>
+            <div className="stat-value">{scaRecommendations.length}</div>
           </div>
-          <div className="table-scroll">
-            <table className="table compact">
-              <thead>
-                <tr>
-                  <th>Policy</th>
-                  <th>Check</th>
-                  <th>Result</th>
-                  <th>Title</th>
-                  <th>Reason</th>
-                  <th>Remediation</th>
-                </tr>
-              </thead>
-              <tbody>
-	                {filteredScaChecks.length === 0 ? (
-	                  <tr>
-	                    <td colSpan="6" className="text-center">
-	                      No checks match this filter.
-	                    </td>
-	                  </tr>
-	                ) : (
-	                  pagedFilteredScaChecks.map((check) => (
-	                    <tr key={check.key}>
-	                      <td>{toDisplay(check.policyName)}</td>
-	                      <td>{toDisplay(check.id)}</td>
-                      <td>
-                        <span className={`status-pill ${scaResultClass(check.result)}`}>
-                          {toDisplay(check.result)}
-                        </span>
-                      </td>
-                      <td>{toDisplay(check.title)}</td>
-                      <td>{toDisplay(check.reason, "-")}</td>
-                      <td>{toDisplay(check.remediation, "-")}</td>
-                    </tr>
-	                  ))
-	                )}
-	              </tbody>
-	            </table>
-	          </div>
-            <Pager
-              total={filteredScaChecks.length}
-              page={scaChecksPage}
-              pageSize={scaChecksPageSize}
-              onPageChange={setScaChecksPage}
-              onPageSizeChange={(size) => {
-                setScaChecksPageSize(size);
-                setScaChecksPage(1);
-              }}
-              pageSizeOptions={[25, 50, 100, 200]}
-              label="checks"
-            />
-	        </div>
-	      </div>
+          <div className="stat-card">
+            <div className="stat-label">Failed Checks</div>
+            <div className="stat-value">{scaChecksSummary.failed}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">Critical Vulns</div>
+            <div className="stat-value">{toNumber(scaTelemetry?.vulnerabilities_critical, 0)}</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-label">FIM Events</div>
+            <div className="stat-value">{toNumber(scaTelemetry?.fim_events, 0)}</div>
+          </div>
+        </div>
+      </div>
 
-      <div className="grid-2">
+	      <div className="grid-2">
         <div className="card">
           <div className="card-header">
             <div>

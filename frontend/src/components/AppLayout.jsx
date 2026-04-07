@@ -31,6 +31,13 @@ const ROUTE_LABELS = {
   "/orgs": "Org Admin",
 };
 
+const resolveRouteLabel = (path) => {
+  const normalized = path || "/";
+  if (ROUTE_LABELS[normalized]) return ROUTE_LABELS[normalized];
+  if (/^\/agents\/[^/]+\/sca$/i.test(normalized)) return "Agent SCA";
+  return "Workspace";
+};
+
 const NAV_SECTIONS = [
   {
     title: "Detection",
@@ -386,11 +393,11 @@ export default function AppLayout() {
 
   const breadcrumbs = useMemo(() => {
     const path = location.pathname || "/";
-    const currentLabel = ROUTE_LABELS[path] || "Workspace";
+    const currentLabel = resolveRouteLabel(path);
     return [{ label: "Workspace", href: "/" }, { label: currentLabel, href: path }];
   }, [location.pathname]);
 
-  const currentPageLabel = useMemo(() => ROUTE_LABELS[location.pathname || "/"] || "Workspace", [location.pathname]);
+  const currentPageLabel = useMemo(() => resolveRouteLabel(location.pathname || "/"), [location.pathname]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;

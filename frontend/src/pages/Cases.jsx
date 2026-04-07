@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   addCaseNote,
@@ -23,6 +23,8 @@ import {
   uploadCaseEvidence,
 } from "../api/wazuh";
 import RelativeTimestamp from "../components/RelativeTimestamp";
+import EChartGraphPanel from "../components/EChartGraphPanel";
+import EChart3DPanel from "../components/EChart3DPanel";
 import { formatWazuhTimestamp } from "../utils/time";
 import { formatApiError } from "../utils/httpErrors";
 
@@ -61,6 +63,17 @@ export default function Cases() {
   const [aiSummary, setAiSummary] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedCaseParam = searchParams.get("case") || "";
+  const [iocThreeDMode, setIocThreeDMode] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const saved = window.localStorage.getItem("soar.cases.ioc.3d");
+    if (saved === null) return true;
+    return saved === "1";
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("soar.cases.ioc.3d", iocThreeDMode ? "1" : "0");
+  }, [iocThreeDMode]);
 
   const loadCases = async () => {
     try {
@@ -367,147 +380,344 @@ export default function Cases() {
     }
   };
 
-  const renderGraph = () => {
-    const nodes = iocGraph.nodes || [];
-    const edges = iocGraph.edges || [];
-    if (nodes.length === 0) {
-      return <div className="empty-state">No IOC graph data yet.</div>;
+  const iocGraphView = useMemo(() => {
+    const nodes = Array.isArray(iocGraph.nodes) ? iocGraph.nodes : [];
+    const edges = Array.isArray(iocGraph.edges) ? iocGraph.edges : [];
+    if (!nodes.length) {
+      return { option: null, height: 280 };
     }
 
-    const columns = {
-      case: [],
-      alert: [],
-      ioc: []
-    };
-    nodes.forEach((n) => {
-      const key = columns[n.type] ? n.type : "ioc";
-      columns[key].push(n);
+    const columns = { case: [], alert: [], ioc: [] };
+    nodes.forEach((node) => {
+      const typeKey = columns[node.type] ? node.type : "ioc";
+      columns[typeKey].push(node);
     });
 
-    const columnOrder = ["case", "alert", "ioc"];
-    const width = 700;
-    const columnX = { case: 92, alert: 356, ioc: 620 };
-    const rowGap = 74;
-    const nodeRadius = 19;
-    const maxRows = Math.max(
-      columns.case.length,
-      columns.alert.length,
-      columns.ioc.length,
-      1
-    );
-    const height = maxRows * rowGap + 56;
-
+    const width = 760;
+    const rowGap = 86;
+    const columnX = { case: 120, alert: 380, ioc: 640 };
+    const maxRows = Math.max(columns.case.length, columns.alert.length, columns.ioc.length, 1);
+    const height = maxRows * rowGap + 100;
     const positions = {};
-    columnOrder.forEach((col) => {
-      columns[col].forEach((node, idx) => {
-        positions[node.id] = {
-          x: columnX[col],
-          y: 34 + idx * rowGap
+
+    ["case", "alert", "ioc"].forEach((column) => {
+      columns[column].forEach((node, idx) => {
+        positions[String(node.id)] = {
+          x: columnX[column],
+          y: 56 + idx * rowGap,
         };
       });
     });
 
-    const edgePath = (sourcePoint, targetPoint) => {
-      const controlOffset = Math.max(48, Math.abs(targetPoint.x - sourcePoint.x) * 0.4);
-      return `M ${sourcePoint.x} ${sourcePoint.y} C ${sourcePoint.x + controlOffset} ${sourcePoint.y}, ${targetPoint.x - controlOffset} ${targetPoint.y}, ${targetPoint.x} ${targetPoint.y}`;
+    const palette = {
+      case: ["#8ea8ff", "#4968e6"],
+      alert: ["#ffaf94", "#ea7150"],
+      ioc: ["#98ffd9", "#21ad82"],
     };
 
-    const nodeFillId = (type) => {
-      if (type === "case") return "iocCaseNode";
-      if (type === "alert") return "iocAlertNode";
-      return "iocIndicatorNode";
+    const graphNodes = nodes.map((node) => {
+      const typeKey = columns[node.type] ? node.type : "ioc";
+      const pos = positions[String(node.id)] || { x: width / 2, y: height / 2 };
+      const [colorA, colorB] = palette[typeKey];
+      return {
+        id: String(node.id),
+        name: String(node.label || node.id || "node"),
+        value: String(typeKey).toUpperCase(),
+        x: pos.x,
+        y: pos.y,
+        symbolSize: typeKey === "ioc" ? 32 : 38,
+        itemStyle: {
+          color: {
+            type: "radial",
+            x: 0.34,
+            y: 0.32,
+            r: 1,
+            colorStops: [
+              { offset: 0, color: colorA },
+              { offset: 1, color: colorB },
+            ],
+          },
+          borderColor: "rgba(207, 228, 248, 0.86)",
+          borderWidth: 1.6,
+          shadowBlur: 16,
+          shadowColor: "rgba(38, 118, 186, 0.35)",
+        },
+        label: {
+          show: true,
+          position: "right",
+          formatter: (params) => `${params.name}\n{sub|${params.data.value}}`,
+          rich: {
+            sub: {
+              color: "#9ab6d4",
+              fontSize: 11,
+              fontWeight: 600,
+            },
+          },
+          color: "#e9f4ff",
+          fontSize: 12,
+          fontWeight: 700,
+          lineHeight: 17,
+          textBorderColor: "rgba(5, 10, 18, 0.9)",
+          textBorderWidth: 3,
+        },
+      };
+    });
+
+    const graphLinks = edges
+      .filter((edge) => positions[String(edge.source)] && positions[String(edge.target)])
+      .map((edge) => ({
+        source: String(edge.source),
+        target: String(edge.target),
+        lineStyle: {
+          width: 2.6,
+          curveness: 0.22,
+          color: "rgba(117, 196, 247, 0.72)",
+          shadowBlur: 8,
+          shadowColor: "rgba(55, 157, 226, 0.22)",
+        },
+      }));
+
+    return {
+      height: Math.max(300, height),
+      option: {
+        backgroundColor: "transparent",
+        tooltip: {
+          trigger: "item",
+          backgroundColor: "rgba(6, 12, 21, 0.94)",
+          borderColor: "rgba(122, 166, 201, 0.62)",
+          borderWidth: 1,
+          textStyle: { color: "#d7ebff" },
+          formatter: (params) => {
+            if (params.dataType === "edge") {
+              return `${params.data.source} -> ${params.data.target}`;
+            }
+            return `${params.data.value}: ${params.data.name}`;
+          },
+        },
+        series: [
+          {
+            type: "graph",
+            layout: "none",
+            data: graphNodes,
+            links: graphLinks,
+            roam: true,
+            draggable: false,
+            edgeSymbol: ["none", "arrow"],
+            edgeSymbolSize: [0, 7],
+            lineStyle: { opacity: 0.78 },
+            emphasis: {
+              focus: "adjacency",
+              scale: true,
+              lineStyle: { width: 3.2, opacity: 1, color: "rgba(157, 223, 255, 1)" },
+            },
+            force: { repulsion: 140 },
+          },
+        ],
+      },
+    };
+  }, [iocGraph]);
+
+  const iocGraph3DView = useMemo(() => {
+    const nodes = Array.isArray(iocGraph.nodes) ? iocGraph.nodes : [];
+    const edges = Array.isArray(iocGraph.edges) ? iocGraph.edges : [];
+    if (!nodes.length) {
+      return { option: null, height: 320 };
+    }
+
+    const columns = { case: [], alert: [], ioc: [] };
+    nodes.forEach((node) => {
+      const typeKey = columns[node.type] ? node.type : "ioc";
+      columns[typeKey].push(node);
+    });
+
+    const maxRows = Math.max(columns.case.length, columns.alert.length, columns.ioc.length, 1);
+    const yOffset = ((maxRows - 1) * 14) / 2;
+    const positions = {};
+    const xByColumn = { case: -42, alert: 0, ioc: 42 };
+    const zByType = { case: 8, alert: 0, ioc: -8 };
+    const typeLabel = { case: "CASE", alert: "ALERT", ioc: "IOC" };
+    const palette = {
+      case: ["#8ea8ff", "#4f73f0"],
+      alert: ["#ffb494", "#eb7657"],
+      ioc: ["#94ffd9", "#24b488"],
     };
 
-    const nodeTypeLabel = (type) => {
-      if (type === "case") return "CASE";
-      if (type === "alert") return "ALERT";
-      return "IOC";
-    };
+    ["case", "alert", "ioc"].forEach((column) => {
+      columns[column].forEach((node, idx) => {
+        positions[String(node.id)] = {
+          x: xByColumn[column],
+          y: yOffset - idx * 14,
+          z: zByType[column],
+        };
+      });
+    });
 
+    const nodeData = nodes.map((node) => {
+      const nodeId = String(node.id);
+      const typeKey = columns[node.type] ? node.type : "ioc";
+      const pos = positions[nodeId] || { x: 0, y: 0, z: 0 };
+      const [colorA, colorB] = palette[typeKey];
+      return {
+        name: String(node.label || node.id || "node"),
+        value: [pos.x, pos.y, pos.z, String(node.label || node.id || "node"), typeLabel[typeKey], typeKey === "ioc" ? 18 : 22],
+        nodeType: typeLabel[typeKey],
+        itemStyle: {
+          color: {
+            type: "linear",
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [
+              { offset: 0, color: colorA },
+              { offset: 1, color: colorB },
+            ],
+          },
+          opacity: 0.97,
+        },
+      };
+    });
+
+    const nodeNameById = new Map(nodes.map((node) => [String(node.id), String(node.label || node.id || "node")]));
+    const linkData = edges
+      .filter((edge) => positions[String(edge.source)] && positions[String(edge.target)])
+      .map((edge) => ({
+        sourceName: nodeNameById.get(String(edge.source)) || String(edge.source),
+        targetName: nodeNameById.get(String(edge.target)) || String(edge.target),
+        coords: [
+          [positions[String(edge.source)].x, positions[String(edge.source)].y, positions[String(edge.source)].z],
+          [positions[String(edge.target)].x, positions[String(edge.target)].y, positions[String(edge.target)].z],
+        ],
+      }));
+
+    return {
+      height: Math.max(320, maxRows * 44 + 118),
+      option: {
+        backgroundColor: "transparent",
+        tooltip: {
+          trigger: "item",
+          backgroundColor: "rgba(6, 12, 21, 0.94)",
+          borderColor: "rgba(122, 166, 201, 0.62)",
+          borderWidth: 1,
+          textStyle: { color: "#d7ebff" },
+          formatter: (params) => {
+            if (params.seriesType === "lines3D") {
+              return `${params.data?.sourceName || "-"} -> ${params.data?.targetName || "-"}`;
+            }
+            const tuple = Array.isArray(params.value) ? params.value : [];
+            return `${tuple[4] || "NODE"}: ${tuple[3] || params.name || "-"}`;
+          },
+        },
+        xAxis3D: {
+          type: "value",
+          min: -56,
+          max: 56,
+          axisLine: { lineStyle: { color: "rgba(123, 164, 196, 0.5)" } },
+          axisLabel: { show: false },
+          splitLine: { lineStyle: { color: "rgba(123, 164, 196, 0.16)" } },
+        },
+        yAxis3D: {
+          type: "value",
+          min: -Math.max(18, yOffset + 10),
+          max: Math.max(18, yOffset + 10),
+          axisLine: { lineStyle: { color: "rgba(123, 164, 196, 0.38)" } },
+          axisLabel: { show: false },
+          splitLine: { lineStyle: { color: "rgba(123, 164, 196, 0.12)" } },
+        },
+        zAxis3D: {
+          type: "value",
+          min: -18,
+          max: 18,
+          axisLine: { lineStyle: { color: "rgba(123, 164, 196, 0.38)" } },
+          axisLabel: { show: false },
+          splitLine: { lineStyle: { color: "rgba(123, 164, 196, 0.12)" } },
+        },
+        grid3D: {
+          boxWidth: 138,
+          boxDepth: Math.max(44, maxRows * 17),
+          boxHeight: 46,
+          viewControl: {
+            projection: "perspective",
+            alpha: 18,
+            beta: 26,
+            distance: 136,
+            panSensitivity: 1,
+            rotateSensitivity: 1,
+            zoomSensitivity: 0.7,
+            autoRotate: false,
+          },
+          axisPointer: {
+            show: true,
+            lineStyle: { color: "rgba(132, 216, 255, 0.64)" },
+          },
+          light: {
+            main: { intensity: 1.05, shadow: false },
+            ambient: { intensity: 0.5 },
+          },
+        },
+        series: [
+          {
+            type: "lines3D",
+            data: linkData,
+            blendMode: "lighter",
+            lineStyle: {
+              width: 2.2,
+              color: "rgba(116, 206, 255, 0.76)",
+              opacity: 0.86,
+            },
+          },
+          {
+            type: "scatter3D",
+            symbol: "circle",
+            data: nodeData,
+            symbolSize: (value) => Number(value?.[5] || 18),
+            label: {
+              show: true,
+              formatter: (params) => {
+                const tuple = Array.isArray(params.value) ? params.value : [];
+                return `${tuple[3] || params.name}\n${tuple[4] || "NODE"}`;
+              },
+              distance: 8,
+              textStyle: {
+                color: "#e7f4ff",
+                fontSize: 11,
+                fontWeight: 700,
+                borderColor: "rgba(6, 12, 20, 0.9)",
+                borderWidth: 3,
+              },
+            },
+            itemStyle: {
+              borderColor: "rgba(213, 232, 248, 0.86)",
+              borderWidth: 1.4,
+              shadowBlur: 10,
+              shadowColor: "rgba(45, 125, 189, 0.38)",
+            },
+            emphasis: {
+              itemStyle: {
+                borderColor: "#d7f2ff",
+                shadowBlur: 16,
+                shadowColor: "rgba(100, 192, 255, 0.62)",
+              },
+            },
+          },
+        ],
+      },
+    };
+  }, [iocGraph]);
+
+  const renderGraph = () => {
+    if (!iocGraphView.option) {
+      return <div className="empty-state">No IOC graph data yet.</div>;
+    }
+    const use3D = iocThreeDMode && Boolean(iocGraph3DView.option);
+    const activeHeight = use3D ? iocGraph3DView.height : iocGraphView.height;
     return (
       <div className="ioc-graph-wrap">
-        <svg className="ioc-graph" width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMinYMin meet">
-          <defs>
-            <radialGradient id="iocCaseNode" cx="35%" cy="30%" r="78%">
-              <stop offset="0%" stopColor="#8ea8ff" />
-              <stop offset="72%" stopColor="#4968e6" />
-              <stop offset="100%" stopColor="#263ca2" />
-            </radialGradient>
-            <radialGradient id="iocAlertNode" cx="35%" cy="30%" r="78%">
-              <stop offset="0%" stopColor="#ffaf94" />
-              <stop offset="72%" stopColor="#ea7150" />
-              <stop offset="100%" stopColor="#932d1f" />
-            </radialGradient>
-            <radialGradient id="iocIndicatorNode" cx="35%" cy="30%" r="78%">
-              <stop offset="0%" stopColor="#98ffd9" />
-              <stop offset="72%" stopColor="#21ad82" />
-              <stop offset="100%" stopColor="#0f6047" />
-            </radialGradient>
-            <linearGradient id="iocEdgeFlow" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stopColor="rgba(110, 170, 220, 0.1)" />
-              <stop offset="40%" stopColor="rgba(114, 214, 255, 0.88)" />
-              <stop offset="100%" stopColor="rgba(103, 255, 205, 0.4)" />
-            </linearGradient>
-            <filter id="iocNodeShadow" x="-40%" y="-40%" width="180%" height="180%">
-              <feDropShadow dx="0" dy="3" stdDeviation="3.4" floodColor="rgba(4, 9, 16, 0.9)" />
-            </filter>
-          </defs>
-
-          <rect x="1" y="1" width={width - 2} height={height - 2} rx="14" fill="rgba(7, 13, 24, 0.24)" stroke="rgba(121, 149, 180, 0.24)" />
-
-          {edges.map((edge, idx) => {
-            const sourcePoint = positions[edge.source];
-            const targetPoint = positions[edge.target];
-            if (!sourcePoint || !targetPoint) return null;
-            const path = edgePath(sourcePoint, targetPoint);
-            return (
-              <g key={`${edge.source}-${edge.target}-${idx}`}>
-                <path d={path} className="ioc-edge-base" />
-                <path
-                  d={path}
-                  className="ioc-edge-flow"
-                  style={{ animationDelay: `${(idx % 7) * 0.2}s` }}
-                />
-              </g>
-            );
-          })}
-
-          {nodes.map((node, idx) => {
-            const pos = positions[node.id];
-            if (!pos) return null;
-            return (
-              <g key={node.id}>
-                <circle
-                  className="ioc-node-pulse"
-                  cx={pos.x}
-                  cy={pos.y}
-                  r={nodeRadius * 1.12}
-                  style={{ animationDelay: `${(idx % 9) * 0.14}s` }}
-                />
-                <circle
-                  className="ioc-node-shell"
-                  cx={pos.x}
-                  cy={pos.y}
-                  r={nodeRadius}
-                  fill={`url(#${nodeFillId(node.type)})`}
-                  filter="url(#iocNodeShadow)"
-                />
-                <circle
-                  className="ioc-node-glint"
-                  cx={pos.x - nodeRadius * 0.36}
-                  cy={pos.y - nodeRadius * 0.36}
-                  r={nodeRadius * 0.34}
-                />
-                <text x={pos.x + 28} y={pos.y + 3} className="ioc-node-label">
-                  {node.label}
-                </text>
-                <text x={pos.x + 28} y={pos.y + 18} className="ioc-node-sub">
-                  {nodeTypeLabel(node.type)}
-                </text>
-              </g>
-            );
-          })}
-        </svg>
+        {use3D ? (
+          <EChart3DPanel option={iocGraph3DView.option} style={{ width: "100%", height: activeHeight }} loading={detailLoading} />
+        ) : (
+          <EChartGraphPanel option={iocGraphView.option} style={{ width: "100%", height: activeHeight }} />
+        )}
       </div>
     );
   };
@@ -1030,6 +1240,15 @@ export default function Cases() {
             <div>
               <h3>IOC Graph</h3>
               <p className="muted">Case - alerts - IOCs relationship map.</p>
+            </div>
+            <div className="page-actions">
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => setIocThreeDMode((value) => !value)}
+              >
+                {iocThreeDMode ? "3D: ON" : "3D: OFF"}
+              </button>
             </div>
           </div>
           {detailLoading ? (

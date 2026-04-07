@@ -7,6 +7,7 @@ import "./styles/console-overhaul-v1.css";
 
 const Dashboard = lazy(() => import("./components/Dashboard"));
 const Agents = lazy(() => import("./pages/Agents"));
+const AgentSca = lazy(() => import("./pages/AgentSca"));
 const Actions = lazy(() => import("./pages/Actions"));
 const Alerts = lazy(() => import("./pages/Alerts"));
 const ScaFleet = lazy(() => import("./pages/ScaFleet"));
@@ -41,6 +42,7 @@ export default function App() {
           <Route element={<AppLayout />}>
             <Route path="/" element={<Dashboard />} />
             <Route path="/agents" element={<Agents />} />
+            <Route path="/agents/:agentId/sca" element={<AgentSca />} />
             <Route path="/actions" element={<Actions />} />
             <Route path="/global-shell" element={<GlobalShell />} />
             <Route path="/alerts" element={<Alerts />} />

@@ -350,7 +350,10 @@ class EndpointExecutor:
         resolved_aid = str((context or {}).get("resolved_action_id") or "").strip().lower()
 
         if aid == "global-shell" or requested_aid == "global-shell" or resolved_aid == "global-shell":
-            return 300
+            command = str((action_args or [""])[0] if action_args else "").strip()
+            if self._looks_like_long_running_windows_command(command):
+                return max(base, 3600)
+            return max(base, 300)
 
         if aid in {"patch-windows", "windows-os-update", "fleet-software-update"}:
             return max(base, 5400)
@@ -2734,7 +2737,7 @@ class EndpointExecutor:
 				    $stderrText = ""
 				    try { if (Test-Path -LiteralPath $stdoutPath) { $stdoutText = [string](Get-Content -Path $stdoutPath -Raw -ErrorAction SilentlyContinue) } } catch { }
 				    try { if (Test-Path -LiteralPath $stderrPath) { $stderrText = [string](Get-Content -Path $stderrPath -Raw -ErrorAction SilentlyContinue) } } catch { }
-				    $combined = @($stdoutText, $stderrText) | Where-Object { $_ -and $_.Trim() }
+				    $combined = @(@($stdoutText, $stderrText) | Where-Object { $_ -and $_.Trim() })
 					    return @{
 					      rc = [int]($proc.ExitCode)
 					      output = [string]([string]::Join([Environment]::NewLine, $combined))
@@ -6713,10 +6716,19 @@ catch {
                 "$ProgressPreference='SilentlyContinue';"
                 f"$sp={_ps_quote(script_path)};"
                 "if(-not (Test-Path $sp)){ throw ('script missing at '+$sp); };"
-                f"$out=(& $sp {invoke_tokens} 2>&1 | Out-String);"
+                "try { $error.Clear() } catch { };"
+                "$global:LASTEXITCODE = 0;"
+                f"$out=(& $sp {invoke_tokens} | Out-String);"
+                "$hadPsError = -not $?;"
                 "$rc=0;"
                 "if($LASTEXITCODE -ne $null){ try{ $rc=[int]$LASTEXITCODE } catch { $rc=1 } };"
-                "if($rc -ne 0){ throw $out };"
+                "if($hadPsError -or $rc -ne 0){"
+                "$err='';"
+                "try { if($error -and $error.Count -gt 0){ $err=($error[0] | Out-String) } } catch { };"
+                "if($err -and $err.Trim()){ throw $err };"
+                "if($out -and $out.Trim()){ throw $out };"
+                "throw ('script failed with exit_code='+[string]$rc);"
+                "};"
                 "Write-Output $out;"
             )
             return self._run_winrm(target, direct_script, timeout_seconds=timeout_seconds)
@@ -7378,11 +7390,18 @@ catch {
             f"$c2fAction='{safe_action}';"
             "$c2fUser=whoami;"
             "$c2fIsAdmin=([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);"
+            "function C2F-AppendLog { param([string]$Line) "
+            "if([string]::IsNullOrWhiteSpace($Line)){ return }; "
+            "for($c2fTry=0; $c2fTry -lt 3; $c2fTry++){ "
+            "try { Add-Content -Path $logFile -Value $Line -Encoding UTF8 -ErrorAction Stop; return } "
+            "catch { if($c2fTry -ge 2){ break }; Start-Sleep -Milliseconds (75*($c2fTry+1)) } "
+            "} "
+            "};"
             "$c2fStart=Get-Date -Format o;"
-            "Add-Content -Path $logFile -Value ($c2fStart+' exec='+$c2fExec+' agent='+$c2fAgent+' action='+$c2fAction+' user='+$c2fUser+' status=START');"
+            "C2F-AppendLog ($c2fStart+' exec='+$c2fExec+' agent='+$c2fAgent+' action='+$c2fAction+' user='+$c2fUser+' status=START');"
             "function C2F-Evidence { param([string]$Message) "
             "try { $ts=Get-Date -Format o; "
-            "Add-Content -Path $logFile -Value ($ts+' exec='+$c2fExec+' agent='+$c2fAgent+' action='+$c2fAction+' user='+$c2fUser+' evidence='+$Message); "
+            "C2F-AppendLog ($ts+' exec='+$c2fExec+' agent='+$c2fAgent+' action='+$c2fAction+' user='+$c2fUser+' evidence='+$Message); "
             "} catch { } };"
             "try{"
             "if($c2fAction -ne 'endpoint-healthcheck' -and (-not $c2fIsAdmin)){ throw 'Admin privileges are required for endpoint actions'; };"
@@ -7391,9 +7410,9 @@ catch {
             "catch{ $c2fStatus='FAILED'; throw }"
             "finally{"
             "$c2fEnd=Get-Date -Format o;"
-            "Add-Content -Path $logFile -Value ($c2fEnd+' exec='+$c2fExec+' agent='+$c2fAgent+' action='+$c2fAction+' user='+$c2fUser+' status='+$c2fStatus);"
+            "try { C2F-AppendLog ($c2fEnd+' exec='+$c2fExec+' agent='+$c2fAgent+' action='+$c2fAction+' user='+$c2fUser+' status='+$c2fStatus) } catch { };"
             "$needle=(' exec='+$c2fExec+' agent='+$c2fAgent+' action='+$c2fAction+' ');"
-            "Get-Content -Path $logFile | Select-String -SimpleMatch $needle | Select-Object -Last 50 | ForEach-Object { Write-Output ('C2F_LOG '+$_.Line) }"
+            "try { Get-Content -Path $logFile -ErrorAction Stop | Select-String -SimpleMatch $needle | Select-Object -Last 50 | ForEach-Object { Write-Output ('C2F_LOG '+$_.Line) } } catch { }"
             "}"
         )
 

@@ -7,40 +7,76 @@ import RelativeTimestamp from "../components/RelativeTimestamp";
 import { parseWazuhTimestamp } from "../utils/time";
 import { formatApiError } from "../utils/httpErrors";
 
-const EXECUTION_FETCH_LIMIT = 120;
+const normalizeExecutionType = (value) => {
+  const token = String(value || "").trim().toLowerCase();
+  if (token === "playbook" || token === "playbooks") return "playbook";
+  if (["global_shell", "global-shell", "globalshell", "shell"].includes(token)) return "global_shell";
+  if (token === "action" || token === "actions") return "action";
+  return "";
+};
+
+const inferExecutionType = ({ action, playbook, actionId, args }) => {
+  if (String(playbook || "").trim()) return "playbook";
+  const normalizedAction = String(actionId || action || "").trim().toLowerCase();
+  if (normalizedAction === "global-shell") return "global_shell";
+  if (normalizedAction === "custom-os-command") {
+    const argsText = typeof args === "string" ? args : JSON.stringify(args || {});
+    if (String(argsText || "").toLowerCase().includes("global-shell")) return "global_shell";
+  }
+  return "action";
+};
 
 const executionRow = (row) => {
   if (Array.isArray(row)) {
+    const action = row[2];
+    const executionType = inferExecutionType({ action });
     return {
       id: row[0],
       agent: row[1],
-      action: row[2],
+      action,
+      actionId: row[2],
+      playbook: "",
       status: row[3],
       approvedBy: row[4],
       startedAt: row[5],
       finishedAt: row[6],
+      args: null,
       targetTotal: 0,
       targetCompleted: 0,
       targetSuccess: 0,
       targetFailed: 0,
       batchSize: 0,
       summary: null,
+      executionType,
+      executionModule: executionType === "playbook" ? "playbooks" : executionType === "global_shell" ? "global-shell" : "actions",
     };
   }
+  const action = row?.action || row?.playbook || row?.coalesce || row?.coalesce_1;
+  const actionId = row?.action_id || row?.actionId || action;
+  const playbook = row?.playbook || row?.playbook_name || "";
+  const executionType = normalizeExecutionType(row?.execution_type || row?.executionType)
+    || inferExecutionType({ action, playbook, actionId, args: row?.args });
   return {
     id: row?.id,
     agent: row?.agent,
-    action: row?.action || row?.playbook || row?.coalesce || row?.coalesce_1,
+    action,
+    actionId,
+    playbook,
     status: row?.status,
     approvedBy: row?.approved_by,
     startedAt: row?.started_at,
     finishedAt: row?.finished_at,
+    args: row?.args ?? null,
     targetTotal: Number(row?.target_total || row?.summary?.total || 0),
     targetCompleted: Number(row?.target_completed || row?.summary?.completed || row?.target_count || 0),
     targetSuccess: Number(row?.target_success || row?.summary?.success || 0),
     targetFailed: Number(row?.target_failed || row?.summary?.failed || 0),
     batchSize: Number(row?.batch_size || row?.summary?.batch_size || 0),
     summary: row?.summary || null,
+    executionType,
+    executionModule:
+      String(row?.execution_module || row?.executionModule || "").trim()
+      || (executionType === "playbook" ? "playbooks" : executionType === "global_shell" ? "global-shell" : "actions"),
   };
 };
 
@@ -123,11 +159,15 @@ export default function Executions() {
   const [error, setError] = useState(null);
   const [executionSearch, setExecutionSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
   const [queuePage, setQueuePage] = useState(1);
   const [queuePageSize, setQueuePageSize] = useState(15);
   const [aiTriage, setAiTriage] = useState(null);
   const [aiTriageLoading, setAiTriageLoading] = useState(false);
   const [aiTriageError, setAiTriageError] = useState("");
+  const [selectedRunDetail, setSelectedRunDetail] = useState(null);
+  const [selectedRunDetailLoading, setSelectedRunDetailLoading] = useState(false);
+  const [selectedRunDetailError, setSelectedRunDetailError] = useState("");
 
   const prefillExecutionId = useMemo(() => {
     const fromState = location?.state?.prefillExecutionId;
@@ -143,7 +183,7 @@ export default function Executions() {
     if (loadInFlightRef.current) return;
     loadInFlightRef.current = true;
     if (initialLoadRef.current) setLoading(true);
-    getExecutions({ limit: EXECUTION_FETCH_LIMIT }, { force })
+    getExecutions({}, { force })
       .then((r) => {
         const data = (Array.isArray(r.data) ? r.data : []).map((row) => executionRow(row));
         setRuns(data);
@@ -179,6 +219,7 @@ export default function Executions() {
     if (!prefillExecutionId) return;
     setExecutionSearch("");
     setStatusFilter("");
+    setTypeFilter("");
     setQueuePage(1);
     setSelected(prefillExecutionId);
   }, [prefillExecutionId]);
@@ -250,9 +291,10 @@ export default function Executions() {
         String(run.action || "").toLowerCase().includes(query) ||
         String(run.approvedBy || "").toLowerCase().includes(query);
       const matchesStatus = !statusFilter || String(run.status || "").toUpperCase() === statusFilter;
-      return matchesQuery && matchesStatus;
+      const matchesType = !typeFilter || normalizeExecutionType(run.executionType) === typeFilter;
+      return matchesQuery && matchesStatus && matchesType;
     });
-  }, [parsedRuns, executionSearch, statusFilter]);
+  }, [parsedRuns, executionSearch, statusFilter, typeFilter]);
 
   useEffect(() => {
     const totalPages = Math.max(1, Math.ceil(filteredRuns.length / queuePageSize));
@@ -280,6 +322,60 @@ export default function Executions() {
     setAiTriageError("");
     setAiTriageLoading(false);
   }, [selectedRun?.id]);
+
+  useEffect(() => {
+    if (!detailMode || !selectedRun?.id) {
+      setSelectedRunDetail(null);
+      setSelectedRunDetailError("");
+      setSelectedRunDetailLoading(false);
+      return;
+    }
+    let active = true;
+    setSelectedRunDetailLoading(true);
+    setSelectedRunDetailError("");
+    getExecutionDetail(selectedRun.id)
+      .then((res) => {
+        if (!active) return;
+        setSelectedRunDetail(res?.data || null);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setSelectedRunDetail(null);
+        setSelectedRunDetailError(formatApiError(err, "Unable to load execution detail."));
+      })
+      .finally(() => {
+        if (!active) return;
+        setSelectedRunDetailLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [detailMode, selectedRun?.id]);
+
+  const selectedPlaybookSnapshot = useMemo(() => {
+    if (!selectedRun || normalizeExecutionType(selectedRun.executionType) !== "playbook") return null;
+    const serverSnapshot = selectedRunDetail?.playbook_snapshot;
+    if (serverSnapshot && typeof serverSnapshot === "object") return serverSnapshot;
+    const execution = selectedRunDetail?.execution;
+    let argsPayload = execution?.args ?? selectedRun?.args;
+    if (typeof argsPayload === "string") {
+      try {
+        argsPayload = JSON.parse(argsPayload);
+      } catch {
+        return {
+          name: execution?.playbook || selectedRun?.playbook || selectedRun?.action || "playbook",
+          raw: argsPayload,
+        };
+      }
+    }
+    if (!argsPayload || typeof argsPayload !== "object") return null;
+    const steps = Array.isArray(argsPayload.steps) ? argsPayload.steps : [];
+    return {
+      name: execution?.playbook || selectedRun?.playbook || selectedRun?.action || "playbook",
+      description: String(argsPayload.description || "").trim(),
+      steps,
+    };
+  }, [selectedRun, selectedRunDetail]);
 
   useEffect(() => {
     if (!prefillExecutionId || !selectedRun) return;
@@ -351,6 +447,12 @@ export default function Executions() {
             <option value="KILLED">KILLED</option>
             <option value="CANCELLED">CANCELLED</option>
           </select>
+          <select className="input" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+            <option value="">All modules</option>
+            <option value="action">Actions</option>
+            <option value="global_shell">Global Shell</option>
+            <option value="playbook">Playbooks</option>
+          </select>
           <button className="btn secondary" onClick={() => load(true)}>
             Refresh
           </button>
@@ -415,6 +517,14 @@ export default function Executions() {
               <span className="kv-value">{selectedRun.action || "-"}</span>
             </div>
             <div className="kv-row">
+              <span className="kv-key">Module</span>
+              <span className="kv-value">{selectedRun.executionModule || "-"}</span>
+            </div>
+            <div className="kv-row">
+              <span className="kv-key">Execution Type</span>
+              <span className="kv-value">{selectedRun.executionType || "-"}</span>
+            </div>
+            <div className="kv-row">
               <span className="kv-key">Target</span>
               <span className="kv-value">{selectedRun.agent || "-"}</span>
             </div>
@@ -435,6 +545,7 @@ export default function Executions() {
               <span className="kv-value">{formatDuration(selectedRun.startedAt, selectedRun.finishedAt)}</span>
             </div>
           </div>
+          {selectedRunDetailError ? <div className="empty-state">{selectedRunDetailError}</div> : null}
           <details className="ticketing-detail-section" open>
             <summary>AI Triage</summary>
             {aiTriageError ? <div className="empty-state">{aiTriageError}</div> : null}
@@ -472,6 +583,18 @@ export default function Executions() {
                 </div>
               </div>
             ) : null}
+          </details>
+          <details className="ticketing-detail-section" open>
+            <summary>Playbook Snapshot</summary>
+            {normalizeExecutionType(selectedRun.executionType) !== "playbook" ? (
+              <div className="empty-state">This execution was not triggered from a playbook.</div>
+            ) : selectedRunDetailLoading ? (
+              <div className="empty-state">Loading playbook snapshot...</div>
+            ) : selectedPlaybookSnapshot ? (
+              <pre className="code-block">{JSON.stringify(selectedPlaybookSnapshot, null, 2)}</pre>
+            ) : (
+              <div className="empty-state">No stored playbook snapshot was found for this execution.</div>
+            )}
           </details>
           <details className="ticketing-detail-section" open>
             <summary>Execution Stream</summary>

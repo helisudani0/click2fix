@@ -1,4 +1,5 @@
 import os
+import time
 
 from passlib.context import CryptContext
 from sqlalchemy import (
@@ -15,6 +16,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.exc import OperationalError, TimeoutError as SATimeoutError
 
 from core.settings import SETTINGS
 from core.time_utils import row_to_json_list
@@ -28,7 +30,42 @@ DATABASE_URL = os.getenv(
     ),
 )
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
+_DB_SETTINGS = SETTINGS.get("database", {}) if isinstance(SETTINGS, dict) else {}
+
+
+def _int_setting(env_key: str, settings_key: str, default: int, minimum: int = 0) -> int:
+    raw = os.getenv(env_key)
+    if raw is None:
+        raw = _DB_SETTINGS.get(settings_key)
+    try:
+        value = int(raw)
+    except Exception:
+        value = int(default)
+    return max(int(minimum), value)
+
+
+_DB_POOL_SIZE = _int_setting("C2F_DB_POOL_SIZE", "pool_size", 20, minimum=1)
+_DB_MAX_OVERFLOW = _int_setting("C2F_DB_MAX_OVERFLOW", "max_overflow", 40, minimum=0)
+_DB_POOL_TIMEOUT = _int_setting("C2F_DB_POOL_TIMEOUT_SECONDS", "pool_timeout_seconds", 30, minimum=1)
+_DB_POOL_RECYCLE = _int_setting("C2F_DB_POOL_RECYCLE_SECONDS", "pool_recycle_seconds", 1800, minimum=30)
+_DB_CONNECT_RETRIES = _int_setting("C2F_DB_CONNECT_RETRIES", "connect_retries", 3, minimum=1)
+_DB_CONNECT_RETRY_DELAY_MS = _int_setting(
+    "C2F_DB_CONNECT_RETRY_DELAY_MS",
+    "connect_retry_delay_ms",
+    250,
+    minimum=25,
+)
+
+
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=_DB_POOL_SIZE,
+    max_overflow=_DB_MAX_OVERFLOW,
+    pool_timeout=_DB_POOL_TIMEOUT,
+    pool_recycle=_DB_POOL_RECYCLE,
+    future=True,
+)
 metadata = MetaData()
 
 approvals = Table(
@@ -868,7 +905,15 @@ service_runtime_leases = Table(
 
 
 def connect():
-    return engine.connect()
+    retries = max(1, int(_DB_CONNECT_RETRIES))
+    delay_seconds = max(0.025, int(_DB_CONNECT_RETRY_DELAY_MS) / 1000.0)
+    for attempt in range(retries):
+        try:
+            return engine.connect()
+        except (OperationalError, SATimeoutError):
+            if attempt >= retries - 1:
+                raise
+            time.sleep(delay_seconds * (attempt + 1))
 
 
 def init():

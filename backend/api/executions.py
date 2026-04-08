@@ -111,6 +111,36 @@ def _is_active_execution_status(status: str, finished_at: Any = None) -> bool:
     return value in {"QUEUED", "RUNNING", "PARTIAL", "PENDING", "PENDING_VERIFICATION", "PAUSED"}
 
 
+def _is_global_shell_execution(action_id: Any, args: Any = None) -> bool:
+    normalized = str(action_id or "").strip().lower()
+    if normalized == "global-shell":
+        return True
+    if normalized != "custom-os-command":
+        return False
+    args_text = _to_text(args).lower()
+    return "global-shell" in args_text
+
+
+def _derive_execution_classification(execution: dict[str, Any] | None) -> tuple[str, str]:
+    item = execution if isinstance(execution, dict) else {}
+    playbook_name = str(item.get("playbook") or "").strip()
+    action_id = str(item.get("action_id") or item.get("action") or "").strip()
+    args_payload = item.get("args")
+    if playbook_name:
+        return "playbook", "playbooks"
+    if _is_global_shell_execution(action_id, args_payload):
+        return "global_shell", "global-shell"
+    return "action", "actions"
+
+
+def _apply_execution_classification(execution: dict[str, Any] | None) -> dict[str, Any]:
+    item = dict(execution or {})
+    execution_type, execution_module = _derive_execution_classification(item)
+    item["execution_type"] = execution_type
+    item["execution_module"] = execution_module
+    return item
+
+
 def _execution_summary(execution: dict[str, Any], targets: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     payload = execution if isinstance(execution, dict) else {}
     total = _to_int(payload.get("target_total"), 0)
@@ -569,8 +599,9 @@ def _windows_kill_script(exec_id: int | None = None, delay_seconds: int = 3) -> 
 
 @router.get("")
 def list_executions(
-    limit: int = Query(default=200, ge=1, le=1000),
+    limit: int | None = Query(default=None, ge=1),
     status: str | None = None,
+    execution_type: str | None = Query(default=None, alias="type"),
     q: str | None = None,
     include_latest_output: bool = Query(default=False, description="Include truncated latest stdout/stderr previews."),
     user=Depends(current_user),
@@ -581,14 +612,31 @@ def list_executions(
     db = connect()
     try:
         where = []
-        params = {"limit": limit}
+        params: dict[str, Any] = {}
+        if limit is not None:
+            params["limit"] = int(limit)
         if status:
             where.append("e.status = :status")
             params["status"] = status
+        normalized_type = str(execution_type or "").strip().lower()
+        global_shell_sql = (
+            "(LOWER(COALESCE(e.action, '')) = 'global-shell' "
+            "OR (LOWER(COALESCE(e.action, '')) = 'custom-os-command' AND COALESCE(e.args, '') ILIKE '%global-shell%'))"
+        )
+        if normalized_type:
+            if normalized_type in {"playbook", "playbooks"}:
+                where.append("COALESCE(e.playbook, '') <> ''")
+            elif normalized_type in {"global_shell", "global-shell", "globalshell", "shell"}:
+                where.append(global_shell_sql)
+            elif normalized_type in {"action", "actions"}:
+                where.append(f"COALESCE(e.playbook, '') = '' AND NOT {global_shell_sql}")
+            else:
+                raise HTTPException(status_code=400, detail="Unsupported execution type filter")
         if q:
             where.append("(e.agent ILIKE :q OR e.action ILIKE :q OR e.playbook ILIKE :q)")
             params["q"] = f"%{q}%"
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+        limit_sql = "LIMIT :limit" if limit is not None else ""
         latest_output_sql = "NULL::text AS latest_stdout, NULL::text AS latest_stderr"
         if include_latest_output:
             latest_output_sql = """
@@ -613,6 +661,8 @@ def list_executions(
                 SELECT
                     e.id,
                     e.agent,
+                    e.playbook,
+                    e.action AS action_id,
                     COALESCE(e.action, e.playbook) AS action,
                     e.args,
                     e.status,
@@ -634,14 +684,14 @@ def list_executions(
                 FROM executions e
                 {where_sql}
                 ORDER BY e.started_at DESC
-                LIMIT :limit
+                {limit_sql}
                 """
             ),
             params,
         ).fetchall()
         items = []
         for row in rows:
-            item = _serialize_row(row)
+            item = _apply_execution_classification(_serialize_row(row))
             item["summary"] = _execution_summary(item)
             items.append(item)
         return items
@@ -1166,7 +1216,7 @@ def execution_detail(execution_id: int, user=Depends(current_user)):
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Execution not found")
-        execution = _serialize_row(row)
+        execution = _apply_execution_classification(_serialize_row(row))
 
         steps = db.execute(
             text(
@@ -1273,6 +1323,24 @@ def execution_detail(execution_id: int, user=Depends(current_user)):
 
         action_id = execution.get("action") or ""
         playbook_name = execution.get("playbook") or ""
+        playbook_snapshot = None
+        if str(execution.get("execution_type") or "").strip().lower() == "playbook":
+            raw_args = execution.get("args")
+            parsed_args = raw_args
+            if isinstance(raw_args, str):
+                try:
+                    parsed_args = json.loads(raw_args)
+                except Exception:
+                    parsed_args = None
+            if isinstance(parsed_args, dict):
+                snapshot_steps = parsed_args.get("steps")
+                if isinstance(snapshot_steps, list):
+                    playbook_snapshot = {
+                        "name": str(playbook_name or parsed_args.get("name") or "").strip() or "playbook",
+                        "description": str(parsed_args.get("description") or "").strip(),
+                        "steps": snapshot_steps,
+                    }
+
         action_meta = None
         if action_id:
             try:
@@ -1308,6 +1376,7 @@ def execution_detail(execution_id: int, user=Depends(current_user)):
             "justification": justification,
             "action": action_meta,
             "playbook": playbook_meta,
+            "playbook_snapshot": playbook_snapshot,
         }
     finally:
         db.close()

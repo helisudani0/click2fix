@@ -24,7 +24,6 @@ import {
 } from "../api/wazuh";
 import RelativeTimestamp from "../components/RelativeTimestamp";
 import EChartGraphPanel from "../components/EChartGraphPanel";
-import EChart3DPanel from "../components/EChart3DPanel";
 import { formatWazuhTimestamp } from "../utils/time";
 import { formatApiError } from "../utils/httpErrors";
 
@@ -63,7 +62,6 @@ export default function Cases() {
   const [aiSummary, setAiSummary] = useState(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedCaseParam = searchParams.get("case") || "";
-  const [iocThreeDAvailable, setIocThreeDAvailable] = useState(true);
 
   const loadCases = async () => {
     try {
@@ -507,212 +505,13 @@ export default function Cases() {
     };
   }, [iocGraph]);
 
-  const iocGraph3DView = useMemo(() => {
-    const nodes = Array.isArray(iocGraph.nodes) ? iocGraph.nodes : [];
-    const edges = Array.isArray(iocGraph.edges) ? iocGraph.edges : [];
-    if (!nodes.length) {
-      return { option: null, height: 320 };
-    }
-
-    const columns = { case: [], alert: [], ioc: [] };
-    nodes.forEach((node) => {
-      const typeKey = columns[node.type] ? node.type : "ioc";
-      columns[typeKey].push(node);
-    });
-
-    const maxRows = Math.max(columns.case.length, columns.alert.length, columns.ioc.length, 1);
-    const yOffset = ((maxRows - 1) * 14) / 2;
-    const positions = {};
-    const xByColumn = { case: -42, alert: 0, ioc: 42 };
-    const zByType = { case: 8, alert: 0, ioc: -8 };
-    const typeLabel = { case: "CASE", alert: "ALERT", ioc: "IOC" };
-    const palette = {
-      case: ["#8ea8ff", "#4f73f0"],
-      alert: ["#ffb494", "#eb7657"],
-      ioc: ["#94ffd9", "#24b488"],
-    };
-
-    ["case", "alert", "ioc"].forEach((column) => {
-      columns[column].forEach((node, idx) => {
-        positions[String(node.id)] = {
-          x: xByColumn[column],
-          y: yOffset - idx * 14,
-          z: zByType[column],
-        };
-      });
-    });
-
-    const nodeData = nodes.map((node) => {
-      const nodeId = String(node.id);
-      const typeKey = columns[node.type] ? node.type : "ioc";
-      const pos = positions[nodeId] || { x: 0, y: 0, z: 0 };
-      const [colorA, colorB] = palette[typeKey];
-      return {
-        name: String(node.label || node.id || "node"),
-        value: [pos.x, pos.y, pos.z, String(node.label || node.id || "node"), typeLabel[typeKey], typeKey === "ioc" ? 18 : 22],
-        nodeType: typeLabel[typeKey],
-        itemStyle: {
-          color: {
-            type: "linear",
-            x: 0,
-            y: 0,
-            x2: 0,
-            y2: 1,
-            colorStops: [
-              { offset: 0, color: colorA },
-              { offset: 1, color: colorB },
-            ],
-          },
-          opacity: 0.97,
-        },
-      };
-    });
-
-    const nodeNameById = new Map(nodes.map((node) => [String(node.id), String(node.label || node.id || "node")]));
-    const linkData = edges
-      .filter((edge) => positions[String(edge.source)] && positions[String(edge.target)])
-      .map((edge) => ({
-        sourceName: nodeNameById.get(String(edge.source)) || String(edge.source),
-        targetName: nodeNameById.get(String(edge.target)) || String(edge.target),
-        coords: [
-          [positions[String(edge.source)].x, positions[String(edge.source)].y, positions[String(edge.source)].z],
-          [positions[String(edge.target)].x, positions[String(edge.target)].y, positions[String(edge.target)].z],
-        ],
-      }));
-
-    return {
-      height: Math.max(320, maxRows * 44 + 118),
-      option: {
-        backgroundColor: "transparent",
-        tooltip: {
-          trigger: "item",
-          backgroundColor: "rgba(6, 12, 21, 0.94)",
-          borderColor: "rgba(122, 166, 201, 0.62)",
-          borderWidth: 1,
-          textStyle: { color: "#d7ebff" },
-          formatter: (params) => {
-            if (params.seriesType === "lines3D") {
-              return `${params.data?.sourceName || "-"} -> ${params.data?.targetName || "-"}`;
-            }
-            const tuple = Array.isArray(params.value) ? params.value : [];
-            return `${tuple[4] || "NODE"}: ${tuple[3] || params.name || "-"}`;
-          },
-        },
-        xAxis3D: {
-          type: "value",
-          min: -56,
-          max: 56,
-          axisLine: { lineStyle: { color: "rgba(123, 164, 196, 0.5)" } },
-          axisLabel: { show: false },
-          splitLine: { lineStyle: { color: "rgba(123, 164, 196, 0.16)" } },
-        },
-        yAxis3D: {
-          type: "value",
-          min: -Math.max(18, yOffset + 10),
-          max: Math.max(18, yOffset + 10),
-          axisLine: { lineStyle: { color: "rgba(123, 164, 196, 0.38)" } },
-          axisLabel: { show: false },
-          splitLine: { lineStyle: { color: "rgba(123, 164, 196, 0.12)" } },
-        },
-        zAxis3D: {
-          type: "value",
-          min: -18,
-          max: 18,
-          axisLine: { lineStyle: { color: "rgba(123, 164, 196, 0.38)" } },
-          axisLabel: { show: false },
-          splitLine: { lineStyle: { color: "rgba(123, 164, 196, 0.12)" } },
-        },
-        grid3D: {
-          boxWidth: 138,
-          boxDepth: Math.max(44, maxRows * 17),
-          boxHeight: 46,
-          viewControl: {
-            projection: "perspective",
-            alpha: 18,
-            beta: 26,
-            distance: 136,
-            panSensitivity: 1,
-            rotateSensitivity: 1,
-            zoomSensitivity: 0.7,
-            autoRotate: false,
-          },
-          axisPointer: {
-            show: true,
-            lineStyle: { color: "rgba(132, 216, 255, 0.64)" },
-          },
-          light: {
-            main: { intensity: 1.05, shadow: false },
-            ambient: { intensity: 0.5 },
-          },
-        },
-        series: [
-          {
-            type: "lines3D",
-            data: linkData,
-            blendMode: "lighter",
-            lineStyle: {
-              width: 2.2,
-              color: "rgba(116, 206, 255, 0.76)",
-              opacity: 0.86,
-            },
-          },
-          {
-            type: "scatter3D",
-            symbol: "circle",
-            data: nodeData,
-            symbolSize: (value) => Number(value?.[5] || 18),
-            label: {
-              show: true,
-              formatter: (params) => {
-                const tuple = Array.isArray(params.value) ? params.value : [];
-                return `${tuple[3] || params.name}\n${tuple[4] || "NODE"}`;
-              },
-              distance: 8,
-              textStyle: {
-                color: "#e7f4ff",
-                fontSize: 11,
-                fontWeight: 700,
-                borderColor: "rgba(6, 12, 20, 0.9)",
-                borderWidth: 3,
-              },
-            },
-            itemStyle: {
-              borderColor: "rgba(213, 232, 248, 0.86)",
-              borderWidth: 1.4,
-              shadowBlur: 10,
-              shadowColor: "rgba(45, 125, 189, 0.38)",
-            },
-            emphasis: {
-              itemStyle: {
-                borderColor: "#d7f2ff",
-                shadowBlur: 16,
-                shadowColor: "rgba(100, 192, 255, 0.62)",
-              },
-            },
-          },
-        ],
-      },
-    };
-  }, [iocGraph]);
-
   const renderGraph = () => {
     if (!iocGraphView.option) {
       return <div className="empty-state">No IOC graph data yet.</div>;
     }
-    const use3D = iocThreeDAvailable && Boolean(iocGraph3DView.option);
-    const activeHeight = use3D ? iocGraph3DView.height : iocGraphView.height;
     return (
       <div className="ioc-graph-wrap">
-        {use3D ? (
-          <EChart3DPanel
-            option={iocGraph3DView.option}
-            style={{ width: "100%", height: activeHeight }}
-            loading={detailLoading}
-            onUnavailable={() => setIocThreeDAvailable(false)}
-          />
-        ) : (
-          <EChartGraphPanel option={iocGraphView.option} style={{ width: "100%", height: activeHeight }} />
-        )}
+        <EChartGraphPanel option={iocGraphView.option} style={{ width: "100%", height: iocGraphView.height }} />
       </div>
     );
   };

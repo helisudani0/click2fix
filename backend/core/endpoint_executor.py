@@ -120,6 +120,13 @@ class EndpointExecutor:
                 1200,
             ),
         )
+        self.windows_inline_custom_command_max_chars = max(
+            256,
+            _to_int(
+                os.getenv("C2F_WINDOWS_INLINE_COMMAND_MAX_CHARS", "4096"),
+                4096,
+            ),
+        )
         self.indexer = IndexerClient()
         self.circuit_breaker_enabled = _bool(
             os.getenv(
@@ -2586,15 +2593,16 @@ class EndpointExecutor:
 
         if aid == "custom-os-command":
             return r"""
-			param(
-			  [string]$ExecId = "adhoc",
-			  [string]$AgentId = "",
-			  [string]$ActionId = "custom-os-command",
-			  [string]$LogFile = "C:\Click2Fix\logs\executions.log",
-			  [string]$CommandFile = "",
-			  [string]$VerifyKb = "",
-			  [string]$VerifyMinBuild = "",
-			  [string]$VerifyStdoutContains = "",
+				param(
+				  [string]$ExecId = "adhoc",
+				  [string]$AgentId = "",
+				  [string]$ActionId = "custom-os-command",
+				  [string]$LogFile = "C:\Click2Fix\logs\executions.log",
+				  [string]$Command = "",
+				  [string]$CommandFile = "",
+				  [string]$VerifyKb = "",
+				  [string]$VerifyMinBuild = "",
+				  [string]$VerifyStdoutContains = "",
 			  [string]$RunAsSystem = "false",
 			  [int]$MaxRuntimeSeconds = 1800
 			)
@@ -2661,35 +2669,49 @@ class EndpointExecutor:
 			  return 0
 			}
 
-				function C2F-LoadCommandPayload {
-				  param([string]$CommandPath)
-				  $payloadRaw = [string](Get-Content -Path $CommandPath -Raw -ErrorAction Stop)
-				  $payloadTrimmed = $payloadRaw.Trim()
-				  if (-not $payloadTrimmed) {
-				    throw "custom-os-command requires command argument"
-				  }
-				  $commandText = ""
-				  $encodedPayload = ""
-				  if ($payloadTrimmed.StartsWith("C2FENC:", [System.StringComparison]::OrdinalIgnoreCase)) {
-				    $encodedPayload = $payloadTrimmed.Substring(7).Trim()
-				    if (-not $encodedPayload) {
-				      throw "custom-os-command requires command argument"
-				    }
-				    try {
-				      $commandText = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encodedPayload))
-				    } catch {
-				      throw "custom-os-command encoded payload is invalid"
-				    }
-				  }
-				  if (-not $commandText) {
-				    $commandText = [string]$payloadRaw
-				    $encodedPayload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
-				  }
-				  return @{
-				    command = [string]$commandText
-				    encoded = [string]$encodedPayload
-				  }
-				}
+					function C2F-ResolveCommandPayload {
+					  param(
+					    [string]$CommandText = "",
+					    [string]$CommandPath = ""
+					  )
+					  $payloadRaw = ""
+					  $inline = [string]$CommandText
+					  if ($inline -and $inline.Trim()) {
+					    $payloadRaw = $inline
+					  } elseif ($CommandPath -and $CommandPath.Trim()) {
+					    if (-not (Test-Path -LiteralPath $CommandPath)) {
+					      throw ("custom-os-command command file missing: " + $CommandPath)
+					    }
+					    $payloadRaw = [string](Get-Content -Path $CommandPath -Raw -ErrorAction Stop)
+					  } else {
+					    throw "custom-os-command requires command argument"
+					  }
+					  $payloadTrimmed = $payloadRaw.Trim()
+					  if (-not $payloadTrimmed) {
+					    throw "custom-os-command requires command argument"
+					  }
+					  $resolvedCommandText = ""
+					  $encodedPayload = ""
+					  if ($payloadTrimmed.StartsWith("C2FENC:", [System.StringComparison]::OrdinalIgnoreCase)) {
+					    $encodedPayload = $payloadTrimmed.Substring(7).Trim()
+					    if (-not $encodedPayload) {
+					      throw "custom-os-command requires command argument"
+					    }
+					    try {
+					      $resolvedCommandText = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encodedPayload))
+					    } catch {
+					      throw "custom-os-command encoded payload is invalid"
+					    }
+					  }
+					  if (-not $resolvedCommandText) {
+					    $resolvedCommandText = [string]$payloadRaw
+					    $encodedPayload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($resolvedCommandText))
+					  }
+					  return @{
+					    command = [string]$resolvedCommandText
+					    encoded = [string]$encodedPayload
+					  }
+					}
 
 					function C2F-RunEncodedCommand {
 					  param(
@@ -2857,21 +2879,14 @@ class EndpointExecutor:
 			  }
 			}
 
-		try {
-		  C2F-Status "START"
-		  if (-not $CommandFile -or -not $CommandFile.Trim()) {
-		    throw "custom-os-command requires command argument"
-		  }
-		  if (-not (Test-Path $CommandFile)) {
-		    throw ("custom-os-command command file missing: " + $CommandFile)
-		  }
-
-					  $payload = C2F-LoadCommandPayload -CommandPath $CommandFile
-					  $cmd = [string]$payload.command
-					  $encodedCommand = [string]$payload.encoded
-					  if (-not $cmd -or -not $cmd.Trim()) {
-					    throw "custom-os-command requires command argument"
-					  }
+			try {
+			  C2F-Status "START"
+						  $payload = C2F-ResolveCommandPayload -CommandText $Command -CommandPath $CommandFile
+						  $cmd = [string]$payload.command
+						  $encodedCommand = [string]$payload.encoded
+						  if (-not $cmd -or -not $cmd.Trim()) {
+						    throw "custom-os-command requires command argument"
+						  }
 
 						  $safe = $cmd.Replace("|", "/").Replace("`r", " ").Replace("`n", " ")
 						  if ($safe.Length -gt 220) { $safe = $safe.Substring(0, 220) + "..." }
@@ -5519,12 +5534,7 @@ catch {
         ctx = context or {}
         event_sink = ctx.get("_event_sink") if isinstance(ctx, dict) and callable(ctx.get("_event_sink")) else None
         aid = str(action_id or "").strip().lower()
-        force_serial = False
-        if aid == "custom-os-command":
-            # Keep SYSTEM custom commands serialized, but allow non-SYSTEM commands
-            # (for example, whoami across multiple endpoints) to run in parallel.
-            run_as_system = _bool(action_args[4] if len(action_args) > 4 else False, False)
-            force_serial = bool(run_as_system)
+        force_serial = aid == "custom-os-command"
         stagger_actions = {"patch-windows", "windows-os-update", "fleet-software-update", "package-update"}
         use_stagger = (
             aid in stagger_actions
@@ -5559,15 +5569,16 @@ catch {
         else:
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {}
+                ordered_results: List[Optional[Dict[str, Any]]] = [None] * len(targets)
                 for idx, target in enumerate(targets):
                     self._guard_task_ingestion_for_memory(aid, event_sink=event_sink)
                     if use_stagger and idx > 0:
                         time.sleep(self.windows_patch_stagger_seconds)
                     fut = pool.submit(self._execute_target, action_id, action_args, target, ctx)
-                    futures[fut] = target
+                    futures[fut] = (idx, target)
 
                 for fut in as_completed(futures):
-                    target = futures[fut]
+                    idx, target = futures[fut]
                     try:
                         result = fut.result()
                     except Exception as exc:
@@ -5580,7 +5591,7 @@ catch {
                             "stdout": "",
                             "stderr": str(exc),
                         }
-                    results.append(result)
+                    ordered_results[idx] = result
                     if on_progress:
                         try:
                             on_progress(result)
@@ -5589,6 +5600,7 @@ catch {
                             pass
                     if self.stop_on_error and not result["ok"]:
                         break
+                results = [row for row in ordered_results if row is not None]
 
         success = sum(1 for r in results if r["ok"])
         failed = len(results) - success
@@ -5897,33 +5909,45 @@ catch {
                             "stdout": "",
                             "stderr": "custom-os-command command is empty after normalization",
                         }
-                    command_file = (
-                        r"C:\Click2Fix\scripts\inputs\custom-cmd-"
-                        + self._execution_tag(context)
-                        + "-"
-                        + str(target.get("agent_id") or "agent")
-                        + "-"
-                        + uuid.uuid4().hex
-                        + ".ps1"
-                    )
-                    try:
-                        self._upload_windows_script(target, command_file, "C2FENC:" + _ps_encoded_command(normalized_command))
-                    except Exception as exc:
-                        return {
-                            "agent_id": target["agent_id"],
-                            "agent_name": target["agent_name"],
-                            "target_ip": target["ip"],
-                            "platform": target["platform"],
-                            "ok": False,
-                            "status_code": 1,
-                            "stdout": "",
-                            "stderr": f"Failed to upload custom command payload: {exc}",
-                        }
-                    task_args["CommandFile"] = command_file
+                    wrapped_command = self._wrap_windows_custom_command(normalized_command)
+                    run_as_system_flag = _bool(action_args[4] if len(action_args) > 4 else False, False)
+                    inline_payload = "C2FENC:" + _ps_encoded_command(wrapped_command)
+                    if (not run_as_system_flag) and len(inline_payload) <= int(self.windows_inline_custom_command_max_chars):
+                        # Fast path for common shell commands (for example: whoami).
+                        # Avoiding per-command payload file upload removes multiple WinRM round-trips.
+                        task_args["Command"] = inline_payload
+                    else:
+                        command_file = (
+                            r"C:\Click2Fix\scripts\inputs\custom-cmd-"
+                            + self._execution_tag(context)
+                            + "-"
+                            + str(target.get("agent_id") or "agent")
+                            + "-"
+                            + uuid.uuid4().hex
+                            + ".ps1"
+                        )
+                        try:
+                            self._upload_windows_script(
+                                target,
+                                command_file,
+                                inline_payload,
+                            )
+                        except Exception as exc:
+                            return {
+                                "agent_id": target["agent_id"],
+                                "agent_name": target["agent_name"],
+                                "target_ip": target["ip"],
+                                "platform": target["platform"],
+                                "ok": False,
+                                "status_code": 1,
+                                "stdout": "",
+                                "stderr": f"Failed to upload custom command payload: {exc}",
+                            }
+                        task_args["CommandFile"] = command_file
                     task_args["VerifyKb"] = action_args[1] if len(action_args) > 1 else ""
                     task_args["VerifyMinBuild"] = action_args[2] if len(action_args) > 2 else ""
                     task_args["VerifyStdoutContains"] = action_args[3] if len(action_args) > 3 else ""
-                    task_args["RunAsSystem"] = _bool(action_args[4] if len(action_args) > 4 else False, False)
+                    task_args["RunAsSystem"] = run_as_system_flag
                     task_args["MaxRuntimeSeconds"] = max(180, int(timeout_seconds))
 
                 try:
@@ -6095,6 +6119,27 @@ catch {
         normalized = raw.replace("\r\n", "\n").replace("\r", "\n")
         return cls._unwrap_windows_powershell_invocation(normalized)
 
+    @staticmethod
+    def _wrap_windows_custom_command(command: str) -> str:
+        text = str(command or "").strip()
+        if not text:
+            return ""
+        # Force non-terminating PowerShell errors to fail and propagate external exit codes.
+        return "\n".join(
+            [
+                "$ErrorActionPreference='Stop'",
+                "$ProgressPreference='SilentlyContinue'",
+                "try {",
+                text,
+                "if($LASTEXITCODE -ne 0){ exit $LASTEXITCODE }",
+                "} catch {",
+                "$err = $_ | Out-String",
+                "Write-Error $err",
+                "exit 1",
+                "}",
+            ]
+        )
+
     @classmethod
     def _unwrap_windows_powershell_invocation(cls, value: str) -> str:
         text = str(value or "").strip()
@@ -6171,6 +6216,7 @@ catch {
         command = self._normalize_windows_custom_command(self._build_windows_kb_fallback_command(kb))
         if not command.strip():
             return status_code, stdout, stderr
+        wrapped_command = self._wrap_windows_custom_command(command)
         fallback_timeout = max(
             300,
             min(
@@ -6189,7 +6235,11 @@ catch {
         )
         try:
             self._ensure_windows_action_script(target, "custom-os-command")
-            self._upload_windows_script(target, command_file, "C2FENC:" + _ps_encoded_command(command))
+            self._upload_windows_script(
+                target,
+                command_file,
+                "C2FENC:" + _ps_encoded_command(wrapped_command),
+            )
             task_args: Dict[str, Any] = {
                 "CommandFile": command_file,
                 "VerifyKb": kb,
@@ -6607,6 +6657,7 @@ catch {
                 "MaxRuntimeSeconds": 900,
             },
             "custom-os-command": {
+                "Command": "",
                 "RunAsSystem": False,
                 "VerifyKb": "",
                 "VerifyMinBuild": "",
@@ -7538,8 +7589,9 @@ catch {
             if not args or not str(args[0]).strip():
                 raise HTTPException(status_code=400, detail="custom-os-command requires command argument")
             normalized_cmd = self._normalize_windows_custom_command(args[0])
+            wrapped_cmd = self._wrap_windows_custom_command(normalized_cmd)
             cmd = _ps_quote(normalized_cmd)
-            encoded_cmd = _ps_quote(_ps_encoded_command(normalized_cmd))
+            encoded_cmd = _ps_quote(_ps_encoded_command(wrapped_cmd))
             verify_kb = _ps_quote(args[1] if len(args) > 1 else "")
             verify_min_build = _ps_quote(args[2] if len(args) > 2 else "")
             verify_stdout_contains = _ps_quote(args[3] if len(args) > 3 else "")

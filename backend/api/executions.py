@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from core.actions import get_action, normalize_args, resolve_action_dispatch
 from core.action_execution import resolve_agent_ids
@@ -719,18 +720,33 @@ def ai_triage_execution(
             raise HTTPException(status_code=404, detail="Execution not found")
         execution = _serialize_row(execution_row)
 
-        step_rows = db.execute(
-            text(
-                """
-                SELECT step, status, stdout, stderr, created_at
-                FROM execution_steps
-                WHERE execution_id=:id
-                ORDER BY id DESC
-                LIMIT 60
-                """
-            ),
-            {"id": execution_id},
-        ).fetchall()
+        try:
+            step_rows = db.execute(
+                text(
+                    """
+                    SELECT step, status, stdout, stderr, created_at
+                    FROM execution_steps
+                    WHERE execution_id=:id
+                    ORDER BY id DESC
+                    LIMIT 60
+                    """
+                ),
+                {"id": execution_id},
+            ).fetchall()
+        except SQLAlchemyError:
+            # Legacy deployments may still have execution_steps without created_at.
+            step_rows = db.execute(
+                text(
+                    """
+                    SELECT step, status, stdout, stderr, NULL AS created_at
+                    FROM execution_steps
+                    WHERE execution_id=:id
+                    ORDER BY id DESC
+                    LIMIT 60
+                    """
+                ),
+                {"id": execution_id},
+            ).fetchall()
         target_rows = db.execute(
             text(
                 """

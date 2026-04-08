@@ -2,7 +2,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import api, { clearLegacyToken, decodeLegacyTokenPayload, getLegacyToken } from "../api/client";
 import { alertSocket } from "../api/socket";
-import { getExecutionHealth } from "../api/wazuh";
+import { getExecutionHealth, hasTenantGovernanceV2Support } from "../api/wazuh";
 import { APP_TIMEZONE_LABEL } from "../utils/time";
 import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
@@ -129,9 +129,6 @@ const TENANT_GOVERNANCE_ENABLED = ["1", "true", "yes", "on"].includes(
 const isOrgAdminPath = (path) =>
   String(path || "").trim().toLowerCase().startsWith(ORG_ADMIN_ROUTE);
 
-const isOrgAdminCapabilityUnavailableStatus = (status) =>
-  [404, 405, 501].includes(Number(status || 0));
-
 const shortLabel = (value) =>
   String(value || "")
     .split(/\s+/)
@@ -253,14 +250,14 @@ export default function AppLayout() {
   useEffect(() => {
     if (!TENANT_GOVERNANCE_ENABLED) return undefined;
     let active = true;
-    api
-      .get("/v2/tenants", {
-        params: { page: 1, page_size: 1 },
-        validateStatus: (statusCode) => Number(statusCode || 0) >= 200 && Number(statusCode || 0) < 500,
-      })
-      .then((res) => {
+    hasTenantGovernanceV2Support()
+      .then((supported) => {
         if (!active) return;
-        setOrgAdminAvailable(!isOrgAdminCapabilityUnavailableStatus(res?.status));
+        if (supported === false) {
+          setOrgAdminAvailable(false);
+          return;
+        }
+        setOrgAdminAvailable(true);
       })
       .catch(() => {
         if (!active) return;

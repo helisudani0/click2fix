@@ -59,19 +59,25 @@ function Build-ActionArgs {
   return $args
 }
 
-Write-Host "== Health =="
-Invoke-RestMethod "$BaseUrl/health"
-
 Write-Host "== Login =="
-$login = Invoke-RestMethod -Method Post -Uri "$BaseUrl/api/auth/login" -Body @{
+$session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+$login = Invoke-RestMethod -Method Post -Uri "$BaseUrl/api/auth/login" -WebSession $session -Body @{
   username = $Username
   password = $Password
 }
-$token = $login.access_token
-if (-not $token) {
-  throw "Login failed - no access_token"
+$PSDefaultParameterValues["Invoke-RestMethod:WebSession"] = $session
+$sessionCookie = $session.Cookies.GetCookies($BaseUrl) | Where-Object { $_.Name -eq "c2f_token" } | Select-Object -First 1
+if (-not $sessionCookie) {
+  throw "Login failed - no session cookie"
 }
-$headers = @{ Authorization = "Bearer $token" }
+$csrfCookie = $session.Cookies.GetCookies($BaseUrl) | Where-Object { $_.Name -eq "c2f_csrf" } | Select-Object -First 1
+$headers = @{}
+if ($csrfCookie -and $csrfCookie.Value) {
+  $headers["X-CSRF-Token"] = $csrfCookie.Value
+}
+
+Write-Host "== Health =="
+Invoke-RestMethod "$BaseUrl/api/executions/health" -Headers $headers
 
 Write-Host "== Actions =="
 $actions = Invoke-RestMethod "$BaseUrl/api/actions" -Headers $headers
@@ -175,7 +181,17 @@ if ($agentId -and $action) {
     Write-Host "Direct run accepted:"
     Write-Host ($directRun | ConvertTo-Json -Depth 6)
   } catch {
-    Write-Host "Direct remediation run failed: $($_.Exception.Message)"
+    $statusCode = $null
+    try {
+      $statusCode = [int]$_.Exception.Response.StatusCode.value__
+    } catch {
+      $statusCode = $null
+    }
+    if ($statusCode -eq 404) {
+      Write-Host "Direct remediation endpoint is unavailable in this build; skipping direct run check."
+    } else {
+      Write-Host "Direct remediation run failed: $($_.Exception.Message)"
+    }
   }
 
   if ($UseApprovalFlow) {

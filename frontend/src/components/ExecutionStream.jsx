@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../api/client";
 import { executionSocket } from "../api/socket";
@@ -974,21 +974,21 @@ export default function ExecutionStream({ executionId }) {
   const autoStreamRef = useRef(null);
   const eventSeqRef = useRef(0);
 
-  const toStreamEvent = (row) => {
+  const toStreamEvent = useCallback((row) => {
     eventSeqRef.current += 1;
     return {
       ...normalizeStep(row),
       _event_id: eventSeqRef.current,
     };
-  };
+  }, []);
 
-  const appendEvent = (row) => {
+  const appendEvent = useCallback((row) => {
     setEvents((prev) => {
       const next = [...prev, toStreamEvent(row)];
       if (next.length <= MAX_STREAM_EVENTS) return next;
       return next.slice(next.length - MAX_STREAM_EVENTS);
     });
-  };
+  }, [toStreamEvent]);
 
   useEffect(() => {
     if (!executionId) return;
@@ -1019,7 +1019,7 @@ export default function ExecutionStream({ executionId }) {
         setError(err.response?.data?.detail || err.message || "Failed to load execution");
       })
       .finally(() => setLoading(false));
-  }, [executionId]);
+  }, [executionId, toStreamEvent]);
 
   useEffect(() => {
     const status = String(meta?.execution?.status || "").toUpperCase();
@@ -1276,7 +1276,7 @@ export default function ExecutionStream({ executionId }) {
       }
     };
 
-  }, [executionId, streamEnabled]);
+  }, [appendEvent, executionId, streamEnabled]);
 
   const deferredTargets = useDeferredValue(targets);
   const selectedTarget = deferredTargets.find((t) => t.agent_id === selectedTargetId) || null;

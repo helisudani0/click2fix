@@ -120,6 +120,7 @@ execution_steps = Table(
     Column("stdout", Text),
     Column("stderr", Text),
     Column("status", String),
+    Column("created_at", DateTime, server_default=func.now()),
 )
 
 execution_targets = Table(
@@ -238,6 +239,23 @@ alerts_store = Table(
     Column("raw_json", Text),
 )
 
+alert_triage = Table(
+    "alert_triage",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("alert_id", String, nullable=False),
+    Column("org_id", Integer),
+    Column("status", String, server_default=text("'open'")),
+    Column("owner", String),
+    Column("classification", String),
+    Column("severity_override", String),
+    Column("notes", Text),
+    Column("last_triaged_by", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+    UniqueConstraint("org_id", "alert_id", name="uq_alert_triage_org_alert"),
+)
+
 case_timeline = Table(
     "case_timeline",
     metadata,
@@ -250,6 +268,36 @@ case_timeline = Table(
     Column("approval_id", Integer),
     Column("execution_id", Integer),
     Column("action", String),
+    Column("created_at", DateTime, server_default=func.now()),
+)
+
+case_sla_policies = Table(
+    "case_sla_policies",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("case_id", Integer, nullable=False),
+    Column("response_due_at", DateTime),
+    Column("resolution_due_at", DateTime),
+    Column("target_response_minutes", Integer),
+    Column("target_resolution_minutes", Integer),
+    Column("status", String, server_default=text("'active'")),
+    Column("severity", String),
+    Column("breach_state", String, server_default=text("'on_track'")),
+    Column("notes", Text),
+    Column("updated_by", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+    UniqueConstraint("case_id", name="uq_case_sla_policies_case_id"),
+)
+
+case_sla_events = Table(
+    "case_sla_events",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("case_id", Integer, nullable=False),
+    Column("event_type", String),
+    Column("detail", Text),
+    Column("actor", String),
     Column("created_at", DateTime, server_default=func.now()),
 )
 
@@ -418,6 +466,44 @@ detection_tuning_suggestions = Table(
     Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
 )
 
+detection_rules = Table(
+    "detection_rules",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("rule_key", String),
+    Column("name", String),
+    Column("description", Text),
+    Column("rule_type", String, server_default=text("'atomic'")),
+    Column("severity", String, server_default=text("'medium'")),
+    Column("confidence_threshold", Integer, server_default=text("60")),
+    Column("enabled", Boolean, server_default=text("true")),
+    Column("conditions_json", Text),
+    Column("tags_json", Text),
+    Column("tuning_json", Text),
+    Column("org_id", Integer),
+    Column("created_by", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+)
+
+detection_suppressions = Table(
+    "detection_suppressions",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("rule_key", String),
+    Column("scope_type", String, server_default=text("'rule'")),
+    Column("scope_value", String),
+    Column("reason", Text),
+    Column("status", String, server_default=text("'active'")),
+    Column("starts_at", DateTime, server_default=func.now()),
+    Column("expires_at", DateTime),
+    Column("context_json", Text),
+    Column("org_id", Integer),
+    Column("created_by", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+)
+
 case_attachments = Table(
     "case_attachments",
     metadata,
@@ -489,6 +575,23 @@ audit_logs = Table(
     Column("created_at", DateTime, server_default=func.now()),
 )
 
+security_events = Table(
+    "security_events",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("event_type", String, nullable=False),
+    Column("severity", String, nullable=False, server_default=text("'warning'")),
+    Column("username", String),
+    Column("role", String),
+    Column("org_id", Integer),
+    Column("ip_address", String),
+    Column("method", String),
+    Column("path", String),
+    Column("detail", Text),
+    Column("metadata_json", Text),
+    Column("created_at", DateTime, server_default=func.now()),
+)
+
 change_requests = Table(
     "change_requests",
     metadata,
@@ -515,6 +618,66 @@ orgs = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("name", String, unique=True),
     Column("created_at", DateTime, server_default=func.now()),
+)
+
+tenant_quotas = Table(
+    "tenant_quotas",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("org_id", Integer, nullable=False),
+    Column("max_agents", Integer),
+    Column("max_cases", Integer),
+    Column("max_incidents", Integer),
+    Column("max_approvals_per_day", Integer),
+    Column("max_executions_per_day", Integer),
+    Column("config_json", Text),
+    Column("updated_by", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+    UniqueConstraint("org_id", name="uq_tenant_quotas_org_id"),
+)
+
+tenant_config_revisions = Table(
+    "tenant_config_revisions",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("org_id", Integer, nullable=False),
+    Column("config_key", String, nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("status", String, server_default=text("'draft'")),
+    Column("config_json", Text),
+    Column("notes", Text),
+    Column("created_by", String),
+    Column("updated_by", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+    Column("activated_at", DateTime),
+    Column("retired_at", DateTime),
+    UniqueConstraint("org_id", "config_key", "version", name="uq_tenant_config_revision"),
+)
+
+retention_policies = Table(
+    "retention_policies",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("org_id", Integer, nullable=False),
+    Column("data_class", String, nullable=False),
+    Column("storage_backend", String, nullable=False, server_default=text("'event_indexer'")),
+    Column("stream", String),
+    Column("warm_after_days", Integer, nullable=False),
+    Column("cold_after_days", Integer, nullable=False),
+    Column("archive_after_days", Integer, nullable=False),
+    Column("delete_after_days", Integer),
+    Column("archive_backend", String),
+    Column("legal_hold", Boolean, server_default=text("false")),
+    Column("status", String, nullable=False, server_default=text("'active'")),
+    Column("notes", Text),
+    Column("created_by", String),
+    Column("updated_by", String),
+    Column("last_applied_at", DateTime),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+    UniqueConstraint("org_id", "data_class", name="uq_retention_policies_org_data_class"),
 )
 
 users = Table(
@@ -649,6 +812,60 @@ action_execution_history = Table(
     Column("executed_at", DateTime, server_default=func.now()),
 )
 
+event_ingestion_queue = Table(
+    "event_ingestion_queue",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("queue_event_id", String, unique=True, nullable=False, index=True),
+    Column("tenant_id", Integer, index=True),
+    Column("source_type", String, nullable=False),
+    Column("stream", String, nullable=False, server_default=text("'events'"), index=True),
+    Column("event_kind", String, nullable=False, server_default=text("'canonical_event'")),
+    Column("actor", String),
+    Column("trace_id", String, index=True),
+    Column("dedupe_key", String, index=True),
+    Column("payload_json", Text, nullable=False),
+    Column("metadata_json", Text),
+    Column("status", String, nullable=False, server_default=text("'PENDING'"), index=True),
+    Column("attempt_count", Integer, nullable=False, server_default=text("0")),
+    Column("max_attempts", Integer, nullable=False, server_default=text("6")),
+    Column("next_attempt_at", DateTime, nullable=False, server_default=func.now(), index=True),
+    Column("locked_by", String),
+    Column("locked_at", DateTime),
+    Column("last_error", Text),
+    Column("result_json", Text),
+    Column("replay_of_queue_event_id", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+    Column("completed_at", DateTime),
+)
+
+agent_runtime_state = Table(
+    "agent_runtime_state",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("tenant_scope", Integer, nullable=False, server_default=text("0")),
+    Column("agent_id", String, nullable=False),
+    Column("state_kind", String, nullable=False),
+    Column("payload_json", Text, nullable=False),
+    Column("updated_by", String),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+    UniqueConstraint("tenant_scope", "agent_id", "state_kind", name="uq_agent_runtime_state_scope"),
+)
+
+service_runtime_leases = Table(
+    "service_runtime_leases",
+    metadata,
+    Column("lease_name", String, primary_key=True),
+    Column("owner_id", String, nullable=False),
+    Column("lease_token", String, nullable=False),
+    Column("lease_expires_at", DateTime, nullable=False),
+    Column("metadata_json", Text),
+    Column("created_at", DateTime, server_default=func.now()),
+    Column("updated_at", DateTime, server_default=func.now(), onupdate=func.now()),
+)
+
 
 def connect():
     return engine.connect()
@@ -672,6 +889,12 @@ def init():
             conn.execute(text("ALTER TABLE executions ADD COLUMN IF NOT EXISTS target_success INTEGER DEFAULT 0"))
             conn.execute(text("ALTER TABLE executions ADD COLUMN IF NOT EXISTS target_failed INTEGER DEFAULT 0"))
             conn.execute(text("ALTER TABLE executions ADD COLUMN IF NOT EXISTS batch_size INTEGER DEFAULT 0"))
+            conn.execute(
+                text(
+                    "ALTER TABLE execution_steps ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
             conn.execute(
                 text(
                     """
@@ -940,6 +1163,194 @@ def init():
                     "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
                 )
             )
+
+            conn.execute(text("ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS rule_key VARCHAR"))
+            conn.execute(text("ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS name VARCHAR"))
+            conn.execute(text("ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS description TEXT"))
+            conn.execute(text("ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS rule_type VARCHAR DEFAULT 'atomic'"))
+            conn.execute(text("ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS severity VARCHAR DEFAULT 'medium'"))
+            conn.execute(
+                text("ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS confidence_threshold INTEGER DEFAULT 60")
+            )
+            conn.execute(text("ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS enabled BOOLEAN DEFAULT TRUE"))
+            conn.execute(text("ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS conditions_json TEXT"))
+            conn.execute(text("ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS tags_json TEXT"))
+            conn.execute(text("ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS tuning_json TEXT"))
+            conn.execute(text("ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS org_id INTEGER"))
+            conn.execute(text("ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS created_by VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE detection_rules ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+
+            conn.execute(text("ALTER TABLE detection_suppressions ADD COLUMN IF NOT EXISTS rule_key VARCHAR"))
+            conn.execute(
+                text("ALTER TABLE detection_suppressions ADD COLUMN IF NOT EXISTS scope_type VARCHAR DEFAULT 'rule'")
+            )
+            conn.execute(text("ALTER TABLE detection_suppressions ADD COLUMN IF NOT EXISTS scope_value VARCHAR"))
+            conn.execute(text("ALTER TABLE detection_suppressions ADD COLUMN IF NOT EXISTS reason TEXT"))
+            conn.execute(
+                text("ALTER TABLE detection_suppressions ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'active'")
+            )
+            conn.execute(text("ALTER TABLE detection_suppressions ADD COLUMN IF NOT EXISTS starts_at TIMESTAMP WITHOUT TIME ZONE"))
+            conn.execute(text("ALTER TABLE detection_suppressions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITHOUT TIME ZONE"))
+            conn.execute(text("ALTER TABLE detection_suppressions ADD COLUMN IF NOT EXISTS context_json TEXT"))
+            conn.execute(text("ALTER TABLE detection_suppressions ADD COLUMN IF NOT EXISTS org_id INTEGER"))
+            conn.execute(text("ALTER TABLE detection_suppressions ADD COLUMN IF NOT EXISTS created_by VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE detection_suppressions ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE detection_suppressions ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+
+            conn.execute(text("ALTER TABLE alert_triage ADD COLUMN IF NOT EXISTS alert_id VARCHAR"))
+            conn.execute(text("ALTER TABLE alert_triage ADD COLUMN IF NOT EXISTS org_id INTEGER"))
+            conn.execute(text("ALTER TABLE alert_triage ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'open'"))
+            conn.execute(text("ALTER TABLE alert_triage ADD COLUMN IF NOT EXISTS owner VARCHAR"))
+            conn.execute(text("ALTER TABLE alert_triage ADD COLUMN IF NOT EXISTS classification VARCHAR"))
+            conn.execute(text("ALTER TABLE alert_triage ADD COLUMN IF NOT EXISTS severity_override VARCHAR"))
+            conn.execute(text("ALTER TABLE alert_triage ADD COLUMN IF NOT EXISTS notes TEXT"))
+            conn.execute(text("ALTER TABLE alert_triage ADD COLUMN IF NOT EXISTS last_triaged_by VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE alert_triage ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE alert_triage ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+
+            conn.execute(text("ALTER TABLE case_sla_policies ADD COLUMN IF NOT EXISTS case_id INTEGER"))
+            conn.execute(text("ALTER TABLE case_sla_policies ADD COLUMN IF NOT EXISTS response_due_at TIMESTAMP WITHOUT TIME ZONE"))
+            conn.execute(text("ALTER TABLE case_sla_policies ADD COLUMN IF NOT EXISTS resolution_due_at TIMESTAMP WITHOUT TIME ZONE"))
+            conn.execute(text("ALTER TABLE case_sla_policies ADD COLUMN IF NOT EXISTS target_response_minutes INTEGER"))
+            conn.execute(text("ALTER TABLE case_sla_policies ADD COLUMN IF NOT EXISTS target_resolution_minutes INTEGER"))
+            conn.execute(text("ALTER TABLE case_sla_policies ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'active'"))
+            conn.execute(text("ALTER TABLE case_sla_policies ADD COLUMN IF NOT EXISTS severity VARCHAR"))
+            conn.execute(text("ALTER TABLE case_sla_policies ADD COLUMN IF NOT EXISTS breach_state VARCHAR DEFAULT 'on_track'"))
+            conn.execute(text("ALTER TABLE case_sla_policies ADD COLUMN IF NOT EXISTS notes TEXT"))
+            conn.execute(text("ALTER TABLE case_sla_policies ADD COLUMN IF NOT EXISTS updated_by VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE case_sla_policies ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE case_sla_policies ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+
+            conn.execute(text("ALTER TABLE case_sla_events ADD COLUMN IF NOT EXISTS case_id INTEGER"))
+            conn.execute(text("ALTER TABLE case_sla_events ADD COLUMN IF NOT EXISTS event_type VARCHAR"))
+            conn.execute(text("ALTER TABLE case_sla_events ADD COLUMN IF NOT EXISTS detail TEXT"))
+            conn.execute(text("ALTER TABLE case_sla_events ADD COLUMN IF NOT EXISTS actor VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE case_sla_events ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+
+            conn.execute(text("ALTER TABLE tenant_quotas ADD COLUMN IF NOT EXISTS org_id INTEGER"))
+            conn.execute(text("ALTER TABLE tenant_quotas ADD COLUMN IF NOT EXISTS max_agents INTEGER"))
+            conn.execute(text("ALTER TABLE tenant_quotas ADD COLUMN IF NOT EXISTS max_cases INTEGER"))
+            conn.execute(text("ALTER TABLE tenant_quotas ADD COLUMN IF NOT EXISTS max_incidents INTEGER"))
+            conn.execute(text("ALTER TABLE tenant_quotas ADD COLUMN IF NOT EXISTS max_approvals_per_day INTEGER"))
+            conn.execute(text("ALTER TABLE tenant_quotas ADD COLUMN IF NOT EXISTS max_executions_per_day INTEGER"))
+            conn.execute(text("ALTER TABLE tenant_quotas ADD COLUMN IF NOT EXISTS config_json TEXT"))
+            conn.execute(text("ALTER TABLE tenant_quotas ADD COLUMN IF NOT EXISTS updated_by VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE tenant_quotas ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE tenant_quotas ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+
+            conn.execute(text("ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS org_id INTEGER"))
+            conn.execute(text("ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS config_key VARCHAR"))
+            conn.execute(text("ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS version INTEGER"))
+            conn.execute(
+                text("ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'draft'")
+            )
+            conn.execute(text("ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS config_json TEXT"))
+            conn.execute(text("ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS notes TEXT"))
+            conn.execute(text("ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS created_by VARCHAR"))
+            conn.execute(text("ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS updated_by VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(text("ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS activated_at TIMESTAMP WITHOUT TIME ZONE"))
+            conn.execute(text("ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS retired_at TIMESTAMP WITHOUT TIME ZONE"))
+
+            conn.execute(text("ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS org_id INTEGER"))
+            conn.execute(text("ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS data_class VARCHAR"))
+            conn.execute(
+                text(
+                    "ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS storage_backend "
+                    "VARCHAR DEFAULT 'event_indexer'"
+                )
+            )
+            conn.execute(text("ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS stream VARCHAR"))
+            conn.execute(text("ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS warm_after_days INTEGER"))
+            conn.execute(text("ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS cold_after_days INTEGER"))
+            conn.execute(text("ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS archive_after_days INTEGER"))
+            conn.execute(text("ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS delete_after_days INTEGER"))
+            conn.execute(text("ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS archive_backend VARCHAR"))
+            conn.execute(text("ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS legal_hold BOOLEAN DEFAULT FALSE"))
+            conn.execute(text("ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'active'"))
+            conn.execute(text("ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS notes TEXT"))
+            conn.execute(text("ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS created_by VARCHAR"))
+            conn.execute(text("ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS updated_by VARCHAR"))
+            conn.execute(text("ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS last_applied_at TIMESTAMP WITHOUT TIME ZONE"))
+            conn.execute(
+                text(
+                    "ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS created_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE retention_policies ADD COLUMN IF NOT EXISTS updated_at "
+                    "TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()"
+                )
+            )
         except Exception:
             pass
 
@@ -1001,6 +1412,110 @@ def init():
                     "ON detection_tuning_suggestions (status)"
                 )
             )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_detection_rules_org_rule_key "
+                    "ON detection_rules (org_id, rule_key)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_detection_rules_org_enabled "
+                    "ON detection_rules (org_id, enabled)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_detection_suppressions_status_expires "
+                    "ON detection_suppressions (status, expires_at)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_detection_suppressions_org_scope "
+                    "ON detection_suppressions (org_id, scope_type, rule_key)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_alert_triage_org_alert "
+                    "ON alert_triage (org_id, alert_id)"
+                )
+            )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_alert_triage_org_status ON alert_triage (org_id, status)"))
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_case_sla_policies_case_id "
+                    "ON case_sla_policies (case_id)"
+                )
+            )
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_case_sla_events_case_id ON case_sla_events (case_id)"))
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_quotas_org_id "
+                    "ON tenant_quotas (org_id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_config_revision "
+                    "ON tenant_config_revisions (org_id, config_key, version)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_tenant_config_revision_lookup "
+                    "ON tenant_config_revisions (org_id, config_key, status, version)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_event_ingestion_queue_status_next_attempt "
+                    "ON event_ingestion_queue (status, next_attempt_at, id)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_event_ingestion_queue_tenant_stream "
+                    "ON event_ingestion_queue (tenant_id, stream, id DESC)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_event_ingestion_queue_dedupe_key "
+                    "ON event_ingestion_queue (tenant_id, stream, dedupe_key)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_retention_policies_org_data_class "
+                    "ON retention_policies (org_id, data_class)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_retention_policies_org_status "
+                    "ON retention_policies (org_id, status, data_class)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_runtime_state_scope "
+                    "ON agent_runtime_state (tenant_scope, agent_id, state_kind)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_agent_runtime_state_agent_kind "
+                    "ON agent_runtime_state (agent_id, state_kind, updated_at DESC)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_service_runtime_leases_expires "
+                    "ON service_runtime_leases (lease_expires_at)"
+                )
+            )
         except Exception:
             pass
 
@@ -1042,8 +1557,6 @@ def init():
             ensure_user("admin", "admin123", "admin")
             ensure_user("analyst", "analyst123", "analyst")
             ensure_user("superadmin", "super123", "superadmin")
-
-
 def row_to_list(row):
     return row_to_json_list(row)
 

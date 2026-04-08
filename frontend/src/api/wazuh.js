@@ -19,6 +19,38 @@ const buildApiUrl = (path, params = {}) => {
   return url.toString();
 };
 
+let openApiPathsPromise = null;
+
+const loadOpenApiPaths = async () => {
+  if (!openApiPathsPromise) {
+    openApiPathsPromise = fetch("/openapi.json", { credentials: "include" })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        const payload = await response.json();
+        if (!payload || typeof payload !== "object") return null;
+        const paths = payload.paths;
+        return paths && typeof paths === "object" ? paths : null;
+      })
+      .catch(() => null)
+      .then((paths) => {
+        if (!paths) {
+          openApiPathsPromise = null;
+        }
+        return paths;
+      });
+  }
+  return openApiPathsPromise;
+};
+
+const hasOpenApiPath = async (path) => {
+  const paths = await loadOpenApiPaths();
+  if (!paths || typeof paths !== "object") return null;
+  return Object.prototype.hasOwnProperty.call(paths, String(path || ""));
+};
+
+export const hasTenantGovernanceV2Support = async () =>
+  hasOpenApiPath("/api/v2/tenants");
+
 const unwrapV2 = (response) => {
   const payload = response?.data;
   if (payload && typeof payload === "object" && "data" in payload) {

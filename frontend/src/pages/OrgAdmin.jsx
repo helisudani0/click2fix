@@ -9,6 +9,7 @@ import {
   getRetentionPoliciesV2,
   getTenantsV2,
   getTenantUsersV2,
+  hasTenantGovernanceV2Support,
   updateSystemAiConfig,
   upsertRetentionPolicyV2,
 } from "../api/wazuh";
@@ -436,6 +437,11 @@ export default function OrgAdmin() {
     clearFeedback();
     await loadAiConfig();
     if (!TENANT_GOVERNANCE_ENABLED) return;
+    const hasV2Support = await hasTenantGovernanceV2Support();
+    if (hasV2Support === false) {
+      setV2Unavailable(true);
+      return;
+    }
     await loadTenants();
     if (selectedTenantId) {
       await Promise.all([
@@ -446,12 +452,26 @@ export default function OrgAdmin() {
   };
 
   useEffect(() => {
-    loadAiConfig();
-    if (TENANT_GOVERNANCE_ENABLED) {
-      loadTenants();
-    } else {
-      setV2Unavailable(true);
-    }
+    let active = true;
+    const initialize = async () => {
+      await loadAiConfig();
+      if (!active) return;
+      if (!TENANT_GOVERNANCE_ENABLED) {
+        setV2Unavailable(true);
+        return;
+      }
+      const hasV2Support = await hasTenantGovernanceV2Support();
+      if (!active) return;
+      if (hasV2Support === false) {
+        setV2Unavailable(true);
+        return;
+      }
+      await loadTenants();
+    };
+    void initialize();
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {

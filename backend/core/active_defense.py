@@ -227,7 +227,11 @@ def build_incident_score(
     distinct_identities = _dedupe([_as_text(item).lower() for item in identities or []])
     distinct_iocs = _dedupe([_as_text(item).lower() for item in iocs or []])
 
-    blast_radius_points = min(20, max(0, len(distinct_agents) - 1) * 10)
+    blast_radius_points = 0
+    if len(distinct_agents) > 1:
+        # Crossing from one endpoint to multiple endpoints materially raises the
+        # containment cost, so give multi-agent incidents an extra severity bump.
+        blast_radius_points = min(25, 10 + (len(distinct_agents) - 1) * 10)
     tactical_depth_points = 30 if len(distinct_tactics) >= 3 else min(20, len(distinct_tactics) * 10)
     alert_volume_points = min(20, max(0, _safe_int(alert_count, 0)) * 2)
     identity_points = min(10, len(distinct_identities) * 5)

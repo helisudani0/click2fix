@@ -242,16 +242,134 @@ def _ensure_tenant_config_store_best_effort() -> None:
     Keep v1 deployments resilient when DB schema drift leaves out
     tenant_config_revisions.
     """
+    db = None
     try:
-        from db import database as db_database
+        try:
+            from db import database as db_database
 
-        table = getattr(db_database, "tenant_config_revisions", None)
-        engine = getattr(db_database, "engine", None)
-        if table is None or engine is None:
-            return
-        table.create(bind=engine, checkfirst=True)
+            table = getattr(db_database, "tenant_config_revisions", None)
+            engine = getattr(db_database, "engine", None)
+            if table is not None and engine is not None:
+                table.create(bind=engine, checkfirst=True)
+        except Exception as exc:
+            logger.debug("tenant config store metadata create skipped: %s", exc)
+
+        db = connect()
+        engine = getattr(db, "engine", None)
+        dialect = _to_text(getattr(getattr(engine, "dialect", None), "name", ""))
+        is_sqlite = dialect == "sqlite"
+
+        if is_sqlite:
+            db.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS tenant_config_revisions (
+                      id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      org_id INTEGER NOT NULL,
+                      config_key VARCHAR NOT NULL,
+                      version INTEGER NOT NULL DEFAULT 1,
+                      status VARCHAR DEFAULT 'draft',
+                      config_json TEXT,
+                      notes TEXT,
+                      created_by VARCHAR,
+                      updated_by VARCHAR,
+                      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                      activated_at DATETIME,
+                      retired_at DATETIME
+                    )
+                    """
+                )
+            )
+            sqlite_alter_statements = [
+                "ALTER TABLE tenant_config_revisions ADD COLUMN org_id INTEGER",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN config_key VARCHAR",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN version INTEGER",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN status VARCHAR",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN config_json TEXT",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN notes TEXT",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN created_by VARCHAR",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN updated_by VARCHAR",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN created_at DATETIME",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN updated_at DATETIME",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN activated_at DATETIME",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN retired_at DATETIME",
+            ]
+            for statement in sqlite_alter_statements:
+                try:
+                    db.execute(text(statement))
+                except Exception as exc:
+                    # SQLite has no ADD COLUMN IF NOT EXISTS; duplicate-column errors are expected.
+                    if "duplicate column name" not in str(exc).lower():
+                        logger.debug("tenant config sqlite alter skipped: %s", exc)
+        else:
+            db.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS tenant_config_revisions (
+                      id BIGSERIAL PRIMARY KEY,
+                      org_id INTEGER NOT NULL,
+                      config_key VARCHAR(128) NOT NULL,
+                      version INTEGER NOT NULL DEFAULT 1,
+                      status VARCHAR(32) NOT NULL DEFAULT 'draft',
+                      config_json TEXT NOT NULL DEFAULT '{}',
+                      notes TEXT,
+                      created_by VARCHAR(128),
+                      updated_by VARCHAR(128),
+                      created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+                      updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+                      activated_at TIMESTAMP WITHOUT TIME ZONE,
+                      retired_at TIMESTAMP WITHOUT TIME ZONE
+                    )
+                    """
+                )
+            )
+            postgres_alter_statements = [
+                "ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS org_id INTEGER",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS config_key VARCHAR(128)",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS version INTEGER",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS status VARCHAR(32) DEFAULT 'draft'",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS config_json TEXT DEFAULT '{}'",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS notes TEXT",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS created_by VARCHAR(128)",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS updated_by VARCHAR(128)",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS activated_at TIMESTAMP WITHOUT TIME ZONE",
+                "ALTER TABLE tenant_config_revisions ADD COLUMN IF NOT EXISTS retired_at TIMESTAMP WITHOUT TIME ZONE",
+            ]
+            for statement in postgres_alter_statements:
+                db.execute(text(statement))
+
+        db.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_tenant_config_revisions_org_key_version
+                ON tenant_config_revisions (org_id, config_key, version)
+                """
+            )
+        )
+        db.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_tenant_config_revisions_org_key_status_version
+                ON tenant_config_revisions (org_id, config_key, status, version)
+                """
+            )
+        )
+        try:
+            db.commit()
+        except Exception:
+            pass
     except Exception as exc:
+        try:
+            if db is not None:
+                db.rollback()
+        except Exception:
+            pass
         logger.debug("tenant config store ensure failed: %s", exc)
+    finally:
+        _close_quietly(db)
 
 
 def _fetch_active_tenant_ai_row(db, tenant_id: int):
@@ -360,75 +478,83 @@ def upsert_active_tenant_ai_config(
         normalized["enabled"] = _to_bool(normalized.get("api_key"), False)
 
     _ensure_tenant_config_store_best_effort()
-    db = connect()
-    try:
-        current_version = (
+    for attempt in range(2):
+        db = connect()
+        try:
+            current_version = (
+                db.execute(
+                    text(
+                        """
+                        SELECT COALESCE(MAX(version), 0)
+                        FROM tenant_config_revisions
+                        WHERE org_id=:tenant_id
+                          AND config_key=:config_key
+                        """
+                    ),
+                    {"tenant_id": tenant_id, "config_key": AI_REMEDIATION_CONFIG_KEY},
+                ).scalar()
+                or 0
+            )
+            next_version = int(current_version) + 1
+            now = utc_now_naive()
+
             db.execute(
                 text(
                     """
-                    SELECT COALESCE(MAX(version), 0)
-                    FROM tenant_config_revisions
+                    UPDATE tenant_config_revisions
+                    SET status='retired', retired_at=:retired_at, updated_by=:updated_by
                     WHERE org_id=:tenant_id
                       AND config_key=:config_key
+                      AND LOWER(COALESCE(status, 'draft'))='active'
                     """
                 ),
-                {"tenant_id": tenant_id, "config_key": AI_REMEDIATION_CONFIG_KEY},
-            ).scalar()
-            or 0
-        )
-        next_version = int(current_version) + 1
-        now = utc_now_naive()
+                {
+                    "tenant_id": tenant_id,
+                    "config_key": AI_REMEDIATION_CONFIG_KEY,
+                    "retired_at": now,
+                    "updated_by": actor,
+                },
+            )
 
-        db.execute(
-            text(
-                """
-                UPDATE tenant_config_revisions
-                SET status='retired', retired_at=:retired_at, updated_by=:updated_by
-                WHERE org_id=:tenant_id
-                  AND config_key=:config_key
-                  AND LOWER(COALESCE(status, 'draft'))='active'
-                """
-            ),
-            {
-                "tenant_id": tenant_id,
-                "config_key": AI_REMEDIATION_CONFIG_KEY,
-                "retired_at": now,
-                "updated_by": actor,
-            },
-        )
-
-        db.execute(
-            text(
-                """
-                INSERT INTO tenant_config_revisions
-                (org_id, config_key, version, status, config_json, notes, created_by, updated_by, activated_at)
-                VALUES
-                (:tenant_id, :config_key, :version, 'active', :config_json, :notes, :created_by, :updated_by, :activated_at)
-                """
-            ),
-            {
-                "tenant_id": tenant_id,
-                "config_key": AI_REMEDIATION_CONFIG_KEY,
-                "version": next_version,
-                "config_json": json.dumps(
-                    {"ai_remediation": _with_encrypted_api_key(normalized)},
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    ensure_ascii=True,
+            db.execute(
+                text(
+                    """
+                    INSERT INTO tenant_config_revisions
+                    (org_id, config_key, version, status, config_json, notes, created_by, updated_by, activated_at)
+                    VALUES
+                    (:tenant_id, :config_key, :version, 'active', :config_json, :notes, :created_by, :updated_by, :activated_at)
+                    """
                 ),
-                "notes": _to_text(notes) or "Updated from v1 system ai config UI",
-                "created_by": _to_text(actor) or "system",
-                "updated_by": _to_text(actor) or "system",
-                "activated_at": now,
-            },
-        )
+                {
+                    "tenant_id": tenant_id,
+                    "config_key": AI_REMEDIATION_CONFIG_KEY,
+                    "version": next_version,
+                    "config_json": json.dumps(
+                        {"ai_remediation": _with_encrypted_api_key(normalized)},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=True,
+                    ),
+                    "notes": _to_text(notes) or "Updated from v1 system ai config UI",
+                    "created_by": _to_text(actor) or "system",
+                    "updated_by": _to_text(actor) or "system",
+                    "activated_at": now,
+                },
+            )
 
-        db.commit()
-    except Exception as exc:
-        db.rollback()
-        raise HTTPException(status_code=503, detail="Failed to persist AI configuration") from exc
-    finally:
-        db.close()
+            db.commit()
+            break
+        except Exception as exc:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            if attempt == 0:
+                _ensure_tenant_config_store_best_effort()
+                continue
+            raise HTTPException(status_code=503, detail="Failed to persist AI configuration") from exc
+        finally:
+            db.close()
 
     return normalized
 

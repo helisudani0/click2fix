@@ -2,12 +2,13 @@ from pathlib import Path
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from core.security import ROLE_LEVELS, decode_token, extract_request_token, oauth
 from core.security_monitoring import record_security_event
 
 router = APIRouter()
 OPS_PATH = Path(__file__).resolve().parents[1] / "ui" / "ops.html"
+OPS_LOGO_PATH = Path(__file__).resolve().parents[1] / "ui" / "c2f-logo.svg"
 
 
 def _resolve_admin_user(request: Request, bearer_token: str | None):
@@ -77,3 +78,14 @@ def ops_console(request: Request, bearer_token: str | None = Depends(oauth)):
         )
         return response
     return HTMLResponse("<h1>Ops console not found.</h1>", status_code=404)
+
+
+@router.get("/ops/c2f-logo.svg", include_in_schema=False)
+def ops_logo():
+    if OPS_LOGO_PATH.exists():
+        return FileResponse(
+            OPS_LOGO_PATH,
+            media_type="image/svg+xml",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+    raise HTTPException(status_code=404, detail="Ops logo not found")

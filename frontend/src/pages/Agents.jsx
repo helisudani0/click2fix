@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Pager from "../components/Pager";
 import EChartLinePanel from "../components/EChartLinePanel";
-import EChart3DPanel from "../components/EChart3DPanel";
 import {
   getAgents,
   getAgentGroups,
@@ -150,107 +149,40 @@ const toNumber = (value, fallback = 0) => {
   return Number.isFinite(num) ? num : fallback;
 };
 
-const buildBar3DOption = ({
-  labels,
-  values,
-  metricLabel = "alerts",
-  palette = ["#7fe0ff", "#56c3ff", "#64f5d1"],
-}) => {
-  if (!Array.isArray(labels) || !Array.isArray(values) || !labels.length || !values.length) return null;
-  const maxValue = Math.max(...values.map((value) => Number(value || 0)), 1);
-  const labelStep = Math.max(1, Math.ceil(labels.length / 7));
+const buildTimeAxisModel = (rawPoints, targetTicks = 7) => {
+  const rawValues = Array.isArray(rawPoints)
+    ? rawPoints.map((value) => String(value ?? ""))
+    : [];
+  const parsedValues = rawValues.map((value) => parseWazuhTimestamp(value));
+  const shortLabels = parsedValues.map((parsed, idx) => {
+    if (!parsed) return rawValues[idx] || "-";
+    return parsed.toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  });
+  const fullLabels = rawValues.map((value) => formatWazuhTimestamp(value));
+  const dayLabels = parsedValues.map((value) => (
+    value
+      ? value.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+      : ""
+  ));
+  const labelStep = Math.max(1, Math.ceil(rawValues.length / Math.max(3, targetTicks)));
+
   return {
-    animationDuration: 520,
-    animationDurationUpdate: 420,
-    tooltip: {
-      formatter: (params) => {
-        const tuple = Array.isArray(params?.value) ? params.value : [];
-        const idx = Number(tuple[0] || 0);
-        const val = Number(tuple[2] || 0);
-        return `${labels[idx] || "bucket"}<br/>${metricLabel}: ${val}`;
-      },
-      backgroundColor: "rgba(6, 12, 21, 0.94)",
-      borderColor: "rgba(122, 166, 201, 0.62)",
-      borderWidth: 1,
-      textStyle: { color: "#d7ebff" },
+    rawValues,
+    fullLabels,
+    axisFormatter: (_value, idx) => {
+      const index = Number(idx || 0);
+      if (!Number.isFinite(index)) return "";
+      const isLast = index === rawValues.length - 1;
+      if (!isLast && index % labelStep !== 0) return "";
+      const shortLabel = shortLabels[index] || "-";
+      const dayLabel = dayLabels[index];
+      const dayChanged = index === 0 || dayLabel !== dayLabels[index - 1];
+      return dayLabel && dayChanged ? `${dayLabel}\n${shortLabel}` : shortLabel;
     },
-    xAxis3D: {
-      type: "category",
-      data: labels,
-      axisLabel: {
-        color: "#8ea7c2",
-        interval: 0,
-        formatter: (value, idx) => (idx % labelStep === 0 ? value : ""),
-      },
-      axisLine: { lineStyle: { color: "rgba(109, 143, 173, 0.46)" } },
-    },
-    yAxis3D: {
-      type: "category",
-      data: [metricLabel],
-      axisLabel: { show: false },
-      axisLine: { lineStyle: { color: "rgba(109, 143, 173, 0.28)" } },
-    },
-    zAxis3D: {
-      type: "value",
-      min: 0,
-      max: Math.max(4, Math.round(maxValue * 1.18)),
-      axisLabel: { color: "#8ea7c2" },
-      axisLine: { lineStyle: { color: "rgba(109, 143, 173, 0.46)" } },
-      splitLine: { lineStyle: { color: "rgba(109, 143, 173, 0.18)" } },
-    },
-    grid3D: {
-      boxWidth: Math.max(86, Math.min(152, labels.length * 2.4)),
-      boxDepth: 30,
-      boxHeight: 54,
-      viewControl: {
-        projection: "perspective",
-        alpha: 21,
-        beta: 29,
-        panSensitivity: 0.9,
-        rotateSensitivity: 1,
-        zoomSensitivity: 0.68,
-        autoRotate: false,
-      },
-      light: {
-        main: { intensity: 1.05, shadow: false },
-        ambient: { intensity: 0.46 },
-      },
-      axisPointer: {
-        show: true,
-        lineStyle: { color: "rgba(132, 216, 255, 0.66)" },
-      },
-    },
-    series: [
-      {
-        type: "bar3D",
-        shading: "lambert",
-        data: values.map((value, idx) => ({
-          value: [idx, 0, Number(value || 0)],
-          itemStyle: {
-            color: {
-              type: "linear",
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [
-                { offset: 0, color: palette[0] },
-                { offset: 0.52, color: palette[1] },
-                { offset: 1, color: palette[2] },
-              ],
-            },
-            opacity: 0.96,
-          },
-        })),
-        emphasis: {
-          label: {
-            show: true,
-            formatter: (params) => `${Number(params?.value?.[2] || 0)}`,
-            textStyle: { color: "#d6ebff", fontSize: 11, fontWeight: 700 },
-          },
-        },
-      },
-    ],
   };
 };
 
@@ -353,7 +285,6 @@ export default function Agents() {
   const [alertsPageSize, setAlertsPageSize] = useState(25);
   const [fimPage, setFimPage] = useState(1);
   const [fimPageSize, setFimPageSize] = useState(25);
-  const [threeDAvailable, setThreeDAvailable] = useState(true);
 
   const [error, setError] = useState(null);
   const [lastRefreshAt, setLastRefreshAt] = useState(null);
@@ -719,13 +650,22 @@ export default function Agents() {
 
   const eventChartOption = useMemo(() => {
     if (!eventChart.series.length) return null;
-    const labels = eventChart.series.map((row) => formatWazuhTimestamp(row.bucket));
+    const rawBuckets = eventChart.series.map((row) => row.bucket);
+    const timeAxis = buildTimeAxisModel(rawBuckets, 7);
     const values = eventChart.series.map((row) => Number(row.count || 0));
+    const sparseSeries = values.length <= 2;
     return {
       animationDuration: 620,
       grid: { top: 18, right: 16, bottom: 44, left: 54 },
       tooltip: {
         trigger: "axis",
+        formatter: (items) => {
+          const firstItem = Array.isArray(items) ? items[0] : items;
+          const idx = Number(firstItem?.dataIndex || 0);
+          const ts = timeAxis.fullLabels[idx] || "-";
+          const value = Number(values[idx] || 0);
+          return `${ts}<br/>Alerts: ${value}`;
+        },
         backgroundColor: "rgba(6, 12, 21, 0.94)",
         borderColor: "rgba(122, 166, 201, 0.62)",
         borderWidth: 1,
@@ -738,10 +678,18 @@ export default function Agents() {
       },
       xAxis: {
         type: "category",
-        boundaryGap: false,
-        data: labels,
+        boundaryGap: sparseSeries,
+        data: timeAxis.rawValues,
         axisLine: { lineStyle: { color: "rgba(109, 143, 173, 0.4)" } },
-        axisLabel: { color: "#8ea7c2", fontSize: 10, hideOverlap: true },
+        axisLabel: {
+          color: "#8ea7c2",
+          fontSize: 10,
+          hideOverlap: true,
+          interval: 0,
+          lineHeight: 14,
+          margin: 12,
+          formatter: timeAxis.axisFormatter,
+        },
       },
       yAxis: {
         type: "value",
@@ -758,8 +706,9 @@ export default function Agents() {
           type: "line",
           smooth: 0.2,
           symbol: "circle",
-          symbolSize: 5,
-          showSymbol: false,
+          symbolSize: sparseSeries ? 9 : 5,
+          showSymbol: sparseSeries,
+          connectNulls: true,
           data: values,
           lineStyle: {
             width: 3,
@@ -795,18 +744,6 @@ export default function Agents() {
         },
       ],
     };
-  }, [eventChart]);
-
-  const eventChart3DOption = useMemo(() => {
-    if (!eventChart.series.length) return null;
-    const labels = eventChart.series.map((row) => formatWazuhTimestamp(row.bucket));
-    const values = eventChart.series.map((row) => Number(row.count || 0));
-    return buildBar3DOption({
-      labels,
-      values,
-      metricLabel: "alerts",
-      palette: ["#7fe0ff", "#57c3ff", "#68f7d4"],
-    });
   }, [eventChart]);
 
   const mitreTop = useMemo(() => {
@@ -1210,25 +1147,16 @@ export default function Agents() {
             <div className="empty-state">No event histogram data available.</div>
           ) : (
             <>
-	              <div className="list-item split mb-12">
-	                <span>{eventChart.last} last bucket</span>
-	                <span className="chip">Max bucket: {eventChart.max}</span>
-	              </div>
-	              <div className="trend-wrap">
-	                {threeDAvailable ? (
-	                  <EChart3DPanel
-	                    option={eventChart3DOption}
-	                    style={{ width: "100%", height: 238 }}
-	                    loading={detailLoading}
-	                    onUnavailable={() => setThreeDAvailable(false)}
-	                  />
-	                ) : (
-	                  <EChartLinePanel option={eventChartOption} style={{ width: "100%", height: 238 }} loading={detailLoading} />
-	                )}
-	              </div>
-	            </>
-	          )}
-	        </div>
+              <div className="list-item split mb-12">
+                <span>{eventChart.last} last bucket</span>
+                <span className="chip">Max bucket: {eventChart.max}</span>
+              </div>
+              <div className="trend-wrap">
+                <EChartLinePanel option={eventChartOption} style={{ width: "100%", height: 238 }} loading={detailLoading} />
+              </div>
+            </>
+          )}
+        </div>
 
         <div className="card">
           <div className="card-header">

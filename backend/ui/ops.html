@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <title>Click2Fix Backend Ops</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b1523" />
+    <link rel="icon" type="image/svg+xml" href="/ops/c2f-logo.svg" />
+    <link rel="apple-touch-icon" href="/ops/c2f-logo.svg" />
     <style nonce="__CSP_NONCE__">
       @import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap");
       @import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap");
@@ -11,19 +14,22 @@
         color-scheme: dark;
         --font-family-ui: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
         --font-family-mono: "JetBrains Mono", "Consolas", monospace;
-        --bg: #070d17;
-        --panel: #101d2f;
-        --panel-soft: #13243a;
-        --panel-strong: #162b45;
-        --border: rgba(129, 152, 178, 0.3);
-        --text: #e6eef8;
-        --muted: #9aaec5;
-        --accent: #4a86d8;
-        --accent-2: #239a79;
-        --danger: #bf5353;
-        --success: #239a79;
-        --warning: #c98f44;
-        --shadow: 0 10px 22px rgba(2, 8, 16, 0.2);
+        --bg: #08111b;
+        --bg-2: #0d1622;
+        --panel: #0f1824;
+        --panel-soft: #152131;
+        --panel-strong: #1a283a;
+        --border: rgba(117, 144, 172, 0.22);
+        --text: #ebf3ff;
+        --muted: #94a8be;
+        --accent: #4f96ff;
+        --accent-2: #2dd4bf;
+        --accent-3: #f59e0b;
+        --danger: #f87171;
+        --success: #34d399;
+        --warning: #fbbf24;
+        --shadow: 0 16px 34px rgba(2, 6, 12, 0.22);
+        --elevation-1: 0 12px 24px rgba(2, 6, 12, 0.26);
       }
       * {
         box-sizing: border-box;
@@ -57,9 +63,9 @@
         inset: 0;
         pointer-events: none;
         background:
-          radial-gradient(860px 520px at -8% -16%, rgba(74, 134, 216, 0.2), transparent 64%),
-          radial-gradient(860px 520px at 108% -12%, rgba(35, 154, 121, 0.16), transparent 64%),
-          linear-gradient(180deg, #070d17, #0a1321 46%, #0b1626);
+          radial-gradient(860px 520px at -8% -16%, rgba(79, 150, 255, 0.22), transparent 64%),
+          radial-gradient(860px 520px at 108% -12%, rgba(45, 212, 191, 0.16), transparent 64%),
+          linear-gradient(180deg, #08111b, #0c1725 46%, #0f1b2b);
         z-index: -2;
       }
       body::after { content: none; }
@@ -76,9 +82,9 @@
         width: fit-content;
         padding: 4px 10px;
         border-radius: 999px;
-        border: 1px solid rgba(0, 167, 181, 0.26);
-        background: rgba(0, 167, 181, 0.08);
-        color: #0b6e75;
+        border: 1px solid rgba(45, 212, 191, 0.28);
+        background: rgba(45, 212, 191, 0.1);
+        color: #b8f3e8;
         font-size: 0.72rem;
         font-weight: 700;
         text-transform: uppercase;
@@ -97,7 +103,7 @@
       }
       .card.clickable:hover {
         transform: translateY(-2px);
-        border-color: rgba(0, 167, 181, 0.35);
+        border-color: rgba(79, 150, 255, 0.4);
       }
       .muted { color: var(--muted); }
       .stat {
@@ -107,22 +113,26 @@
       .stat:last-child { border-bottom: none; }
       .actions { display: flex; gap: 10px; flex-wrap: wrap; }
       button {
-        background: linear-gradient(135deg, var(--accent), var(--accent-2));
-        border: none; color: #ffffff; padding: 8px 14px; border-radius: 10px; cursor: pointer;
-        font-weight: 600;
+        background: linear-gradient(135deg, rgba(79, 150, 255, 0.96), rgba(45, 212, 191, 0.78));
+        border: 1px solid rgba(79, 150, 255, 0.18);
+        color: #ffffff;
+        padding: 8px 14px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: 700;
         transition: transform 0.15s ease, box-shadow 0.18s ease, opacity 0.18s ease, border-color 0.18s ease;
       }
-      button:hover { transform: translateY(-1px); box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08); }
+      button:hover { transform: translateY(-1px); box-shadow: var(--elevation-1); }
       button.secondary { background: rgba(255, 255, 255, 0.03); color: var(--text); border: 1px solid var(--border); }
-      button.danger { background: rgba(214,69,69,0.1); color: #b42323; border: 1px solid rgba(214,69,69,0.35); }
+      button.danger { background: rgba(248, 113, 113, 0.12); color: #fecaca; border: 1px solid rgba(248, 113, 113, 0.3); }
       input, select, textarea {
         width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
-        background: rgba(255, 255, 255, 0.03); color: var(--text);
+        background: rgba(12, 20, 31, 0.94); color: var(--text);
       }
       input:focus, select:focus, textarea:focus {
         outline: none;
-        border-color: rgba(0, 167, 181, 0.55);
-        box-shadow: 0 0 0 3px rgba(0, 167, 181, 0.14);
+        border-color: rgba(79, 150, 255, 0.64);
+        box-shadow: 0 0 0 3px rgba(79, 150, 255, 0.16);
       }
       table { width: 100%; border-collapse: collapse; table-layout: auto; }
       th, td {
@@ -192,12 +202,12 @@
         font-weight: 700;
         border: 1px solid transparent;
       }
-      .method-get { background: rgba(23, 166, 115, 0.12); color: #0f7a55; border-color: rgba(23, 166, 115, 0.35); }
-      .method-post { background: rgba(43, 125, 233, 0.14); color: #255ea8; border-color: rgba(43, 125, 233, 0.35); }
-      .method-put { background: rgba(240, 173, 78, 0.2); color: #a86111; border-color: rgba(240, 173, 78, 0.4); }
-      .method-patch { background: rgba(103, 80, 164, 0.16); color: #5a3f95; border-color: rgba(103, 80, 164, 0.4); }
-      .method-delete { background: rgba(214, 69, 69, 0.14); color: #b42323; border-color: rgba(214, 69, 69, 0.35); }
-      .method-default { background: rgba(148, 163, 184, 0.15); color: #57677a; border-color: rgba(148, 163, 184, 0.35); }
+      .method-get { background: rgba(16, 185, 129, 0.16); color: #d8fbf0; border-color: rgba(16, 185, 129, 0.36); }
+      .method-post { background: rgba(79, 150, 255, 0.18); color: #d6e8ff; border-color: rgba(79, 150, 255, 0.4); }
+      .method-put { background: rgba(245, 158, 11, 0.16); color: #ffefc7; border-color: rgba(245, 158, 11, 0.34); }
+      .method-patch { background: rgba(99, 102, 241, 0.16); color: #dcdfff; border-color: rgba(99, 102, 241, 0.34); }
+      .method-delete { background: rgba(248, 113, 113, 0.16); color: #ffe2e2; border-color: rgba(248, 113, 113, 0.34); }
+      .method-default { background: rgba(148, 163, 184, 0.14); color: #d2deeb; border-color: rgba(148, 163, 184, 0.3); }
       .policy-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -267,7 +277,7 @@
         top: 0;
         height: 100vh;
         padding: 20px 16px 16px;
-        background: linear-gradient(180deg, rgba(11, 20, 33, 0.98), rgba(11, 20, 34, 0.99));
+        background: linear-gradient(180deg, rgba(15, 24, 36, 0.97), rgba(11, 19, 29, 0.99));
         border-right: 1px solid var(--border);
         box-shadow: none;
         display: flex;
@@ -286,16 +296,14 @@
         gap: 2px;
         min-width: 0;
       }
-      .brand-badge {
+      .brand-logo {
         width: 42px;
         height: 42px;
         border-radius: 11px;
-        display: grid;
-        place-items: center;
-        font-weight: 700;
-        background: linear-gradient(135deg, var(--accent), var(--accent-2));
-        color: #ffffff;
-        box-shadow: 0 12px 24px rgba(0, 167, 181, 0.24);
+        display: block;
+        border: 1px solid rgba(157, 186, 215, 0.22);
+        background: linear-gradient(180deg, #13435f, #0f3149);
+        box-shadow: 0 10px 18px rgba(8, 25, 46, 0.28);
       }
       .sidebar-workspace {
         display: grid;
@@ -307,10 +315,10 @@
       }
       .priority-panel {
         border: 1px solid rgba(157, 186, 215, 0.26);
-        border-radius: 12px;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+        border-radius: 14px;
+        background: linear-gradient(180deg, rgba(20, 33, 49, 0.94), rgba(14, 24, 37, 0.97));
         padding: 12px;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 10px 24px rgba(1, 6, 14, 0.16);
         display: flex;
         flex-direction: column;
         gap: 10px;
@@ -336,8 +344,8 @@
         justify-content: center;
         padding: 4px 9px;
         border-radius: 999px;
-        border: 1px solid rgba(12, 176, 187, 0.34);
-        background: rgba(12, 176, 187, 0.14);
+        border: 1px solid rgba(45, 212, 191, 0.3);
+        background: rgba(45, 212, 191, 0.12);
         color: #dce9f9;
         font-size: 0.68rem;
         font-weight: 700;
@@ -359,9 +367,9 @@
         min-height: 0;
         border: 1px solid rgba(157, 186, 215, 0.18);
         border-radius: 14px;
-        background: rgba(255, 255, 255, 0.03);
+        background: linear-gradient(180deg, rgba(20, 31, 46, 0.86), rgba(14, 22, 34, 0.94));
         padding: 10px;
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 20px rgba(1, 6, 14, 0.12);
       }
       .nav-groups {
         display: grid;
@@ -400,8 +408,8 @@
       .priority-link:hover,
       .nav-link:hover {
         color: #ffffff;
-        background: linear-gradient(135deg, rgba(12, 176, 187, 0.26), rgba(29, 94, 196, 0.2));
-        border-color: rgba(12, 176, 187, 0.44);
+        background: linear-gradient(135deg, rgba(45, 212, 191, 0.22), rgba(79, 150, 255, 0.2));
+        border-color: rgba(45, 212, 191, 0.4);
         transform: translateX(1px);
       }
       .nav-link-badge {
@@ -440,7 +448,7 @@
         height: 8px;
         border-radius: 999px;
         background: var(--success);
-        box-shadow: 0 0 10px rgba(16, 185, 129, 0.45);
+        box-shadow: 0 0 10px rgba(52, 211, 153, 0.45);
       }
       .footer-version {
         color: #8fabca;
@@ -474,7 +482,7 @@
         padding: 16px 20px;
         border-radius: 18px;
         border: 1px solid var(--border);
-        background: linear-gradient(180deg, rgba(12, 22, 36, 0.96), rgba(14, 25, 40, 0.92));
+        background: linear-gradient(180deg, rgba(15, 24, 36, 0.97), rgba(11, 19, 29, 0.99));
         box-shadow: var(--shadow);
         position: static;
         -webkit-backdrop-filter: none;
@@ -521,8 +529,8 @@
         transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
       }
       .topbar-shortcut:hover {
-        background: rgba(74, 134, 216, 0.14);
-        border-color: rgba(74, 134, 216, 0.4);
+        background: rgba(79, 150, 255, 0.14);
+        border-color: rgba(79, 150, 255, 0.4);
         color: #ffffff;
       }
       .topbar-right {
@@ -539,7 +547,7 @@
         padding: 20px;
         border: 1px solid var(--border);
         border-radius: 18px;
-        background: linear-gradient(180deg, rgba(15, 27, 44, 0.98), rgba(12, 23, 38, 0.99));
+        background: linear-gradient(180deg, rgba(15, 24, 36, 0.97), rgba(11, 19, 29, 0.99));
         box-shadow: var(--shadow);
         scroll-margin-top: 88px;
       }
@@ -561,9 +569,9 @@
         min-width: 0;
         overflow: visible;
         border-radius: 14px;
-        border-color: var(--border);
-        background: rgba(255, 255, 255, 0.02);
-        box-shadow: var(--shadow);
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(15, 24, 36, 0.97), rgba(11, 19, 29, 0.99));
+        box-shadow: 0 16px 34px rgba(2, 6, 12, 0.22);
       }
       .card h3 {
         margin: 0 0 10px;
@@ -582,14 +590,14 @@
         max-height: min(62vh, 920px);
         overflow: auto;
         border: 1px solid var(--border);
-        background: rgba(255, 255, 255, 0.02);
+        background: linear-gradient(180deg, rgba(15, 24, 36, 0.98), rgba(13, 21, 32, 0.98));
         resize: vertical;
       }
       .summary-row {
         grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       }
       .mission-card {
-        background: linear-gradient(180deg, rgba(18, 33, 54, 0.96), rgba(14, 25, 41, 0.99));
+        background: linear-gradient(180deg, rgba(18, 29, 43, 0.96), rgba(15, 24, 36, 0.98));
         border: 1px solid var(--border);
         border-radius: 10px;
         padding: 14px;
@@ -605,8 +613,8 @@
         font: inherit;
       }
       button.mission-card:hover {
-        border-color: rgba(10, 124, 149, 0.44);
-        background: linear-gradient(180deg, #f4fbff 0%, #e8f2fb 100%);
+        border-color: rgba(79, 150, 255, 0.44);
+        background: linear-gradient(180deg, rgba(21, 34, 50, 0.98), rgba(15, 26, 40, 0.98));
         transform: translateY(-1px);
       }
       .mission-label {
@@ -645,29 +653,29 @@
         max-width: 100%;
         padding: 5px 11px;
         border-radius: 999px;
-        font-size: 0.75rem;
+        font-size: 0.72rem;
         font-weight: 600;
         letter-spacing: 0.01em;
-        border: 1px solid rgba(148, 163, 184, 0.35);
-        background: rgba(148, 163, 184, 0.15);
-        color: #57677a;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
         white-space: normal;
         word-break: break-word;
       }
       .badge.success {
-        background: #10b981;
-        color: #ffffff;
-        border-color: #10b981;
+        background: rgba(16, 185, 129, 0.11);
+        color: #d8fbf0;
+        border-color: rgba(16, 185, 129, 0.2);
       }
       .badge.failed {
-        background: #ef4444;
-        color: #ffffff;
-        border-color: #ef4444;
+        background: rgba(239, 68, 68, 0.1);
+        color: #ffe2e2;
+        border-color: rgba(239, 68, 68, 0.18);
       }
       .badge.neutral {
-        background: rgba(148, 163, 184, 0.15);
-        color: #57677a;
-        border-color: rgba(148, 163, 184, 0.35);
+        background: rgba(148, 163, 184, 0.12);
+        color: #d2deeb;
+        border-color: rgba(148, 163, 184, 0.26);
       }
       .badge.success::before { content: "\2713"; }
       .badge.failed::before { content: "\26A0"; }
@@ -705,7 +713,7 @@
       <aside class="sidebar">
         <div class="sidebar-top">
           <div class="brand">
-            <div class="brand-badge">C2F</div>
+            <img class="brand-logo" src="/ops/c2f-logo.svg" alt="Click2Fix logo" />
             <div class="brand-copy">
               <div class="brand-title">Backend Ops</div>
               <div class="brand-subtitle">SOAR Control Plane</div>

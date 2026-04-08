@@ -12,7 +12,6 @@ import {
 import { formatWazuhTimestamp, parseWazuhTimestamp } from "../utils/time";
 import { formatApiError } from "../utils/httpErrors";
 import EChartLinePanel from "../components/EChartLinePanel";
-import EChart3DPanel from "../components/EChart3DPanel";
 
 const statusClass = status => {
   if (status === "spike" || status === "drop") return "failed";
@@ -37,120 +36,39 @@ const errorText = (err, fallback) => formatApiError(err, fallback);
 const isNotFoundResult = (result) =>
   result?.status === "rejected" && Number(result?.reason?.response?.status || 0) === 404;
 
-const formatTickTime = (raw) => {
-  const parsed = parseWazuhTimestamp(raw);
-  if (!parsed) return String(raw || "-");
-  const day = parsed.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  const time = parsed.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
-  return `${day} ${time}`;
-};
+const buildTimeAxisModel = (rawPoints, targetTicks = 8) => {
+  const rawValues = Array.isArray(rawPoints)
+    ? rawPoints.map((value) => String(value ?? ""))
+    : [];
+  const parsedValues = rawValues.map((value) => parseWazuhTimestamp(value));
+  const shortLabels = parsedValues.map((value, idx) => {
+    if (!value) return rawValues[idx] || "-";
+    return value.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
+  });
+  const dayLabels = parsedValues.map((value) => (
+    value
+      ? value.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+      : ""
+  ));
+  const fullLabels = parsedValues.map((value, idx) => {
+    if (!value) return rawValues[idx] || "-";
+    return `${dayLabels[idx]} ${shortLabels[idx]}`;
+  });
+  const labelStep = Math.max(1, Math.ceil(rawValues.length / Math.max(3, targetTicks)));
 
-const buildBar3DOption = ({
-  labels,
-  values,
-  metricLabel,
-  palette = ["#73daff", "#5db9ff", "#64ffd8"],
-}) => {
-  if (!Array.isArray(labels) || !Array.isArray(values) || !labels.length || !values.length) return null;
-  const maxValue = Math.max(...values.map((value) => Number(value || 0)), 1);
-  const labelStep = Math.max(1, Math.ceil(labels.length / 8));
   return {
-    animationDurationUpdate: 420,
-    animationDuration: 520,
-    tooltip: {
-      formatter: (params) => {
-        const tuple = Array.isArray(params?.value) ? params.value : [];
-        const idx = Number(tuple[0] || 0);
-        const val = Number(tuple[2] || 0);
-        return `${labels[idx] || "bucket"}<br/>${metricLabel}: ${val}`;
-      },
-      backgroundColor: "rgba(6, 12, 21, 0.94)",
-      borderColor: "rgba(122, 166, 201, 0.62)",
-      borderWidth: 1,
-      textStyle: { color: "#d7ebff" },
+    rawValues,
+    fullLabels,
+    axisFormatter: (_value, idx) => {
+      const index = Number(idx || 0);
+      if (!Number.isFinite(index)) return "";
+      const isLast = index === rawValues.length - 1;
+      if (!isLast && index % labelStep !== 0) return "";
+      const shortLabel = shortLabels[index] || "-";
+      const dayLabel = dayLabels[index];
+      const dayChanged = index === 0 || dayLabel !== dayLabels[index - 1];
+      return dayLabel && dayChanged ? `${dayLabel}\n${shortLabel}` : shortLabel;
     },
-    xAxis3D: {
-      type: "category",
-      data: labels,
-      axisLabel: {
-        color: "#8ea7c2",
-        interval: 0,
-        formatter: (value, idx) => (idx % labelStep === 0 ? value : ""),
-      },
-      axisLine: { lineStyle: { color: "rgba(124, 159, 188, 0.44)" } },
-    },
-    yAxis3D: {
-      type: "category",
-      data: [metricLabel],
-      axisLabel: { show: false },
-      axisLine: { lineStyle: { color: "rgba(124, 159, 188, 0.26)" } },
-    },
-    zAxis3D: {
-      type: "value",
-      min: 0,
-      max: Math.max(4, Math.round(maxValue * 1.15)),
-      axisLabel: { color: "#8ea7c2" },
-      axisLine: { lineStyle: { color: "rgba(124, 159, 188, 0.44)" } },
-      splitLine: { lineStyle: { color: "rgba(120, 159, 188, 0.16)" } },
-    },
-    grid3D: {
-      boxWidth: Math.max(86, Math.min(152, labels.length * 2.1)),
-      boxDepth: 28,
-      boxHeight: 56,
-      viewControl: {
-        projection: "perspective",
-        alpha: 23,
-        beta: 28,
-        panSensitivity: 0.9,
-        rotateSensitivity: 1,
-        zoomSensitivity: 0.65,
-        autoRotate: false,
-      },
-      light: {
-        main: { intensity: 1.05, shadow: false },
-        ambient: { intensity: 0.48 },
-      },
-      axisPointer: {
-        show: true,
-        lineStyle: { color: "rgba(132, 216, 255, 0.66)" },
-      },
-    },
-    series: [
-      {
-        type: "bar3D",
-        shading: "lambert",
-        data: values.map((value, idx) => ({
-          value: [idx, 0, Number(value || 0)],
-          itemStyle: {
-            color: {
-              type: "linear",
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [
-                { offset: 0, color: palette[0] },
-                { offset: 0.5, color: palette[1] },
-                { offset: 1, color: palette[2] },
-              ],
-            },
-            opacity: 0.96,
-          },
-        })),
-        label: { show: false },
-        emphasis: {
-          label: {
-            show: true,
-            distance: 2,
-            formatter: (params) => `${Number(params?.value?.[2] || 0)}`,
-            textStyle: { color: "#d5ebff", fontSize: 11, fontWeight: 700 },
-          },
-          itemStyle: {
-            color: "#a0e6ff",
-          },
-        },
-      },
-    ],
   };
 };
 
@@ -189,8 +107,6 @@ export default function Analytics() {
   const [aiDisabledReason, setAiDisabledReason] = useState(
     "AI is disabled. Enable it in Org Admin / Platform AI Configuration."
   );
-  const [threeDAvailable, setThreeDAvailable] = useState(true);
-
   const refreshOverview = () => {
     setLoading(true);
     getAnalyticsOverview()
@@ -458,13 +374,22 @@ export default function Analytics() {
 
   const dataLayerChartOption = useMemo(() => {
     if (!dataLayerChart?.series?.length) return null;
-    const labels = dataLayerChart.series.map((row) => formatTickTime(row.bucket));
+    const rawBuckets = dataLayerChart.series.map((row) => row.bucket);
+    const timeAxis = buildTimeAxisModel(rawBuckets, 7);
     const values = dataLayerChart.series.map((row) => Number(row.count || 0));
+    const sparseSeries = values.length <= 2;
     return {
       animationDuration: 650,
       grid: { top: 18, right: 18, bottom: 46, left: 56 },
       tooltip: {
         trigger: "axis",
+        formatter: (items) => {
+          const firstItem = Array.isArray(items) ? items[0] : items;
+          const idx = Number(firstItem?.dataIndex || 0);
+          const ts = timeAxis.fullLabels[idx] || "-";
+          const value = Number(values[idx] || 0);
+          return `${ts}<br/>Events: ${value}`;
+        },
         backgroundColor: "rgba(6, 12, 21, 0.94)",
         borderColor: "rgba(122, 166, 201, 0.62)",
         borderWidth: 1,
@@ -478,10 +403,18 @@ export default function Analytics() {
       },
       xAxis: {
         type: "category",
-        boundaryGap: false,
-        data: labels,
+        boundaryGap: sparseSeries,
+        data: timeAxis.rawValues,
         axisLine: { lineStyle: { color: "rgba(109, 143, 173, 0.4)" } },
-        axisLabel: { color: "#8ea7c2", fontSize: 10, hideOverlap: true },
+        axisLabel: {
+          color: "#8ea7c2",
+          fontSize: 10,
+          hideOverlap: true,
+          interval: 0,
+          lineHeight: 14,
+          margin: 12,
+          formatter: timeAxis.axisFormatter,
+        },
       },
       yAxis: {
         type: "value",
@@ -498,8 +431,9 @@ export default function Analytics() {
           type: "line",
           smooth: 0.24,
           symbol: "circle",
-          symbolSize: 6,
-          showSymbol: false,
+          symbolSize: sparseSeries ? 9 : 6,
+          showSymbol: sparseSeries,
+          connectNulls: true,
           data: values,
           lineStyle: {
             width: 3,
@@ -540,13 +474,22 @@ export default function Analytics() {
 
   const hourlyChartOption = useMemo(() => {
     if (!hourlyChart?.series?.length) return null;
-    const labels = hourlyChart.series.map((row) => formatTickTime(row.hour));
+    const rawBuckets = hourlyChart.series.map((row) => row.hour);
+    const timeAxis = buildTimeAxisModel(rawBuckets, 7);
     const values = hourlyChart.series.map((row) => Number(row.count || 0));
+    const sparseSeries = values.length <= 2;
     return {
       animationDuration: 650,
       grid: { top: 18, right: 18, bottom: 46, left: 56 },
       tooltip: {
         trigger: "axis",
+        formatter: (items) => {
+          const firstItem = Array.isArray(items) ? items[0] : items;
+          const idx = Number(firstItem?.dataIndex || 0);
+          const ts = timeAxis.fullLabels[idx] || "-";
+          const value = Number(values[idx] || 0);
+          return `${ts}<br/>Alerts: ${value}`;
+        },
         backgroundColor: "rgba(6, 12, 21, 0.94)",
         borderColor: "rgba(122, 166, 201, 0.62)",
         borderWidth: 1,
@@ -560,10 +503,18 @@ export default function Analytics() {
       },
       xAxis: {
         type: "category",
-        boundaryGap: false,
-        data: labels,
+        boundaryGap: sparseSeries,
+        data: timeAxis.rawValues,
         axisLine: { lineStyle: { color: "rgba(109, 143, 173, 0.4)" } },
-        axisLabel: { color: "#8ea7c2", fontSize: 10, hideOverlap: true },
+        axisLabel: {
+          color: "#8ea7c2",
+          fontSize: 10,
+          hideOverlap: true,
+          interval: 0,
+          lineHeight: 14,
+          margin: 12,
+          formatter: timeAxis.axisFormatter,
+        },
       },
       yAxis: {
         type: "value",
@@ -580,8 +531,9 @@ export default function Analytics() {
           type: "line",
           smooth: 0.24,
           symbol: "circle",
-          symbolSize: 6,
-          showSymbol: false,
+          symbolSize: sparseSeries ? 9 : 6,
+          showSymbol: sparseSeries,
+          connectNulls: true,
           data: values,
           lineStyle: {
             width: 3,
@@ -711,42 +663,6 @@ export default function Analytics() {
         },
       ],
     };
-  }, [severityChart]);
-
-  const dataLayerChart3DOption = useMemo(() => {
-    if (!dataLayerChart?.series?.length) return null;
-    const labels = dataLayerChart.series.map((row) => formatTickTime(row.bucket));
-    const values = dataLayerChart.series.map((row) => Number(row.count || 0));
-    return buildBar3DOption({
-      labels,
-      values,
-      metricLabel: "events",
-      palette: ["#79ddff", "#59bfff", "#57f3cf"],
-    });
-  }, [dataLayerChart]);
-
-  const hourlyChart3DOption = useMemo(() => {
-    if (!hourlyChart?.series?.length) return null;
-    const labels = hourlyChart.series.map((row) => formatTickTime(row.hour));
-    const values = hourlyChart.series.map((row) => Number(row.count || 0));
-    return buildBar3DOption({
-      labels,
-      values,
-      metricLabel: "alerts",
-      palette: ["#9aeccf", "#69cff6", "#6aafff"],
-    });
-  }, [hourlyChart]);
-
-  const severityChart3DOption = useMemo(() => {
-    if (!severityChart?.series?.length) return null;
-    const labels = severityChart.series.map((row) => `L${row.level}`);
-    const values = severityChart.series.map((row) => Number(row.count || 0));
-    return buildBar3DOption({
-      labels,
-      values,
-      metricLabel: "alerts",
-      palette: ["#8af1da", "#65c9ff", "#4f82ff"],
-    });
   }, [severityChart]);
 
   return (
@@ -934,16 +850,7 @@ export default function Analytics() {
                     <span className="chip">Peak: {dataLayerChart.max}</span>
                   </div>
                   <div className="trend-wrap">
-                    {threeDAvailable ? (
-                      <EChart3DPanel
-                        option={dataLayerChart3DOption}
-                        style={{ width: "100%", height: 260 }}
-                        loading={loadingDataLayer}
-                        onUnavailable={() => setThreeDAvailable(false)}
-                      />
-                    ) : (
-                      <EChartLinePanel option={dataLayerChartOption} style={{ width: "100%", height: 260 }} loading={loadingDataLayer} />
-                    )}
+                    <EChartLinePanel option={dataLayerChartOption} style={{ width: "100%", height: 260 }} loading={loadingDataLayer} />
                     <div className="trend-legend">
                       <span>{formatWazuhTimestamp(dataLayerChart.from)}</span>
                       <span>Avg {dataLayerChart.average}/bucket</span>
@@ -1122,15 +1029,7 @@ export default function Analytics() {
                 <span className="chip">Peak bucket: {severityChart.max}</span>
               </div>
               <div className="trend-wrap">
-                {threeDAvailable ? (
-                  <EChart3DPanel
-                    option={severityChart3DOption}
-                    style={{ width: "100%", height: 260 }}
-                    onUnavailable={() => setThreeDAvailable(false)}
-                  />
-                ) : (
-                  <EChartLinePanel option={severityChartOption} style={{ width: "100%", height: 260 }} />
-                )}
+                <EChartLinePanel option={severityChartOption} style={{ width: "100%", height: 260 }} />
               </div>
               <div className="table-scroll">
                 <table className="table compact">
@@ -1170,16 +1069,7 @@ export default function Analytics() {
                 <span className="chip">Peak: {hourlyChart.max}</span>
               </div>
               <div className="trend-wrap">
-                {threeDAvailable ? (
-                  <EChart3DPanel
-                    option={hourlyChart3DOption}
-                    style={{ width: "100%", height: 260 }}
-                    loading={loading}
-                    onUnavailable={() => setThreeDAvailable(false)}
-                  />
-                ) : (
-                  <EChartLinePanel option={hourlyChartOption} style={{ width: "100%", height: 260 }} loading={loading} />
-                )}
+                <EChartLinePanel option={hourlyChartOption} style={{ width: "100%", height: 260 }} loading={loading} />
                 <div className="trend-legend">
                   <span>{formatWazuhTimestamp(hourlyChart.from)}</span>
                   <span>Avg {hourlyChart.average}/h</span>

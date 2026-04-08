@@ -121,6 +121,17 @@ const OPS_MODULES = [
   },
 ];
 
+const ORG_ADMIN_ROUTE = "/orgs";
+const TENANT_GOVERNANCE_ENABLED = ["1", "true", "yes", "on"].includes(
+  String(import.meta.env.VITE_TENANT_GOVERNANCE_ENABLED || "false").trim().toLowerCase()
+);
+
+const isOrgAdminPath = (path) =>
+  String(path || "").trim().toLowerCase().startsWith(ORG_ADMIN_ROUTE);
+
+const isOrgAdminCapabilityUnavailableStatus = (status) =>
+  [404, 405, 501].includes(Number(status || 0));
+
 const shortLabel = (value) =>
   String(value || "")
     .split(/\s+/)
@@ -193,6 +204,7 @@ export default function AppLayout() {
     socketLatencyMs: null,
     socketLive: false,
   });
+  const [orgAdminAvailable, setOrgAdminAvailable] = useState(true);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -232,6 +244,27 @@ export default function AppLayout() {
         const statusCode = err?.response?.status;
         if ((statusCode === 404 || statusCode === 405) && getLegacyToken()) return;
         if (active) setUser(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!TENANT_GOVERNANCE_ENABLED) return undefined;
+    let active = true;
+    api
+      .get("/v2/tenants", {
+        params: { page: 1, page_size: 1 },
+        validateStatus: (statusCode) => Number(statusCode || 0) >= 200 && Number(statusCode || 0) < 500,
+      })
+      .then((res) => {
+        if (!active) return;
+        setOrgAdminAvailable(!isOrgAdminCapabilityUnavailableStatus(res?.status));
+      })
+      .catch(() => {
+        if (!active) return;
+        setOrgAdminAvailable(true);
       });
     return () => {
       active = false;
@@ -404,6 +437,12 @@ export default function AppLayout() {
     document.title = `Click2Fix | ${currentPageLabel}`;
   }, [currentPageLabel]);
 
+  useEffect(() => {
+    if (!TENANT_GOVERNANCE_ENABLED || orgAdminAvailable) return;
+    if (!isOrgAdminPath(location.pathname)) return;
+    navigate("/", { replace: true });
+  }, [orgAdminAvailable, location.pathname, navigate]);
+
   const submitSearch = (event) => {
     event.preventDefault();
     const term = search.trim();
@@ -427,21 +466,39 @@ export default function AppLayout() {
   };
 
   const healthTone = backendHealth.socketLive ? "success" : "pending";
+  const visibleNavSections = useMemo(
+    () =>
+      NAV_SECTIONS.map((section) => ({
+        ...section,
+        links: section.links.filter((link) =>
+          !TENANT_GOVERNANCE_ENABLED || orgAdminAvailable ? true : link.to !== ORG_ADMIN_ROUTE
+        ),
+      })),
+    [orgAdminAvailable]
+  );
   const priorityLinks = useMemo(() => {
-    const byRoute = new Map(PRIORITY_LINKS.map((item) => [item.to, item]));
+    const byRoute = new Map(
+      PRIORITY_LINKS
+        .filter((item) =>
+          !TENANT_GOVERNANCE_ENABLED || orgAdminAvailable ? true : item.to !== ORG_ADMIN_ROUTE
+        )
+        .map((item) => [item.to, item])
+    );
     return priorityQueueItems
-      .filter((entry) => entry.enabled !== false)
+      .filter((entry) => entry.enabled !== false && byRoute.has(entry.to))
       .map((entry) => byRoute.get(entry.to))
       .filter(Boolean);
-  }, [priorityQueueItems]);
+  }, [priorityQueueItems, orgAdminAvailable]);
 
   const dockOpsModules = useMemo(
     () =>
       OPS_MODULES.map((section) => ({
         ...section,
-        links: opsCompact ? section.links.slice(0, 2) : section.links,
+        links: (opsCompact ? section.links.slice(0, 2) : section.links).filter((link) =>
+          !TENANT_GOVERNANCE_ENABLED || orgAdminAvailable ? true : link.to !== ORG_ADMIN_ROUTE
+        ),
       })),
-    [opsCompact]
+    [opsCompact, orgAdminAvailable]
   );
 
   const updatePriorityQueueItem = useCallback((route, patch) => {
@@ -518,7 +575,7 @@ export default function AppLayout() {
               </button>
             </div>
 
-            {NAV_SECTIONS.map((section) => (
+            {visibleNavSections.map((section) => (
               <div key={section.title} className="shell-nav-group">
                 <div className="shell-nav-group-title">{section.title}</div>
                 <div className="shell-nav-group-links">
@@ -642,7 +699,7 @@ export default function AppLayout() {
                 <div className="priority-config-list">
                   {priorityQueueItems.map((item, index) => {
                     const meta = PRIORITY_LINKS.find((link) => link.to === item.to);
-                    if (!meta) return null;
+                    if (!meta || (!orgAdminAvailable && meta.to === ORG_ADMIN_ROUTE)) return null;
                     return (
                       <div key={item.to} className="priority-config-row">
                         <label className="priority-config-toggle">

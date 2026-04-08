@@ -76,18 +76,10 @@ jobs:
         id: image_tags
         run: |
           {
-            echo "backend<<EOF"
-            echo "${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}"
-            if [ "${{ steps.meta.outputs.publish_latest }}" = "true" ]; then
-              echo "${{ steps.meta.outputs.backend_image }}:latest"
-            fi
-            echo "EOF"
-            echo "frontend<<EOF"
-            echo "${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}"
-            if [ "${{ steps.meta.outputs.publish_latest }}" = "true" ]; then
-              echo "${{ steps.meta.outputs.frontend_image }}:latest"
-            fi
-            echo "EOF"
+            echo "backend_version=${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}"
+            echo "backend_latest=${{ steps.meta.outputs.backend_image }}:latest"
+            echo "frontend_version=${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}"
+            echo "frontend_latest=${{ steps.meta.outputs.frontend_image }}:latest"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create release output directory
@@ -130,6 +122,50 @@ jobs:
             click2fix-backend-smoke:${{ steps.meta.outputs.clean }} \
             -c "import importlib; importlib.import_module('main'); print('backend import smoke passed')"
 
+      - name: Verify tenant-governance route parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          TENANT_GOV_FLAG="$(grep -E '^VITE_TENANT_GOVERNANCE_ENABLED=' deploy/appliance/.env.appliance.template | head -n1 | cut -d= -f2- || true)"
+          TENANT_GOV_FLAG="$(echo "${TENANT_GOV_FLAG}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+          if [ "${TENANT_GOV_FLAG}" != "true" ] && [ "${TENANT_GOV_FLAG}" != "1" ] && [ "${TENANT_GOV_FLAG}" != "yes" ] && [ "${TENANT_GOV_FLAG}" != "on" ]; then
+            echo "Tenant governance UI is disabled by default in appliance template; parity check skipped."
+            exit 0
+          fi
+
+          FRONTEND_USES_V2_TENANTS="$(grep -R --line-number --include='*.js' --include='*.jsx' '/v2/tenants' frontend/src || true)"
+          if [ -z "${FRONTEND_USES_V2_TENANTS}" ]; then
+            echo "Frontend does not reference /v2/tenants; parity check skipped."
+            exit 0
+          fi
+
+          echo "Frontend references /v2/tenants:"
+          echo "${FRONTEND_USES_V2_TENANTS}"
+
+          docker run --rm \
+            -e DATABASE_URL="sqlite:////tmp/click2fix-smoke.db" \
+            -e JWT_SECRET="click2fix-smoke-secret-value-0123456789abcdef" \
+            -e WAZUH_URL="https://wazuh.example.invalid" \
+            -e WAZUH_USER="smoke-user" \
+            -e WAZUH_PASSWORD="smoke-password" \
+            -e INDEXER_URL="https://indexer.example.invalid" \
+            -e INDEXER_USER="smoke-user" \
+            -e INDEXER_PASSWORD="smoke-password" \
+            -e C2F_AGENT_MANAGER_URL="http://agent-manager.example.invalid" \
+            -e C2F_AGENT_MANAGER_CONTROL_TOKEN="smoke-agent-manager-token" \
+            -e C2F_AGENT_MANAGER_BOOTSTRAP_TOKEN="smoke-agent-bootstrap-token" \
+            -e C2F_ENROLLMENT_BOOTSTRAP_TOKEN="smoke-enrollment-token" \
+            -e C2F_EVENT_INDEXER_URL="http://event-indexer.example.invalid" \
+            -e C2F_EVENT_INDEXER_TOKEN="smoke-event-indexer-token" \
+            -e C2F_INGEST_GATEWAY_URL="http://ingest-gateway.example.invalid" \
+            -e C2F_INGEST_GATEWAY_TOKEN="smoke-ingest-token" \
+            -e C2F_SOAR_SERVICE_URL="http://soar-service.example.invalid" \
+            -e C2F_SOAR_SERVICE_TOKEN="smoke-soar-token" \
+            -e C2F_AUDIT_HMAC_SECRET="smoke-audit-hmac-secret" \
+            --entrypoint python \
+            click2fix-backend-smoke:${{ steps.meta.outputs.clean }} \
+            -c "import importlib, sys; app = importlib.import_module('main').app; paths = {getattr(route, 'path', '') for route in app.routes}; ok = '/api/v2/tenants' in paths; print('backend_has_/api/v2/tenants=', ok); sys.exit(0 if ok else 1)"
+
       - name: Build and push backend image
         id: backend_build
         uses: docker/build-push-action@v6
@@ -139,7 +175,7 @@ jobs:
           push: true
           provenance: mode=max
           sbom: true
-          tags: ${{ steps.image_tags.outputs.backend }}
+          tags: ${{ steps.image_tags.outputs.backend_version }}
 
       - name: Attest backend image provenance
         uses: actions/attest-build-provenance@v3
@@ -157,7 +193,18 @@ jobs:
           push: true
           provenance: mode=max
           sbom: true
-          tags: ${{ steps.image_tags.outputs.frontend }}
+          tags: ${{ steps.image_tags.outputs.frontend_version }}
+
+      - name: Promote latest image tags
+        if: ${{ steps.meta.outputs.publish_latest == 'true' }}
+        shell: bash
+        run: |
+          docker buildx imagetools create \
+            -t "${{ steps.image_tags.outputs.backend_latest }}" \
+            "${{ steps.image_tags.outputs.backend_version }}"
+          docker buildx imagetools create \
+            -t "${{ steps.image_tags.outputs.frontend_latest }}" \
+            "${{ steps.image_tags.outputs.frontend_version }}"
 
       - name: Attest frontend image provenance
         uses: actions/attest-build-provenance@v3

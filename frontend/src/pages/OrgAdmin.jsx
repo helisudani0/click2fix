@@ -46,6 +46,9 @@ const AI_PROVIDER_MODEL_OPTIONS = {
   anthropic: ["claude-3-5-sonnet-latest", "claude-3-5-haiku-latest", "claude-3-opus-latest"],
   ollama: ["llama3.1:8b", "qwen2.5:7b", "mistral:7b"],
 };
+const TENANT_GOVERNANCE_ENABLED = ["1", "true", "yes", "on"].includes(
+  String(import.meta.env.VITE_TENANT_GOVERNANCE_ENABLED || "false").trim().toLowerCase()
+);
 const defaultModelForProvider = (provider) => AI_PROVIDER_DEFAULT_MODEL[normalizeKey(provider)] || "";
 const defaultBaseUrlForProvider = (provider) => AI_PROVIDER_DEFAULT_BASE_URL[normalizeKey(provider)] || "";
 const modelOptionsForProvider = (provider) => AI_PROVIDER_MODEL_OPTIONS[normalizeKey(provider)] || [];
@@ -183,7 +186,7 @@ export default function OrgAdmin() {
   const [savingRetention, setSavingRetention] = useState(false);
   const [runningLifecycle, setRunningLifecycle] = useState(false);
   const [runningLifecycleBatch, setRunningLifecycleBatch] = useState(false);
-  const [v2Unavailable, setV2Unavailable] = useState(false);
+  const [v2Unavailable, setV2Unavailable] = useState(!TENANT_GOVERNANCE_ENABLED);
 
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
@@ -432,6 +435,7 @@ export default function OrgAdmin() {
   const refreshWorkspace = async () => {
     clearFeedback();
     await loadAiConfig();
+    if (!TENANT_GOVERNANCE_ENABLED) return;
     await loadTenants();
     if (selectedTenantId) {
       await Promise.all([
@@ -443,7 +447,11 @@ export default function OrgAdmin() {
 
   useEffect(() => {
     loadAiConfig();
-    loadTenants();
+    if (TENANT_GOVERNANCE_ENABLED) {
+      loadTenants();
+    } else {
+      setV2Unavailable(true);
+    }
   }, []);
 
   useEffect(() => {

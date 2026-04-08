@@ -16,7 +16,7 @@ If `docker info` fails, start Docker Desktop first.
 ## 2) Download Appliance Runtime Files
 
 ```cmd
-set C2F_VERSION=v1.1.4
+set C2F_VERSION=v1.1.5
 mkdir C:\Click2Fix
 cd /d C:\Click2Fix
 curl -fL -o docker-compose.yml https://raw.githubusercontent.com/helisudani0/click2fix/%C2F_VERSION%/deploy/appliance/docker-compose.appliance.yml
@@ -36,7 +36,7 @@ Set these values at minimum:
 ```env
 C2F_BACKEND_IMAGE=ghcr.io/helisudani0/click2fix-backend
 C2F_FRONTEND_IMAGE=ghcr.io/helisudani0/click2fix-frontend
-C2F_IMAGE_TAG=1.1.4
+C2F_IMAGE_TAG=1.1.5
 COMPOSE_PROJECT_NAME=click2fix
 POSTGRES_PASSWORD=<strong-db-password>
 JWT_SECRET=<long-random-secret>
@@ -48,11 +48,13 @@ INDEXER_USER=<indexer-user>
 INDEXER_PASSWORD=<indexer-password>
 C2F_BOOTSTRAP_ADMIN_USERNAME=admin
 C2F_BOOTSTRAP_ADMIN_PASSWORD=<strong-admin-password>
+VITE_TENANT_GOVERNANCE_ENABLED=false
 ```
 
 Important:
 
-- Use `C2F_IMAGE_TAG=1.1.4` (not `v1.1.4`).
+- Use `C2F_IMAGE_TAG=1.1.5` (not `v1.1.5`).
+- Do not use `latest` for appliance installs; pin a numbered release tag so backend/frontend stay in lockstep.
 - Keep using `--env-file .env.appliance` in every `docker compose` command.
 
 ## 4) Optional GHCR Login (Private Packages Only)
@@ -170,7 +172,7 @@ docker compose --env-file .env.appliance -f docker-compose.yml <command>
 - Re-download and recreate only `c2f-lb`:
 
 ```cmd
-curl -fL -o nginx.conf https://raw.githubusercontent.com/helisudani0/click2fix/v1.1.4/deploy/appliance/nginx.conf
+curl -fL -o nginx.conf https://raw.githubusercontent.com/helisudani0/click2fix/v1.1.5/deploy/appliance/nginx.conf
 docker compose --env-file .env.appliance -f docker-compose.yml up -d --force-recreate c2f-lb
 docker compose --env-file .env.appliance -f docker-compose.yml logs --tail 80 c2f-lb
 ```

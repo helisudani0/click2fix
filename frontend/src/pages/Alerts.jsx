@@ -90,6 +90,48 @@ const toIsoUtcString = (value) => {
   return parsed.toISOString();
 };
 
+const emptySeveritySummary = () => ({
+  total: 0,
+  critical: 0,
+  high: 0,
+  medium: 0,
+  low: 0,
+  unknown: 0,
+});
+
+const toNonNegativeInt = (value, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.trunc(parsed) : fallback;
+};
+
+const summarizeAlerts = (items, totalHint = 0) => {
+  const summary = emptySeveritySummary();
+  (Array.isArray(items) ? items : []).forEach((alert) => {
+    summary[severityBucket(alert?.level)] += 1;
+  });
+  summary.total = Math.max(toNonNegativeInt(totalHint, 0), summary.critical + summary.high + summary.medium + summary.low + summary.unknown);
+  if (summary.total > summary.critical + summary.high + summary.medium + summary.low + summary.unknown) {
+    summary.unknown += summary.total - (summary.critical + summary.high + summary.medium + summary.low + summary.unknown);
+  }
+  return summary;
+};
+
+const normalizeServerSummary = (rawSummary, fallbackSummary) => {
+  if (!rawSummary || typeof rawSummary !== "object") return fallbackSummary;
+  const normalized = {
+    total: toNonNegativeInt(rawSummary.total, fallbackSummary.total),
+    critical: toNonNegativeInt(rawSummary.critical, fallbackSummary.critical),
+    high: toNonNegativeInt(rawSummary.high, fallbackSummary.high),
+    medium: toNonNegativeInt(rawSummary.medium, fallbackSummary.medium),
+    low: toNonNegativeInt(rawSummary.low, fallbackSummary.low),
+    unknown: toNonNegativeInt(rawSummary.unknown, fallbackSummary.unknown),
+  };
+  const known = normalized.critical + normalized.high + normalized.medium + normalized.low + normalized.unknown;
+  if (normalized.total < known) normalized.total = known;
+  if (normalized.total > known) normalized.unknown += (normalized.total - known);
+  return normalized;
+};
+
 export default function Alerts() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -107,6 +149,7 @@ export default function Alerts() {
   const [agents, setAgents] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [totalAlerts, setTotalAlerts] = useState(0);
+  const [severitySummary, setSeveritySummary] = useState(() => emptySeveritySummary());
   const [selectedId, setSelectedId] = useState("");
   const [detailMode, setDetailMode] = useState(false);
   const [queuePage, setQueuePage] = useState(1);
@@ -127,7 +170,7 @@ export default function Alerts() {
       : deepSearch
         ? 20000
         : 1000;
-    getAlerts(q, resolvedLimit, { ...opts, includeTotal: true })
+    getAlerts(q, resolvedLimit, { ...opts, includeTotal: true, includeSummary: true })
       .then((alertsRes) => {
         const payload = alertsRes?.data;
         const itemsRaw = Array.isArray(payload)
@@ -136,8 +179,12 @@ export default function Alerts() {
             ? payload.items
             : [];
         const totalValue = Number(payload?.total);
-        setTotalAlerts(Number.isFinite(totalValue) && totalValue >= 0 ? totalValue : itemsRaw.length);
         const items = normalizeAlerts(itemsRaw).sort(byNewestAlert);
+        const hintedTotal = Number.isFinite(totalValue) && totalValue >= 0 ? totalValue : items.length;
+        const fallbackSummary = summarizeAlerts(items, hintedTotal);
+        const nextSummary = normalizeServerSummary(payload?.summary, fallbackSummary);
+        setTotalAlerts(nextSummary.total);
+        setSeveritySummary(nextSummary);
         setAlerts(items);
         setSelectedId((current) => {
           if (!items.length) return "";
@@ -149,6 +196,7 @@ export default function Alerts() {
       .catch((err) => {
         setAlerts([]);
         setTotalAlerts(0);
+        setSeveritySummary(emptySeveritySummary());
         setSelectedId("");
         setError(err.response?.data?.detail || err.message || "Failed to load alerts");
       })
@@ -184,14 +232,6 @@ export default function Alerts() {
       end: toIsoUtcString(endParam) || undefined,
     });
   }, [queryParam, startParam, endParam, agentFilter, agentOnly]);
-
-  const triageSummary = useMemo(() => {
-    const bucket = { critical: 0, high: 0, medium: 0, low: 0, unknown: 0 };
-    alerts.forEach((alert) => {
-      bucket[severityBucket(alert.level)] += 1;
-    });
-    return bucket;
-  }, [alerts]);
 
   const filteredAlerts = useMemo(() => {
     if (severityFilter === "all") return alerts;
@@ -266,17 +306,17 @@ export default function Alerts() {
         </div>
         <div className="ticketing-kpi">
           <div className="ticketing-kpi-label">Critical</div>
-          <div className="ticketing-kpi-value">{triageSummary.critical}</div>
+          <div className="ticketing-kpi-value">{severitySummary.critical}</div>
           <div className="ticketing-kpi-meta">Immediate analyst attention</div>
         </div>
         <div className="ticketing-kpi">
           <div className="ticketing-kpi-label">High</div>
-          <div className="ticketing-kpi-value">{triageSummary.high}</div>
+          <div className="ticketing-kpi-value">{severitySummary.high}</div>
           <div className="ticketing-kpi-meta">Potential incident escalation</div>
         </div>
         <div className="ticketing-kpi">
           <div className="ticketing-kpi-label">Medium / Low</div>
-          <div className="ticketing-kpi-value">{triageSummary.medium + triageSummary.low}</div>
+          <div className="ticketing-kpi-value">{severitySummary.medium + severitySummary.low}</div>
           <div className="ticketing-kpi-meta">Backlog and noise review</div>
         </div>
       </div>

@@ -5,17 +5,17 @@ It gives IT/security teams one console for triage, response, remote command exec
 
 ## Current Release
 
-- Latest published stable tag: `v1.1.4`
+- Latest published stable tag: `v1.1.10`
 - Stable deployment model: appliance installer + Docker images (GHCR)
 - Active implementation track in this repo: `v2 foundation / native services MVP`
 
 ## Current Product State
 
-- Stable shipped line: `v1.1.4` remains the current release baseline for the Wazuh-centric product flow.
+- Stable shipped line: `v1.1.10` remains the current release baseline for the Wazuh-centric product flow.
 - Built in code today: `/api/v2/agents/*`, `/api/v2/events/*` (search, raw, ingest, queue, replay, lifecycle), extracted `agent-manager`, `event-indexer`, `alert-service`, `case-service`, `soar-service`, `ingest-gateway`, and a partial native `endpoint-agent`.
 - Still remaining before a production-ready v2 claim: full detection-service extraction, incidents extraction, zero-trust service auth, mTLS, signed command/policy envelopes, HA/DR validation, unified console depth, and deeper own-agent EDR/XDR features.
 
-## What's New in v1.1.4 (Current Codebase)
+## What's New in v1.1.10 (Current Codebase)
 
 - Detection and analyst workflow upgrades:
   - IOC enrichment extraction/normalization and confidence scoring hardening
@@ -30,6 +30,12 @@ It gives IT/security teams one console for triage, response, remote command exec
   - scheduler jobs API parity with lifecycle actions (`create`, `update`, `run-now`, pause/resume via toggle)
   - fleet and per-agent SCA rollups + recommendation APIs
   - circuit-breaker transition telemetry, audit events, and execution reconciliation improvements
+- Console and operations UX upgrades:
+  - upgraded analytics/agents chart rendering pipeline and visual polish for SOC-facing dashboards
+  - Cases IOC graph loading reliability hardening and render-path cleanup
+  - Actions workspace reflow: vertical target selection on top, action catalog on the left, execution plan on the right
+  - Executions workspace filtering cleanup: removed module filter, added user-friendly time presets (`24h`, `7d`, `30d`) and custom date/time range filtering
+  - Execution detail keeps playbook snapshot visibility for long-term auditability and retrospective analysis
 
 ## What Click2Fix Does
 
@@ -162,7 +168,7 @@ No-ZIP bootstrap path:
 - Windows:
 
 ```powershell
-$version = "v1.1.4"
+$version = "v1.1.10"
 Invoke-WebRequest "https://raw.githubusercontent.com/helisudani0/click2fix/$version/deploy/appliance/bootstrap-from-github.ps1" -OutFile .\bootstrap-from-github.ps1
 powershell -ExecutionPolicy Bypass -File .\bootstrap-from-github.ps1 -Owner helisudani0 -Repo click2fix -Version $version -InstallDir C:\Click2Fix -PullImages
 ```
@@ -170,7 +176,7 @@ powershell -ExecutionPolicy Bypass -File .\bootstrap-from-github.ps1 -Owner heli
 - Linux:
 
 ```bash
-VERSION=v1.1.4
+VERSION=v1.1.10
 curl -fsSL "https://raw.githubusercontent.com/helisudani0/click2fix/${VERSION}/deploy/appliance/bootstrap-from-github.sh" -o ./bootstrap-from-github.sh
 chmod +x ./bootstrap-from-github.sh
 OWNER=helisudani0 REPO=click2fix VERSION=${VERSION} INSTALL_DIR=/opt/click2fix PULL_IMAGES=true ./bootstrap-from-github.sh
@@ -187,7 +193,7 @@ Full command reference (install + manage + troubleshooting):
 1. Prepare folder and download required appliance runtime files from GitHub raw:
 
 ```cmd
-set C2F_VERSION=v1.1.4
+set C2F_VERSION=v1.1.10
 mkdir C:\Click2Fix
 cd /d C:\Click2Fix
 curl -fL -o docker-compose.yml https://raw.githubusercontent.com/helisudani0/click2fix/%C2F_VERSION%/deploy/appliance/docker-compose.appliance.yml
@@ -207,7 +213,7 @@ notepad .env.appliance
 ```env
 C2F_BACKEND_IMAGE=ghcr.io/helisudani0/click2fix-backend
 C2F_FRONTEND_IMAGE=ghcr.io/helisudani0/click2fix-frontend
-C2F_IMAGE_TAG=1.1.4
+C2F_IMAGE_TAG=1.1.10
 COMPOSE_PROJECT_NAME=click2fix
 POSTGRES_PASSWORD=<strong-db-password>
 JWT_SECRET=<long-random-secret>
@@ -261,7 +267,7 @@ Backend Ops: http://localhost:8000/ops
 
 Important notes:
 
-- Use `C2F_IMAGE_TAG=1.1.4` (without `v`) for current published images.
+- Use `C2F_IMAGE_TAG=1.1.10` (without `v`) for current published images.
 - Always pass `--env-file .env.appliance` on `docker compose` commands, or create `.env` from `.env.appliance`.
 - If you see `...click2fix-backend:local`, your `.env.appliance` still has default local image values.
 - If you see an `nginx.conf` mount error, ensure `C:\Click2Fix\nginx.conf` exists as a file.
@@ -292,7 +298,7 @@ docker compose --env-file .env.appliance -f docker-compose.yml up -d --remove-or
 docker compose --env-file .env.appliance -f docker-compose.yml ps
 ```
 
-Current `v1.1.4` appliance image set:
+Current `v1.1.10` appliance image set:
 
 - `ghcr.io/helisudani0/click2fix-backend:<version>`
 - `ghcr.io/helisudani0/click2fix-frontend:<version>`
@@ -310,7 +316,7 @@ One-click release asset publish for OVA:
 
 - run GitHub Actions workflow `.github/workflows/publish-ova-asset.yml`
 - inputs:
-  - `version` (for example `v1.1.4`)
+  - `version` (for example `v1.1.10`)
   - `ova_url` (HTTPS URL to your exported `.ova`)
 - workflow attaches:
   - `click2fix-appliance-<version>.ova`
@@ -351,7 +357,7 @@ Required configuration (environment-driven):
 - JWT secret
 - Endpoint connector credentials (global and optional per-agent overrides)
 
-## AI Enablement (v1.1.4)
+## AI Enablement (v1.1.10)
 
 Default behavior:
 
@@ -380,8 +386,8 @@ Enable from frontend (Org Admin):
 
 ## Release Status
 
-- Current repo target version: `v1.1.4`
-- Latest published release: `v1.1.4`
+- Current repo target version: `v1.1.10`
+- Latest published release: `v1.1.10`
 - Published images:
   - `ghcr.io/helisudani0/click2fix-backend:<version>`
   - `ghcr.io/helisudani0/click2fix-frontend:<version>`

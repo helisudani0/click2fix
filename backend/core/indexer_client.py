@@ -10,6 +10,7 @@ from requests import RequestException
 from requests.adapters import HTTPAdapter
 from urllib3.exceptions import InsecureRequestWarning
 
+from core.secrets import resolve_secret_env
 from core.settings import SETTINGS
 
 
@@ -18,8 +19,8 @@ class IndexerClient:
         cfg = SETTINGS.get("indexer", {}) if isinstance(SETTINGS, dict) else {}
         self.enabled = cfg.get("enabled", True)
         self.base = os.getenv("INDEXER_URL", cfg.get("url", "")).rstrip("/")
-        self.user = os.getenv("INDEXER_USER", cfg.get("user", ""))
-        self.password = os.getenv("INDEXER_PASSWORD", cfg.get("password", ""))
+        self.user = resolve_secret_env("INDEXER_USER", cfg.get("user", ""))
+        self.password = resolve_secret_env("INDEXER_PASSWORD", cfg.get("password", ""))
         self.verify = cfg.get("verify_ssl", True)
         self.timeout = cfg.get("timeout", 10)
         self.short_timeout = min(self.timeout, 3)
@@ -119,6 +120,7 @@ class IndexerClient:
 
         payload: Dict[str, Any] = {
             "size": limit,
+            "track_total_hits": True,
             "sort": [{"@timestamp": {"order": "desc"}}],
             "query": {
                 "bool": {
@@ -145,6 +147,87 @@ class IndexerClient:
                 status_code=503,
                 detail="Wazuh indexer unavailable",
             ) from exc
+
+    def search_alerts_summary(
+        self,
+        query: str | None = None,
+        agent_id: str | None = None,
+        agent_only: bool = False,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> Dict[str, Any]:
+        if not self.enabled or not self.base:
+            return {}
+
+        must: List[Dict[str, Any]] = []
+        filters: List[Dict[str, Any]] = []
+        must_not: List[Dict[str, Any]] = []
+
+        if query:
+            must.append({"query_string": {"query": query}})
+        else:
+            must.append({"match_all": {}})
+
+        if agent_id:
+            raw_id = str(agent_id).strip()
+            padded_id = raw_id.zfill(3) if raw_id.isdigit() and len(raw_id) < 3 else raw_id
+            filters.append(
+                {
+                    "bool": {
+                        "should": [
+                            {"term": {"agent.id": raw_id}},
+                            {"term": {"agent.id.keyword": raw_id}},
+                            {"term": {"agent.id": padded_id}},
+                            {"term": {"agent.id.keyword": padded_id}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                }
+            )
+
+        if agent_only:
+            filters.append({"exists": {"field": "agent.id"}})
+            must_not.append({"term": {"agent.id": "000"}})
+
+        if start or end:
+            range_filter: Dict[str, Any] = {}
+            if start:
+                start_val = str(start).strip()
+                if start_val:
+                    range_filter["gte"] = start_val
+            if end:
+                end_val = str(end).strip()
+                if end_val:
+                    range_filter["lte"] = end_val
+            if range_filter:
+                filters.append({"range": {"@timestamp": range_filter}})
+
+        payload: Dict[str, Any] = {
+            "size": 0,
+            "track_total_hits": True,
+            "query": {
+                "bool": {
+                    "must": must,
+                    "filter": filters,
+                    "must_not": must_not,
+                }
+            },
+            "aggs": {
+                "severity": {
+                    "filters": {
+                        "filters": {
+                            "critical": {"range": {"rule.level": {"gte": 12}}},
+                            "high": {"range": {"rule.level": {"gte": 10, "lt": 12}}},
+                            "medium": {"range": {"rule.level": {"gte": 7, "lt": 10}}},
+                            "low": {"range": {"rule.level": {"lt": 7}}},
+                            "unknown": {"bool": {"must_not": [{"exists": {"field": "rule.level"}}]}},
+                        }
+                    }
+                }
+            },
+        }
+
+        return self._post_search(self.alerts_index, payload)
 
     def _split_indices(self, value: str) -> List[str]:
         if not value:

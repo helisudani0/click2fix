@@ -169,6 +169,39 @@ const summarizeTarget = (value) => {
     .join(", ");
 };
 
+const parseDateFilterValue = (value, endOfMinute = false) => {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) return null;
+  if (endOfMinute) parsed.setSeconds(59, 999);
+  else parsed.setSeconds(0, 0);
+  return parsed;
+};
+
+const resolveDateRange = (preset, customFrom, customTo) => {
+  const token = String(preset || "all").trim().toLowerCase();
+  const now = new Date();
+  if (token === "24h") {
+    return { from: new Date(now.getTime() - (24 * 60 * 60 * 1000)), to: now };
+  }
+  if (token === "7d") {
+    return { from: new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000)), to: now };
+  }
+  if (token === "30d") {
+    return { from: new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000)), to: now };
+  }
+  if (token === "custom") {
+    const from = parseDateFilterValue(customFrom, false);
+    const to = parseDateFilterValue(customTo, true);
+    if (from && to && from.getTime() > to.getTime()) {
+      return { from: to, to: from };
+    }
+    return { from, to };
+  }
+  return { from: null, to: null };
+};
+
 export default function Executions() {
   const location = useLocation();
   const [runs, setRuns] = useState([]);
@@ -178,7 +211,9 @@ export default function Executions() {
   const [error, setError] = useState(null);
   const [executionSearch, setExecutionSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  const [typeFilter, setTypeFilter] = useState("");
+  const [datePreset, setDatePreset] = useState("all");
+  const [customDateFrom, setCustomDateFrom] = useState("");
+  const [customDateTo, setCustomDateTo] = useState("");
   const [queuePage, setQueuePage] = useState(1);
   const [queuePageSize, setQueuePageSize] = useState(15);
   const [aiTriage, setAiTriage] = useState(null);
@@ -238,7 +273,9 @@ export default function Executions() {
     if (!prefillExecutionId) return;
     setExecutionSearch("");
     setStatusFilter("");
-    setTypeFilter("");
+    setDatePreset("all");
+    setCustomDateFrom("");
+    setCustomDateTo("");
     setQueuePage(1);
     setSelected(prefillExecutionId);
   }, [prefillExecutionId]);
@@ -300,6 +337,11 @@ export default function Executions() {
     };
   }, [parsedRuns, prefillExecutionId]);
 
+  const activeDateRange = useMemo(
+    () => resolveDateRange(datePreset, customDateFrom, customDateTo),
+    [datePreset, customDateFrom, customDateTo]
+  );
+
   const filteredRuns = useMemo(() => {
     const query = executionSearch.trim().toLowerCase();
     return parsedRuns.filter((run) => {
@@ -308,12 +350,21 @@ export default function Executions() {
         String(run.id).toLowerCase().includes(query) ||
         String(run.agent || "").toLowerCase().includes(query) ||
         String(run.action || "").toLowerCase().includes(query) ||
-        String(run.approvedBy || "").toLowerCase().includes(query);
+        String(run.approvedBy || "").toLowerCase().includes(query) ||
+        String(run.startedAt || "").toLowerCase().includes(query) ||
+        String(run.finishedAt || "").toLowerCase().includes(query);
       const matchesStatus = !statusFilter || String(run.status || "").toUpperCase() === statusFilter;
-      const matchesType = !typeFilter || resolveExecutionType(run) === typeFilter;
-      return matchesQuery && matchesStatus && matchesType;
+      const startedAt = parseWazuhTimestamp(run.startedAt) || parseWazuhTimestamp(run.finishedAt);
+      const matchesDate =
+        (!activeDateRange.from && !activeDateRange.to)
+        || (
+          Boolean(startedAt)
+          && (!activeDateRange.from || startedAt.getTime() >= activeDateRange.from.getTime())
+          && (!activeDateRange.to || startedAt.getTime() <= activeDateRange.to.getTime())
+        );
+      return matchesQuery && matchesStatus && matchesDate;
     });
-  }, [parsedRuns, executionSearch, statusFilter, typeFilter]);
+  }, [parsedRuns, executionSearch, statusFilter, activeDateRange.from, activeDateRange.to]);
 
   useEffect(() => {
     const totalPages = Math.max(1, Math.ceil(filteredRuns.length / queuePageSize));
@@ -446,12 +497,12 @@ export default function Executions() {
           <h2>Execution Operations Workspace</h2>
           <p className="muted">Track active automation, inspect outputs, and verify response outcomes.</p>
         </div>
-        <div className="page-actions">
+        <div className="page-actions executions-filter-bar">
           <input
             className="input"
             value={executionSearch}
             onChange={(e) => setExecutionSearch(e.target.value)}
-            placeholder="Search by run ID, action, agent, or approver..."
+            placeholder="Search by run ID, action, agent, approver, or timestamp..."
           />
           <select className="input" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
             <option value="">All statuses</option>
@@ -466,12 +517,47 @@ export default function Executions() {
             <option value="KILLED">KILLED</option>
             <option value="CANCELLED">CANCELLED</option>
           </select>
-          <select className="input" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-            <option value="">All modules</option>
-            <option value="action">Actions</option>
-            <option value="global_shell">Global Shell</option>
-            <option value="playbook">Playbooks</option>
+          <select className="input" value={datePreset} onChange={(e) => setDatePreset(e.target.value)}>
+            <option value="all">All time</option>
+            <option value="24h">Last 24 hours</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="custom">Custom range</option>
           </select>
+          {datePreset === "custom" ? (
+            <>
+              <input
+                className="input"
+                type="datetime-local"
+                value={customDateFrom}
+                onChange={(e) => setCustomDateFrom(e.target.value)}
+                aria-label="From date"
+                title="From date"
+              />
+              <input
+                className="input"
+                type="datetime-local"
+                value={customDateTo}
+                onChange={(e) => setCustomDateTo(e.target.value)}
+                aria-label="To date"
+                title="To date"
+              />
+            </>
+          ) : null}
+          <button
+            className="btn secondary"
+            onClick={() => {
+              setExecutionSearch("");
+              setStatusFilter("");
+              setDatePreset("all");
+              setCustomDateFrom("");
+              setCustomDateTo("");
+              setQueuePage(1);
+            }}
+            disabled={!executionSearch.trim() && !statusFilter && datePreset === "all" && !customDateFrom && !customDateTo}
+          >
+            Clear Filters
+          </button>
           <button className="btn secondary" onClick={() => load(true)}>
             Refresh
           </button>

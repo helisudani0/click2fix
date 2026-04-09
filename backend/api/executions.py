@@ -150,23 +150,42 @@ def _execution_summary(execution: dict[str, Any], targets: list[dict[str, Any]] 
     target_success_count = _to_int(payload.get("target_success_count"), 0)
     target_failed_count = _to_int(payload.get("target_failed_count"), 0)
 
+    deduped_targets: list[dict[str, Any]] = []
     if isinstance(targets, list):
-        actual_completed = len([row for row in targets if isinstance(row, dict)])
-        actual_success = sum(1 for row in targets if isinstance(row, dict) and row.get("ok"))
+        seen_agents: set[str] = set()
+        for row in targets:
+            if not isinstance(row, dict):
+                continue
+            agent_id = _to_text(row.get("agent_id")).strip()
+            if agent_id:
+                if agent_id in seen_agents:
+                    continue
+                seen_agents.add(agent_id)
+            deduped_targets.append(row)
+
+    if deduped_targets:
+        actual_completed = len(deduped_targets)
+        actual_success = sum(1 for row in deduped_targets if row.get("ok"))
         actual_failed = actual_completed - actual_success
-        completed = max(completed, actual_completed)
-        success = max(success, actual_success)
-        failed = max(failed, actual_failed)
+        completed = actual_completed
+        success = actual_success
+        failed = actual_failed
         total = max(total, actual_completed)
+    elif (target_success_count + target_failed_count) > 0:
+        # Prefer DB-derived latest target rollups over stale execution counters.
+        success = target_success_count
+        failed = target_failed_count
+        completed = max(completed, success + failed)
+        total = max(total, completed)
 
     if total == 0:
-        total = max(_to_int(payload.get("target_count"), 0), completed)
+        total = max(_to_int(payload.get("target_count"), 0), completed, success + failed)
     if completed == 0:
-        completed = max(_to_int(payload.get("target_count"), 0), success + failed, target_success_count + target_failed_count)
-    if success == 0:
-        success = max(_to_int(payload.get("target_success"), 0), target_success_count, success)
-    if failed == 0:
-        failed = max(_to_int(payload.get("target_failed"), 0), target_failed_count, failed)
+        completed = max(_to_int(payload.get("target_count"), 0), success + failed)
+    if completed < (success + failed):
+        completed = success + failed
+    if total < completed:
+        total = completed
     if failed == 0 and completed >= success:
         failed = max(failed, completed - success)
 
@@ -174,7 +193,15 @@ def _execution_summary(execution: dict[str, Any], targets: list[dict[str, Any]] 
     percent_complete = int(round((completed / total) * 100)) if total > 0 else 0
     finished_at = payload.get("finished_at")
     status = str(payload.get("status") or "").strip().upper()
-    final = bool(finished_at) or (total > 0 and completed >= total and not _is_active_execution_status(status, finished_at))
+    resolved_status = status or "UNKNOWN"
+    if total > 0 and completed >= total:
+        if success > 0 and failed == 0:
+            resolved_status = "SUCCESS"
+        elif failed > 0 and success == 0:
+            resolved_status = "FAILED"
+        elif success > 0 and failed > 0:
+            resolved_status = "PARTIAL"
+    final = bool(finished_at) or (total > 0 and completed >= total and not _is_active_execution_status(resolved_status, finished_at))
     mixed_results = total > 0 and success > 0 and failed > 0
     retry_failed_available = final and failed > 0 and bool(payload.get("action")) and str(payload.get("action") or "").strip().lower() != "global-shell"
     return {
@@ -186,11 +213,11 @@ def _execution_summary(execution: dict[str, Any], targets: list[dict[str, Any]] 
         "percent_complete": percent_complete,
         "final": final,
         "mixed_results": mixed_results,
-        "active": _is_active_execution_status(status, finished_at),
+        "active": _is_active_execution_status(resolved_status, finished_at),
         "retry_failed_available": retry_failed_available,
         "fraction_label": f"{success}/{total}" if total > 0 else "0/0",
         "batch_size": _to_int(payload.get("batch_size"), 0),
-        "status": status or "UNKNOWN",
+        "status": resolved_status,
     }
 
 

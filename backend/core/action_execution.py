@@ -132,6 +132,9 @@ def _execution_batch_threshold() -> int:
 
 def _result_status(result: Dict[str, Any]) -> str:
     payload = result if isinstance(result, dict) else {}
+    explicit = str(payload.get("overall_status") or payload.get("status") or "").strip().upper()
+    if explicit in {"SUCCESS", "FAILED", "PARTIAL"}:
+        return explicit
     total = int(payload.get("total") or 0)
     success = int(payload.get("success") or 0)
     failed = int(payload.get("failed") or 0)

@@ -19,35 +19,7 @@ const buildApiUrl = (path, params = {}) => {
   return url.toString();
 };
 
-let openApiPathsPromise = null;
 let tenantV2SupportPromise = null;
-
-const loadOpenApiPaths = async () => {
-  if (!openApiPathsPromise) {
-    openApiPathsPromise = fetch("/openapi.json", { credentials: "include" })
-      .then(async (response) => {
-        if (!response.ok) return null;
-        const payload = await response.json();
-        if (!payload || typeof payload !== "object") return null;
-        const paths = payload.paths;
-        return paths && typeof paths === "object" ? paths : null;
-      })
-      .catch(() => null)
-      .then((paths) => {
-        if (!paths) {
-          openApiPathsPromise = null;
-        }
-        return paths;
-      });
-  }
-  return openApiPathsPromise;
-};
-
-const hasOpenApiPath = async (path) => {
-  const paths = await loadOpenApiPaths();
-  if (!paths || typeof paths !== "object") return false;
-  return Object.prototype.hasOwnProperty.call(paths, String(path || ""));
-};
 
 const readTenantGovernanceCapability = async () => {
   try {
@@ -57,18 +29,15 @@ const readTenantGovernanceCapability = async () => {
       return Boolean(caps.tenant_governance_v2);
     }
   } catch {
-    // Fall through to OpenAPI capability detection.
+    // Treat any version-capability read failure as unsupported to avoid
+    // accidental v2 probing on mixed/stale frontend-backend pairs.
   }
-  return null;
+  return false;
 };
 
 export const hasTenantGovernanceV2Support = async () => {
   if (!tenantV2SupportPromise) {
-    tenantV2SupportPromise = (async () => {
-      const declared = await readTenantGovernanceCapability();
-      if (declared !== null) return declared;
-      return hasOpenApiPath("/api/v2/tenants");
-    })().catch(() => false);
+    tenantV2SupportPromise = readTenantGovernanceCapability().catch(() => false);
   }
   return tenantV2SupportPromise;
 };
@@ -212,6 +181,7 @@ export const getAlerts = (query, limit, options = {}) => {
   if (opts.start) params.start = opts.start;
   if (opts.end) params.end = opts.end;
   if (opts.includeTotal) params.include_total = true;
+  if (opts.includeSummary) params.include_summary = true;
 
   const key = stableParamsKey(params);
   const cached = alertsCache.get(key);

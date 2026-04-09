@@ -72,7 +72,9 @@ def test_custom_os_command_script_executes_encoded_powershell_payload():
     assert "function C2F-RunEncodedCommand" in script
     assert "C2F-ResolveCommandPayload -CommandText $Command -CommandPath $CommandFile" in script
     assert '-EncodedCommand", $EncodedCommand' in script
-    assert "C2F-RunEncodedCommand -EncodedCommand $encodedCommand" in script
+    assert 'Set-Content -Path $scriptPath -Value $commandTextValue -Encoding Unicode -Force' in script
+    assert '-File", $scriptPath' in script
+    assert "C2F-RunEncodedCommand -EncodedCommand $encodedCommand -CommandText $cmd" in script
     assert "[string]$Command = \"\"" in script
     assert "ScriptBlock]::Create($CommandText)" not in script
     assert "[string]$SessionId" not in script
@@ -120,6 +122,16 @@ def test_hash_blocklist_wrapper_normalizes_exit_and_pipeline_status():
     assert "if($nativeRc -ne 0){ throw $out };" in script
     assert "$successEvidence = ([string]$out) -match" in script
     assert "if($hadPsError -and (-not $successEvidence)){ throw $out };" in script
+
+
+def test_service_restart_script_treats_running_service_as_recovered():
+    executor = _executor()
+    script = executor._build_windows_script("service-restart", ["wuauserv"], context={}, target={})
+
+    assert "service_restart_warning=" in script
+    assert "if($post -and $postState -eq 'Running')" in script
+    assert "Write-Output ('service running '+$svc+' status='+$postState);" in script
+    assert "throw ('service restart failed for '+$svc);" in script
 
 
 def test_actions_result_rows_ok_rejects_non_dict_rows():
@@ -181,6 +193,66 @@ def test_reconcile_semantic_success_result_keeps_real_error_failure():
 
     assert status == 1
     assert "scan path not found" in stderr
+
+
+def test_reconcile_semantic_success_result_promotes_benign_custom_command_clixml():
+    executor = _executor()
+
+    status, stdout, stderr = executor._reconcile_semantic_success_result(  # noqa: SLF001
+        action_id="custom-os-command",
+        status_code=1,
+        stdout="",
+        stderr=(
+            "#< CLIXML\n"
+            "custom-os-command failed rc=1 output=#< CLIXML_x000D__x000A_"
+            "[{\"TimeCreated\":\"/Date(1775740466680)/\",\"Message\":\"Creating Scriptblock text (1 of 1)\"}]"
+        ),
+    )
+
+    assert status == 0
+    assert stderr == ""
+    assert "creating scriptblock text" in stdout.lower()
+    assert "semantic_success_override" in stdout
+
+
+def test_reconcile_semantic_success_result_keeps_custom_command_parser_failure():
+    executor = _executor()
+
+    status, stdout, stderr = executor._reconcile_semantic_success_result(  # noqa: SLF001
+        action_id="custom-os-command",
+        status_code=1,
+        stdout="",
+        stderr=(
+            "#< CLIXML\n"
+            "custom-os-command failed rc=1 output=#< CLIXML_x000D__x000A_"
+            "ParserError: You must provide a value expression following the '-match' operator."
+        ),
+    )
+
+    assert status == 1
+    assert stdout == ""
+    assert "parsererror" in stderr.lower()
+
+
+def test_reconcile_semantic_success_result_promotes_status_success_with_log_stream_noise():
+    executor = _executor()
+
+    status, stdout, stderr = executor._reconcile_semantic_success_result(  # noqa: SLF001
+        action_id="firewall-drop",
+        status_code=1,
+        stdout=(
+            "blocked 1.2.3.4\n"
+            "C2F_LOG 2026-04-10T12:35:01Z exec=777 agent=003 action=firewall-drop user=SYSTEM status=SUCCESS"
+        ),
+        stderr=(
+            "#< CLIXML\n"
+            "<Objs Version=\"1.1.0.1\"><S S=\"Error\">Get-Content : The process cannot access the file.</S></Objs>"
+        ),
+    )
+
+    assert status == 0
+    assert stderr == ""
+    assert "semantic_success_override" in stdout
 
 
 def test_powershell_transport_uses_explicit_encoded_command():

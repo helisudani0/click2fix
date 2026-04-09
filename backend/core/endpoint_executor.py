@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import html
 import json
 import os
 import re
@@ -125,8 +126,8 @@ class EndpointExecutor:
         self.windows_inline_custom_command_max_chars = max(
             256,
             _to_int(
-                os.getenv("C2F_WINDOWS_INLINE_COMMAND_MAX_CHARS", "1200"),
-                1200,
+                os.getenv("C2F_WINDOWS_INLINE_COMMAND_MAX_CHARS", "700"),
+                700,
             ),
         )
         self.indexer = IndexerClient()
@@ -2721,12 +2722,22 @@ class EndpointExecutor:
 					function C2F-RunEncodedCommand {
 					  param(
 					    [string]$EncodedCommand,
+					    [string]$CommandText = "",
 					    [int]$TimeoutSeconds = 1800
 					  )
 				  $stdoutPath = Join-Path $env:TEMP ("c2f-shell-" + [guid]::NewGuid().ToString("N") + ".stdout.txt")
 				  $stderrPath = Join-Path $env:TEMP ("c2f-shell-" + [guid]::NewGuid().ToString("N") + ".stderr.txt")
+				  $scriptPath = Join-Path $env:TEMP ("c2f-shell-" + [guid]::NewGuid().ToString("N") + ".ps1")
 				  try {
-				    $proc = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $EncodedCommand) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+				    $argList = @("-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass")
+				    $commandTextValue = [string]$CommandText
+				    if ($commandTextValue -and $commandTextValue.Trim()) {
+				      Set-Content -Path $scriptPath -Value $commandTextValue -Encoding Unicode -Force
+				      $argList += @("-File", $scriptPath)
+				    } else {
+				      $argList += @("-EncodedCommand", $EncodedCommand)
+				    }
+				    $proc = Start-Process -FilePath "powershell.exe" -ArgumentList $argList -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
 				    $deadline = (Get-Date).AddSeconds([Math]::Max(30, [int]$TimeoutSeconds))
 				    while ($proc -and (-not $proc.HasExited)) {
 				      $proc.WaitForExit(2000) | Out-Null
@@ -2768,15 +2779,19 @@ class EndpointExecutor:
 					        if ($outputSignalsFailure) { $rc = 1 }
 					      }
 					    }
-					    $combined = @(@($stdoutText, $stderrText) | Where-Object { $_ -and $_.Trim() })
-						    return @{
-						      rc = [int]$rc
-						      output = [string]([string]::Join([Environment]::NewLine, $combined))
-						      error = ""
-						      state = "completed"
+						    $combined = @(@($stdoutText, $stderrText) | Where-Object { $_ -and $_.Trim() })
+						    $joinedOutput = ""
+						    if ($combined -and @($combined).Count -gt 0) {
+						      $joinedOutput = [string]([string]::Join([Environment]::NewLine, [string[]]@($combined)))
 						    }
+							    return @{
+							      rc = [int]$rc
+							      output = [string]$joinedOutput
+							      error = ""
+							      state = "completed"
+							    }
 					  } finally {
-				    try { Remove-Item -Path $stdoutPath,$stderrPath -Force -ErrorAction SilentlyContinue } catch { }
+				    try { Remove-Item -Path $stdoutPath,$stderrPath,$scriptPath -Force -ErrorAction SilentlyContinue } catch { }
 					  }
 					}
 
@@ -2926,7 +2941,7 @@ class EndpointExecutor:
 						  if ($safe.Length -gt 220) { $safe = $safe.Substring(0, 220) + "..." }
 						  C2F-Evidence ("custom_command=" + $safe)
 						  C2F-Evidence ("run_as_system=" + [string]$RunAsSystem)
-						  $run = C2F-RunEncodedCommand -EncodedCommand $encodedCommand -TimeoutSeconds $MaxRuntimeSeconds
+						  $run = C2F-RunEncodedCommand -EncodedCommand $encodedCommand -CommandText $cmd -TimeoutSeconds $MaxRuntimeSeconds
 							  $out = [string]$run.output
 							  $runError = [string]$run.error
 							  # Some native tools emit UTF-16/UTF-8 mixed output with embedded nulls.
@@ -6189,6 +6204,9 @@ catch {
             return False
         lower = text.lower()
         metrics = cls._extract_c2f_evidence_metrics(text)
+        latest_status = cls._extract_latest_c2f_log_status(text)
+        if latest_status == "SUCCESS":
+            return True
 
         if action == "hash-blocklist":
             blocklist_status = str(metrics.get("blocklist_status") or "").strip().upper()
@@ -6245,8 +6263,87 @@ catch {
                 "requires command argument",
                 "verification failed",
                 "failed to prepare endpoint script",
+                "parsererror",
+                "expectedvalueexpression",
+                "unexpected token",
+                "must provide a value expression following",
+                "cannot find the path specified",
+                "cannot find the file specified",
+                "not recognized as the name",
+                "program 'winget.exe' failed to run",
+                "winget not available on path",
+                "custom-os-command failed rc=",
+                "script failed with exit_code=",
+                " status=failed",
             )
         )
+
+    @staticmethod
+    def _extract_latest_c2f_log_status(*chunks: str) -> str:
+        latest = ""
+        for chunk in chunks:
+            for raw in str(chunk or "").splitlines():
+                line = raw.strip()
+                if not line:
+                    continue
+                if line.startswith("C2F_LOG "):
+                    line = line[len("C2F_LOG ") :].strip()
+                match = re.search(r"\bstatus=(START|SUCCESS|FAILED|PARTIAL)\b", line, flags=re.IGNORECASE)
+                if not match:
+                    continue
+                latest = str(match.group(1) or "").strip().upper()
+        return latest
+
+    @staticmethod
+    def _extract_custom_command_embedded_output(stderr: str) -> str:
+        text = str(stderr or "")
+        if not text:
+            return ""
+        match = re.search(
+            r"custom-os-command failed rc=\d+\s+output=(?P<payload>.*)",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if not match:
+            return ""
+        payload = str(match.group("payload") or "").strip()
+        if not payload:
+            return ""
+        normalized = html.unescape(payload)
+        normalized = re.sub(
+            r"_x005f_x000d__x005f_x000a_|_x000d__x000a_",
+            "\n",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        return normalized.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+    @staticmethod
+    def _is_benign_custom_command_clixml_failure(stderr: str, embedded_stdout: str) -> bool:
+        blob = f"{stderr}\n{embedded_stdout}".lower()
+        if "custom-os-command failed rc=1" not in blob:
+            return False
+        if "clixml" not in blob:
+            return False
+        # Typical benign case: querying 4104 returns "Creating Scriptblock text" entries
+        # and the wrapper reports CLIXML noise even though command output exists.
+        if "creating scriptblock text" not in blob:
+            return False
+        hard_error_markers = (
+            "parsererror",
+            "expectedvalueexpression",
+            "unexpected token",
+            "must provide a value expression following",
+            "cannot find the path specified",
+            "cannot find the file specified",
+            "not recognized as the name",
+            "program 'winget.exe' failed to run",
+            "winget not available on path",
+            "requires command argument",
+            "verification failed",
+            "timed out",
+        )
+        return not any(marker in blob for marker in hard_error_markers)
 
     def _reconcile_semantic_success_result(
         self,
@@ -6262,8 +6359,46 @@ catch {
             code = 1
         out_text = str(stdout or "")
         err_text = str(stderr or "")
+        action = str(action_id or "").strip().lower()
         if code == 0:
             return code, out_text, err_text
+        if action == "custom-os-command":
+            embedded = self._extract_custom_command_embedded_output(err_text)
+            if embedded and self._is_benign_custom_command_clixml_failure(err_text, embedded):
+                merged_stdout = out_text.strip()
+                if merged_stdout:
+                    if embedded not in merged_stdout:
+                        merged_stdout = (merged_stdout + "\n" + embedded).strip()
+                else:
+                    merged_stdout = embedded
+                marker = (
+                    "C2F_LOG reconciliation=semantic_success_override "
+                    + "action="
+                    + action
+                    + " prior_status="
+                    + str(code)
+                )
+                if marker not in merged_stdout:
+                    merged_stdout = (merged_stdout + ("\n" if merged_stdout else "") + marker).strip()
+                return 0, merged_stdout, ""
+            if embedded:
+                merged_stdout = out_text.strip()
+                if embedded not in merged_stdout:
+                    merged_stdout = (merged_stdout + ("\n" if merged_stdout else "") + embedded).strip()
+                if (
+                    self._extract_latest_c2f_log_status(merged_stdout) == "SUCCESS"
+                    and not self._has_explicit_error_evidence(merged_stdout, "")
+                ):
+                    marker = (
+                        "C2F_LOG reconciliation=semantic_success_override "
+                        + "action="
+                        + action
+                        + " prior_status="
+                        + str(code)
+                    )
+                    if marker not in merged_stdout:
+                        merged_stdout = (merged_stdout + ("\n" if merged_stdout else "") + marker).strip()
+                    return 0, merged_stdout, ""
         if not self._has_semantic_success_evidence(action_id, out_text):
             return code, out_text, err_text
         if self._has_explicit_error_evidence(out_text, err_text):
@@ -6271,7 +6406,7 @@ catch {
         marker = (
             "C2F_LOG reconciliation=semantic_success_override "
             + "action="
-            + str(action_id or "").strip().lower()
+            + action
             + " prior_status="
             + str(code)
         )
@@ -7717,8 +7852,18 @@ catch {
             svc = _ps_quote(args[0])
             inner = (
                 f"$svc={svc};"
-                "Restart-Service -Name $svc -Force -ErrorAction Stop;"
-                "Write-Output ('service restarted '+$svc)"
+                "$restartErr='';"
+                "Get-Service -Name $svc -ErrorAction Stop | Out-Null;"
+                "try { Restart-Service -Name $svc -Force -ErrorAction Stop } catch { $restartErr = ($_.Exception.Message | Out-String).Trim() };"
+                "$post=Get-Service -Name $svc -ErrorAction SilentlyContinue;"
+                "$postState=''; if($post){ $postState=[string]$post.Status };"
+                "if($post -and $postState -eq 'Running'){"
+                "if($restartErr){ C2F-Evidence ('service_restart_warning=' + $restartErr.Replace('|','/').Replace(\"`r\",' ').Replace(\"`n\",' ')) };"
+                "Write-Output ('service running '+$svc+' status='+$postState);"
+                "} else {"
+                "if($restartErr){ throw $restartErr };"
+                "throw ('service restart failed for '+$svc);"
+                "}"
             )
             return self._wrap_windows_script(aid, inner, context or {}, target or {})
         if aid == "disable-account":
@@ -7834,8 +7979,11 @@ catch {
                 "C2F-Evidence ('custom_command='+$safe);"
                 "$stdoutPath=Join-Path $env:TEMP ('c2f-inline-'+[guid]::NewGuid().ToString('N')+'.stdout.txt');"
                 "$stderrPath=Join-Path $env:TEMP ('c2f-inline-'+[guid]::NewGuid().ToString('N')+'.stderr.txt');"
+                "$scriptPath=Join-Path $env:TEMP ('c2f-inline-'+[guid]::NewGuid().ToString('N')+'.ps1');"
                 "try {"
-                "$proc=Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand',$encoded) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath;"
+                "$decoded=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encoded));"
+                "Set-Content -Path $scriptPath -Value $decoded -Encoding Unicode -Force;"
+                "$proc=Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$scriptPath) -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath;"
                 "$proc.WaitForExit();"
                 "$out=''; if(Test-Path $stdoutPath){ $out=[string](Get-Content -Path $stdoutPath -Raw -ErrorAction SilentlyContinue) };"
                 "$errOut=''; if(Test-Path $stderrPath){ $errOut=[string](Get-Content -Path $stderrPath -Raw -ErrorAction SilentlyContinue) };"
@@ -7843,7 +7991,7 @@ catch {
                 "$rc=[int]$proc.ExitCode;"
                 "if($rc -ne 0){ throw ('custom-os-command failed rc='+$rc+' output='+$out) };"
                 "} finally {"
-                "try { Remove-Item -Path $stdoutPath,$stderrPath -Force -ErrorAction SilentlyContinue } catch { }"
+                "try { Remove-Item -Path $stdoutPath,$stderrPath,$scriptPath -Force -ErrorAction SilentlyContinue } catch { }"
                 "};"
                 "$verifyKbRaw=($verifyKbRaw -replace '(?i)^\\s*kb','KB').Trim();"
                 "if($verifyKbRaw){"

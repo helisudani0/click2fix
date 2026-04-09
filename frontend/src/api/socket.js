@@ -55,11 +55,14 @@ const buildWsUrl = (path) => {
   if (base.endsWith("/ws") && normalizedPath.startsWith("/ws/")) {
     return `${base}${normalizedPath.slice(3)}`;
   }
+  if (base.endsWith("/ws") && normalizedPath.startsWith("/api/ws/")) {
+    return `${base.slice(0, -3)}${normalizedPath}`;
+  }
   return `${base}${normalizedPath}`;
 };
 
 export const alertSocket = () =>
-  new WebSocket(buildWsUrl("/ws/alerts"));
+  new WebSocket(buildWsUrl("/api/ws/alerts"));
 
 export const executionSocket = (executionId) =>
-  new WebSocket(buildWsUrl(`/ws/executions/${executionId}`));
+  new WebSocket(buildWsUrl(`/api/ws/executions/${executionId}`));

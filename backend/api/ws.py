@@ -1,8 +1,11 @@
 import asyncio
+import os
 from typing import Any, Dict, List
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
+from core.alert_stream import start_alert_stream, stop_alert_stream, subscribe_alerts, unsubscribe_alerts
 from core.indexer_client import IndexerClient
 from core.origin_policy import configured_cors_origins, normalize_origin
 from core.security import COOKIE_NAME, decode_token
@@ -10,9 +13,30 @@ from core.wazuh_client import WazuhClient
 
 router = APIRouter()
 
-clients = []
 indexer = IndexerClient()
 wazuh = WazuhClient()
+
+
+def _safe_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+_STREAM_POLL_SECONDS = max(
+    0.2,
+    _safe_float(os.getenv("C2F_ALERT_STREAM_POLL_SECONDS"), 1.0),
+)
+_STREAM_FETCH_LIMIT = max(25, _safe_int(os.getenv("C2F_ALERT_STREAM_FETCH_LIMIT"), 200))
+_STREAM_SNAPSHOT_LIMIT = max(1, min(_safe_int(os.getenv("C2F_ALERT_STREAM_SNAPSHOT_LIMIT"), 40), 200))
 
 
 def _ws_candidates(ws: WebSocket) -> list[str]:
@@ -42,6 +66,14 @@ def _validate_ws_origin(ws: WebSocket) -> None:
     allowed = _allowed_origins()
     if "*" in allowed:
         raise HTTPException(status_code=403, detail="Wildcard WS origin is not allowed")
+    try:
+        parsed_origin = urlsplit(origin)
+        origin_host = str(parsed_origin.hostname or "").strip().lower()
+    except Exception:
+        origin_host = ""
+    request_host = str((ws.headers.get("host") or "").split(":", 1)[0]).strip().lower()
+    if origin_host and request_host and origin_host == request_host:
+        return
     if origin not in allowed:
         raise HTTPException(status_code=403, detail="WebSocket origin not allowed")
 
@@ -72,16 +104,8 @@ def _extract_items(data: Any) -> List[Dict[str, Any]]:
     return []
 
 
-def _alert_id(alert: Dict[str, Any]) -> str | None:
-    for key in ("id", "_id", "alert_id"):
-        value = alert.get(key)
-        if value is not None and not isinstance(value, (dict, list)):
-            return str(value)
-    return None
-
-
 def _latest_alerts(limit: int = 20) -> List[Dict[str, Any]]:
-    # Prefer indexer-backed results for near real-time alert stream.
+    # Source fetch for the shared real-time alert stream processor.
     if indexer.enabled:
         try:
             data = indexer.search_alerts(limit=limit, agent_only=True)
@@ -95,7 +119,25 @@ def _latest_alerts(limit: int = 20) -> List[Dict[str, Any]]:
         return []
 
 
+def _stream_fetch(limit: int) -> list[dict[str, Any]]:
+    return _latest_alerts(limit=limit)
+
+
+async def start_alert_stream_processor(loop: asyncio.AbstractEventLoop) -> None:
+    await start_alert_stream(
+        loop=loop,
+        fetcher=_stream_fetch,
+        poll_seconds=_STREAM_POLL_SECONDS,
+        fetch_limit=_STREAM_FETCH_LIMIT,
+    )
+
+
+async def stop_alert_stream_processor() -> None:
+    await stop_alert_stream()
+
+
 @router.websocket("/ws/alerts")
+@router.websocket("/api/ws/alerts")
 async def alerts_socket(ws: WebSocket):
     try:
         _authorize_ws(ws)
@@ -103,10 +145,8 @@ async def alerts_socket(ws: WebSocket):
         await ws.close(code=4401)
         return
     await ws.accept()
-    clients.append(ws)
-    seen_ids: set[str] = set()
-    seen_order: List[str] = []
-    heartbeat_counter = 0
+    await start_alert_stream_processor(asyncio.get_running_loop())
+    queue, snapshot = await subscribe_alerts(snapshot_limit=_STREAM_SNAPSHOT_LIMIT)
     receiver_task = None
 
     async def _receive_client_messages() -> None:
@@ -118,33 +158,14 @@ async def alerts_socket(ws: WebSocket):
 
     try:
         receiver_task = asyncio.create_task(_receive_client_messages())
+        for alert in snapshot:
+            await ws.send_json({"event": "alert", "data": alert})
         while True:
-            alerts = await asyncio.to_thread(_latest_alerts, 25)
-            new_batch: List[Dict[str, Any]] = []
-            for alert in alerts:
-                aid = _alert_id(alert)
-                if not aid or aid in seen_ids:
-                    continue
-                seen_ids.add(aid)
-                seen_order.append(aid)
-                new_batch.append(alert)
-
-            # Keep memory bounded for long-lived sockets.
-            if len(seen_ids) > 2000:
-                while len(seen_order) > 1000:
-                    stale = seen_order.pop(0)
-                    seen_ids.discard(stale)
-
-            # Emit oldest first so UI receives ordered stream.
-            for alert in reversed(new_batch):
+            try:
+                alert = await asyncio.wait_for(queue.get(), timeout=15)
                 await ws.send_json({"event": "alert", "data": alert})
-
-            heartbeat_counter += 1
-            if heartbeat_counter >= 6:
-                heartbeat_counter = 0
+            except asyncio.TimeoutError:
                 await ws.send_json({"event": "heartbeat"})
-
-            await asyncio.sleep(5)
     except WebSocketDisconnect:
         pass
     except Exception:
@@ -152,5 +173,4 @@ async def alerts_socket(ws: WebSocket):
     finally:
         if receiver_task:
             receiver_task.cancel()
-        if ws in clients:
-            clients.remove(ws)
+        await unsubscribe_alerts(queue)

@@ -45,6 +45,76 @@ def _extract_total_hits(data) -> int | None:
         return None
 
 
+def _extract_total_affected_items(data) -> int | None:
+    if not isinstance(data, dict):
+        return None
+    candidates = [
+        data.get("data", {}).get("total_affected_items"),
+        data.get("total_affected_items"),
+        data.get("total"),
+        data.get("data", {}).get("total"),
+    ]
+    for value in candidates:
+        try:
+            if value is None:
+                continue
+            parsed = int(value)
+            if parsed >= 0:
+                return parsed
+        except Exception:
+            continue
+    return None
+
+
+def _severity_bucket(level_value) -> str:
+    try:
+        level = int(level_value)
+    except Exception:
+        return "unknown"
+    if level >= 12:
+        return "critical"
+    if level >= 10:
+        return "high"
+    if level >= 7:
+        return "medium"
+    return "low"
+
+
+def _severity_summary_from_items(items, total_hint: int | None = None):
+    bucket = {"critical": 0, "high": 0, "medium": 0, "low": 0, "unknown": 0}
+    for alert in items if isinstance(items, list) else []:
+        if not isinstance(alert, dict):
+            continue
+        rule = alert.get("rule") if isinstance(alert.get("rule"), dict) else {}
+        level = rule.get("level") if isinstance(rule, dict) else alert.get("level")
+        bucket[_severity_bucket(level)] += 1
+    total = int(total_hint) if isinstance(total_hint, int) and total_hint >= 0 else sum(bucket.values())
+    known = bucket["critical"] + bucket["high"] + bucket["medium"] + bucket["low"] + bucket["unknown"]
+    if total > known:
+        bucket["unknown"] += (total - known)
+    return {"total": total, **bucket}
+
+
+def _extract_indexer_summary(data):
+    if not isinstance(data, dict):
+        return None
+    total = _extract_total_hits(data)
+    if total is None:
+        return None
+    severity = data.get("aggregations", {}).get("severity", {}).get("buckets", {})
+    bucket = {
+        "critical": int((severity.get("critical") or {}).get("doc_count") or 0),
+        "high": int((severity.get("high") or {}).get("doc_count") or 0),
+        "medium": int((severity.get("medium") or {}).get("doc_count") or 0),
+        "low": int((severity.get("low") or {}).get("doc_count") or 0),
+        "unknown": int((severity.get("unknown") or {}).get("doc_count") or 0),
+    }
+    known = bucket["critical"] + bucket["high"] + bucket["medium"] + bucket["low"] + bucket["unknown"]
+    if total > known:
+        bucket["unknown"] += (total - known)
+    return {"total": int(total), **bucket}
+
+
 def _alert_agent_id(alert):
     if not isinstance(alert, dict):
         return None
@@ -102,6 +172,7 @@ def list_alerts(
     start: str | None = None,
     end: str | None = None,
     include_total: bool = False,
+    include_summary: bool = False,
     user=Depends(current_user),
 ):
     """
@@ -109,6 +180,8 @@ def list_alerts(
     """
     alerts = []
     total_alerts: int | None = None
+    summary_payload: dict | None = None
+    indexer_query_succeeded = False
     if indexer.enabled:
         try:
             data = indexer.search_alerts(
@@ -121,20 +194,43 @@ def list_alerts(
             )
             alerts = indexer.extract_alerts(data)
             total_alerts = _extract_total_hits(data)
+            indexer_query_succeeded = True
         except HTTPException:
             alerts = []
             total_alerts = None
+        if include_total or include_summary:
+            try:
+                summary_data = indexer.search_alerts_summary(
+                    query=q,
+                    agent_id=agent_id,
+                    agent_only=agent_only,
+                    start=start,
+                    end=end,
+                )
+                summary_payload = _extract_indexer_summary(summary_data)
+                if summary_payload and isinstance(summary_payload.get("total"), int):
+                    total_alerts = int(summary_payload["total"])
+            except HTTPException:
+                pass
 
-    if not alerts:
+    if not indexer_query_succeeded:
         try:
             raw_alerts = client.get_alerts(limit)
         except HTTPException:
-            if include_total:
-                return {"items": [], "total": 0, "returned": 0, "limited": False}
+            if include_total or include_summary:
+                return {
+                    "items": [],
+                    "total": 0,
+                    "returned": 0,
+                    "limited": False,
+                    "summary": {"total": 0, "critical": 0, "high": 0, "medium": 0, "low": 0, "unknown": 0},
+                }
             return []
 
         alerts = _extract_items(raw_alerts)
-        total_alerts = len(alerts)
+        total_alerts = _extract_total_affected_items(raw_alerts)
+        if total_alerts is None:
+            total_alerts = len(alerts)
 
     items = alerts if isinstance(alerts, list) else []
     if agent_only:
@@ -147,13 +243,16 @@ def list_alerts(
         items,
         tenant_id=(user.get("org_id") if isinstance(user, dict) else None),
     )
-    if include_total:
+    if include_total or include_summary:
         total_value = total_alerts if isinstance(total_alerts, int) and total_alerts >= 0 else len(items)
+        if summary_payload is None:
+            summary_payload = _severity_summary_from_items(items, total_hint=total_value)
         return {
             "items": items,
             "total": total_value,
             "returned": len(items),
             "limited": total_value > len(items),
+            "summary": summary_payload,
         }
     return items
 

@@ -310,6 +310,7 @@ export default function AppLayout() {
     let pingTimer = null;
     let closed = false;
     let lastPingAt = 0;
+    let reconnectAttempts = 0;
 
     const clearTimers = () => {
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
@@ -318,11 +319,20 @@ export default function AppLayout() {
       pingTimer = null;
     };
 
+    const scheduleReconnect = () => {
+      if (closed) return;
+      const cappedAttempts = Math.min(reconnectAttempts, 7);
+      const delayMs = Math.min(90000, 1000 * (2 ** cappedAttempts));
+      reconnectAttempts += 1;
+      reconnectTimer = window.setTimeout(connectSocket, delayMs);
+    };
+
     const connectSocket = () => {
       clearTimers();
       ws = alertSocket();
 
       ws.onopen = () => {
+        reconnectAttempts = 0;
         setBackendHealth((prev) => ({ ...prev, socketLive: true }));
         const sendPing = () => {
           if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -354,7 +364,7 @@ export default function AppLayout() {
         if (closed) return;
         setBackendHealth((prev) => ({ ...prev, socketLive: false }));
         clearTimers();
-        reconnectTimer = window.setTimeout(connectSocket, 4000);
+        scheduleReconnect();
       };
 
       ws.onerror = () => {

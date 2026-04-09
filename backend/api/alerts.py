@@ -1,9 +1,8 @@
-import threading
 from typing import Iterable
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from core.alert_store import store_alerts
+from core.ingest_gateway_client import IngestGatewayClient
 from core.indexer_client import IndexerClient
 from core.security import current_user
 from core.wazuh_client import WazuhClient
@@ -12,8 +11,7 @@ from core.wazuh_client import WazuhClient
 router = APIRouter()
 client = WazuhClient()
 indexer = IndexerClient()
-_store_lock = threading.Lock()
-_store_inflight = False
+ingest_gateway_client = IngestGatewayClient()
 
 
 def _extract_items(data):
@@ -27,6 +25,24 @@ def _extract_items(data):
     if isinstance(data, list):
         return data
     return []
+
+
+def _extract_total_hits(data) -> int | None:
+    if not isinstance(data, dict):
+        return None
+    hits = data.get("hits")
+    if not isinstance(hits, dict):
+        return None
+    total = hits.get("total")
+    if isinstance(total, dict):
+        try:
+            return int(total.get("value"))
+        except Exception:
+            return None
+    try:
+        return int(total)
+    except Exception:
+        return None
 
 
 def _alert_agent_id(alert):
@@ -58,43 +74,41 @@ def _agent_id_variants(value):
     return {entry for entry in out if entry}
 
 
-def _store_alerts_background(items: Iterable[dict]) -> None:
+def _store_alerts_background(items: Iterable[dict], *, tenant_id: int | None) -> None:
     rows = [row for row in (items or []) if isinstance(row, dict)]
     if not rows:
         return
-
-    snapshot = rows[:500]
-
-    def _task(batch):
-        global _store_inflight
-        try:
-            store_alerts(batch)
-        finally:
-            with _store_lock:
-                _store_inflight = False
-
-    with _store_lock:
-        global _store_inflight
-        if _store_inflight:
-            return
-        _store_inflight = True
-    threading.Thread(target=_task, args=(snapshot,), daemon=True).start()
+    if not ingest_gateway_client.enabled:
+        return
+    try:
+        ingest_gateway_client.ingest_wazuh_alerts(
+            {
+                "tenant_id": tenant_id,
+                "actor": "api.alerts",
+                "source_type": "endpoint",
+                "alerts": rows[:500],
+            }
+        )
+    except Exception:
+        return
 
 
 @router.get("")
 def list_alerts(
-    limit: int = Query(default=5000, ge=1),
+    limit: int = Query(default=1000, ge=1, le=20000),
     q: str | None = None,
     agent_id: str | None = None,
     agent_only: bool = False,
     start: str | None = None,
     end: str | None = None,
+    include_total: bool = False,
     user=Depends(current_user),
 ):
     """
     Get alerts from Wazuh and enrich them with IOC data
     """
     alerts = []
+    total_alerts: int | None = None
     if indexer.enabled:
         try:
             data = indexer.search_alerts(
@@ -106,16 +120,21 @@ def list_alerts(
                 end=end,
             )
             alerts = indexer.extract_alerts(data)
+            total_alerts = _extract_total_hits(data)
         except HTTPException:
             alerts = []
+            total_alerts = None
 
     if not alerts:
         try:
             raw_alerts = client.get_alerts(limit)
         except HTTPException:
+            if include_total:
+                return {"items": [], "total": 0, "returned": 0, "limited": False}
             return []
 
         alerts = _extract_items(raw_alerts)
+        total_alerts = len(alerts)
 
     items = alerts if isinstance(alerts, list) else []
     if agent_only:
@@ -124,7 +143,18 @@ def list_alerts(
         variants = _agent_id_variants(agent_id)
         items = [a for a in items if _alert_agent_id(a) in variants or _normalized_agent_id(_alert_agent_id(a)) in variants]
 
-    _store_alerts_background(items)
+    _store_alerts_background(
+        items,
+        tenant_id=(user.get("org_id") if isinstance(user, dict) else None),
+    )
+    if include_total:
+        total_value = total_alerts if isinstance(total_alerts, int) and total_alerts >= 0 else len(items)
+        return {
+            "items": items,
+            "total": total_value,
+            "returned": len(items),
+            "limited": total_value > len(items),
+        }
     return items
 
 

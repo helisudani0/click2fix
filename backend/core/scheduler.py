@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import threading
+import uuid
 from typing import Any, Dict, Iterable, List, Optional
 
 from fastapi import HTTPException
@@ -9,8 +12,9 @@ from sqlalchemy import text
 
 from core.actions import get_action, normalize_args, resolve_action_dispatch
 from core.action_execution import execute_action, resolve_agent_ids
-from core.alert_store import store_alerts
 from core.audit import log_audit
+from core.distributed_leases import acquire_or_renew_lease, release_lease
+from core.ingest_gateway_client import IngestGatewayClient
 from core.forensic_integrity import run_integrity_sweep
 from core.indexer_client import IndexerClient
 from core.settings import SETTINGS
@@ -93,6 +97,7 @@ INGEST_QUERY = _ingest_cfg.get("query")
 
 _ingest_client = WazuhClient()
 _ingest_indexer = IndexerClient()
+_ingest_gateway = IngestGatewayClient()
 _scheduler_client = WazuhClient()
 
 _integrity_cfg = (
@@ -118,6 +123,20 @@ AUTO_CREATE_HEALTHCHECK_POLICY = bool(_scheduler_policy_cfg.get("auto_create", T
 HEALTHCHECK_POLICY_INTERVAL_HOURS = max(6, min(12, int(_scheduler_policy_cfg.get("interval_hours", 6))))
 
 _scheduler_initialized = False
+_scheduler_leadership_thread: threading.Thread | None = None
+_scheduler_leadership_stop = threading.Event()
+_scheduler_leadership_lock = threading.Lock()
+_scheduler_has_leadership = False
+_SCHEDULER_LEASE_NAME = str(os.getenv("C2F_SCHEDULER_LEASE_NAME", "backend.scheduler")).strip() or "backend.scheduler"
+_SCHEDULER_OWNER_ID = str(os.getenv("C2F_SCHEDULER_OWNER_ID", f"scheduler-{uuid.uuid4().hex[:10]}")).strip()
+_SCHEDULER_LEASE_TTL_SECONDS = max(15, int(os.getenv("C2F_SCHEDULER_LEASE_TTL_SECONDS", "45")))
+_SCHEDULER_RENEW_SECONDS = max(
+    5,
+    min(
+        int(os.getenv("C2F_SCHEDULER_LEASE_RENEW_SECONDS", "15")),
+        max(5, _SCHEDULER_LEASE_TTL_SECONDS - 5),
+    ),
+)
 
 
 def _to_bool(value: Any, default: bool = False) -> bool:
@@ -159,6 +178,13 @@ def _to_text(value: Any) -> str:
         return str(value)
 
 
+def _to_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
 def _store_execution_targets(conn, execution_id: int, rows: Iterable[Dict[str, Any]]) -> None:
     for row in rows or []:
         if not isinstance(row, dict):
@@ -177,12 +203,58 @@ def _store_execution_targets(conn, execution_id: int, rows: Iterable[Dict[str, A
                 "agent_name": str(row.get("agent_name") or ""),
                 "target_ip": str(row.get("target_ip") or row.get("ip") or ""),
                 "platform": str(row.get("platform") or ""),
-                "ok": bool(row.get("ok")),
+                "ok": _to_bool(row.get("ok"), False),
                 "status_code": int(row.get("status_code") or 0),
                 "stdout": _to_text(row.get("stdout")),
                 "stderr": _to_text(row.get("stderr")),
             },
         )
+
+
+def _result_counts(payload: Dict[str, Any] | None, target_rows: List[Dict[str, Any]]) -> Dict[str, int]:
+    rows = [row for row in (target_rows or []) if isinstance(row, dict)]
+    row_total = len(rows)
+    row_success = sum(1 for row in rows if _to_bool(row.get("ok"), False))
+    row_failed = row_total - row_success
+
+    payload_node = payload if isinstance(payload, dict) else {}
+    payload_total = _to_int(payload_node.get("total"), 0)
+    payload_success = _to_int(payload_node.get("success"), 0)
+    payload_failed = _to_int(payload_node.get("failed"), 0)
+    payload_completed = _to_int(payload_node.get("completed"), payload_success + payload_failed)
+
+    total = max(row_total, payload_total, payload_completed)
+    success = max(row_success, payload_success)
+    failed = max(row_failed, payload_failed)
+    completed = max(row_total, payload_completed, success + failed)
+    total = max(total, completed)
+    return {
+        "total": max(0, int(total)),
+        "completed": max(0, int(completed)),
+        "success": max(0, int(success)),
+        "failed": max(0, int(failed)),
+    }
+
+
+def _result_status(payload: Dict[str, Any] | None, target_rows: List[Dict[str, Any]]) -> str:
+    payload_node = payload if isinstance(payload, dict) else {}
+    explicit = str(payload_node.get("overall_status") or payload_node.get("status") or "").strip().upper()
+    if explicit in {"SUCCESS", "FAILED", "PARTIAL"}:
+        return explicit
+
+    counts = _result_counts(payload_node, target_rows)
+    total = int(counts.get("total") or 0)
+    success = int(counts.get("success") or 0)
+    failed = int(counts.get("failed") or 0)
+    if total > 0 and success > 0 and failed > 0:
+        return "PARTIAL"
+    if total > 0 and failed == 0 and success > 0:
+        return "SUCCESS"
+    if total > 0 and failed > 0 and success == 0:
+        return "FAILED"
+    if "ok" in payload_node:
+        return "SUCCESS" if _to_bool(payload_node.get("ok"), False) else "FAILED"
+    return "FAILED"
 
 
 def ingest_alerts():
@@ -217,7 +289,18 @@ def ingest_alerts():
             alerts = []
 
     if alerts:
-        store_alerts(alerts)
+        try:
+            if _ingest_gateway.enabled:
+                _ingest_gateway.ingest_wazuh_alerts(
+                    {
+                        "tenant_id": None,
+                        "actor": "scheduler",
+                        "source_type": "endpoint",
+                        "alerts": [item for item in alerts if isinstance(item, dict)],
+                    }
+                )
+        except Exception as exc:
+            logger.warning("Analytics ingest: queue enqueue failed (%s)", exc)
 
 
 def run_integrity_sweep_job() -> Dict[str, Any]:
@@ -452,11 +535,13 @@ def run_scheduled_job(job_id: int) -> Dict[str, Any]:
 
     db = connect()
     execution_id = None
-    execution_status = "SUCCESS"
-    step_status = "SUCCESS"
+    execution_status = "FAILED"
+    step_status = "FAILED"
     step_stdout = ""
     step_stderr = ""
     target_rows: List[Dict[str, Any]] = []
+    result_payload: Dict[str, Any] = {}
+    counts: Dict[str, int] = {"total": 0, "completed": 0, "success": 0, "failed": 0}
     try:
         execution_id = _create_execution_record(db, target=target, action_id=action_id, org_id=org_id)
         if str(action_id).strip().lower() == _INTEGRITY_SWEEP_ACTION_ID:
@@ -467,6 +552,9 @@ def run_scheduled_job(job_id: int) -> Dict[str, Any]:
                     execution_status = "FAILED"
                     step_status = "FAILED"
                     step_stderr = _to_text(sweep.get("error") or "integrity_sweep_failed")
+                else:
+                    execution_status = "SUCCESS"
+                    step_status = "SUCCESS"
             except Exception as exc:
                 execution_status = "FAILED"
                 step_status = "FAILED"
@@ -484,9 +572,12 @@ def run_scheduled_job(job_id: int) -> Dict[str, Any]:
                     agent_ids,
                     execution_id=execution_id,
                 )
-                result_payload = execution.get("result") if isinstance(execution, dict) else None
+                result_payload = execution.get("result") if isinstance(execution, dict) else {}
                 if isinstance(result_payload, dict) and isinstance(result_payload.get("results"), list):
-                    target_rows = [r for r in result_payload.get("results") if isinstance(r, dict)]
+                    target_rows = [r for r in (result_payload.get("results") or []) if isinstance(r, dict)]
+                counts = _result_counts(result_payload, target_rows)
+                execution_status = _result_status(result_payload, target_rows)
+                step_status = execution_status
                 step_stdout = _to_text(execution)
             except HTTPException as exc:
                 execution_status = "FAILED"
@@ -496,11 +587,19 @@ def run_scheduled_job(job_id: int) -> Dict[str, Any]:
                 if isinstance(exc.detail, dict):
                     result_payload = exc.detail.get("result")
                     if isinstance(result_payload, dict) and isinstance(result_payload.get("results"), list):
-                        target_rows = [r for r in result_payload.get("results") if isinstance(r, dict)]
+                        target_rows = [r for r in (result_payload.get("results") or []) if isinstance(r, dict)]
+                counts = _result_counts(result_payload if isinstance(result_payload, dict) else {}, target_rows)
             except Exception as exc:
                 execution_status = "FAILED"
                 step_status = "FAILED"
                 step_stderr = _to_text(exc)
+                counts = _result_counts({}, target_rows)
+
+            if not step_stderr and execution_status != "SUCCESS":
+                step_stderr = _to_text(
+                    (result_payload if isinstance(result_payload, dict) else {}).get("message")
+                    or "Scheduled action returned target failures."
+                )
 
         db.execute(
             text(
@@ -524,11 +623,25 @@ def run_scheduled_job(job_id: int) -> Dict[str, Any]:
             text(
                 """
                 UPDATE executions
-                SET status=:status, finished_at=:finished_at
+                SET
+                    status=:status,
+                    finished_at=:finished_at,
+                    target_total=:target_total,
+                    target_completed=:target_completed,
+                    target_success=:target_success,
+                    target_failed=:target_failed
                 WHERE id=:id
                 """
             ),
-            {"status": execution_status, "finished_at": utc_now_naive(), "id": execution_id},
+            {
+                "status": execution_status,
+                "finished_at": utc_now_naive(),
+                "target_total": int(counts.get("total") or 0),
+                "target_completed": int(counts.get("completed") or 0),
+                "target_success": int(counts.get("success") or 0),
+                "target_failed": int(counts.get("failed") or 0),
+                "id": execution_id,
+            },
         )
         db.execute(
             text("UPDATE scheduled_jobs SET last_run=:last_run WHERE id=:id"),
@@ -855,7 +968,7 @@ def upsert_integrity_sweep_policy(
     return {"id": job_id, "policy_cron": cron_expr}
 
 
-def start_scheduler() -> None:
+def _start_local_scheduler() -> None:
     global _scheduler_initialized
     if not _scheduler_initialized:
         if INGEST_ENABLED and scheduler.get_job("alerts_ingest") is None:
@@ -872,6 +985,9 @@ def start_scheduler() -> None:
         _scheduler_initialized = True
     if not scheduler.running:
         scheduler.start()
+ 
+
+def _sync_leader_scheduler_state() -> None:
     try:
         upsert_integrity_sweep_policy(
             cron=INTEGRITY_SWEEP_CRON,
@@ -895,6 +1011,83 @@ def start_scheduler() -> None:
         logger.error("Failed to sync policy jobs on startup: %s", exc)
 
 
-def stop_scheduler() -> None:
+def _stop_local_scheduler() -> None:
     if scheduler.running:
         scheduler.shutdown(wait=False)
+
+
+def _scheduler_leadership_loop() -> None:
+    global _scheduler_has_leadership
+    logger.info(
+        "Starting scheduler leadership loop owner_id=%s lease=%ss renew=%ss",
+        _SCHEDULER_OWNER_ID,
+        _SCHEDULER_LEASE_TTL_SECONDS,
+        _SCHEDULER_RENEW_SECONDS,
+    )
+    while not _scheduler_leadership_stop.is_set():
+        acquired = False
+        try:
+            lease = acquire_or_renew_lease(
+                lease_name=_SCHEDULER_LEASE_NAME,
+                owner_id=_SCHEDULER_OWNER_ID,
+                ttl_seconds=_SCHEDULER_LEASE_TTL_SECONDS,
+                metadata={"component": "scheduler"},
+            )
+            acquired = bool(lease.get("acquired"))
+        except Exception as exc:
+            logger.error("Scheduler leadership renewal failed: %s", exc)
+
+        if acquired:
+            if not _scheduler_has_leadership:
+                logger.info("Scheduler leadership acquired by %s", _SCHEDULER_OWNER_ID)
+            _scheduler_has_leadership = True
+            try:
+                _start_local_scheduler()
+                _sync_leader_scheduler_state()
+            except Exception as exc:
+                logger.error("Scheduler leader sync failed: %s", exc)
+        else:
+            if _scheduler_has_leadership:
+                logger.warning("Scheduler leadership lost by %s", _SCHEDULER_OWNER_ID)
+            _scheduler_has_leadership = False
+            _stop_local_scheduler()
+
+        _scheduler_leadership_stop.wait(float(_SCHEDULER_RENEW_SECONDS))
+
+    _scheduler_has_leadership = False
+    _stop_local_scheduler()
+    logger.info("Scheduler leadership loop stopped")
+
+
+def start_scheduler() -> None:
+    global _scheduler_leadership_thread
+    with _scheduler_leadership_lock:
+        if _scheduler_leadership_thread and _scheduler_leadership_thread.is_alive():
+            return
+        _scheduler_leadership_stop.clear()
+        _scheduler_leadership_thread = threading.Thread(
+            target=_scheduler_leadership_loop,
+            name="scheduler-leadership",
+            daemon=True,
+        )
+        _scheduler_leadership_thread.start()
+
+
+def stop_scheduler() -> None:
+    global _scheduler_leadership_thread
+    with _scheduler_leadership_lock:
+        thread = _scheduler_leadership_thread
+        _scheduler_leadership_stop.set()
+    if thread and thread.is_alive():
+        thread.join(timeout=max(1.0, float(_SCHEDULER_RENEW_SECONDS) + 2.0))
+    with _scheduler_leadership_lock:
+        if _scheduler_leadership_thread is thread and thread and not thread.is_alive():
+            _scheduler_leadership_thread = None
+    try:
+        release_lease(
+            lease_name=_SCHEDULER_LEASE_NAME,
+            owner_id=_SCHEDULER_OWNER_ID,
+        )
+    except Exception:
+        pass
+    _stop_local_scheduler()

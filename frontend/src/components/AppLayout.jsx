@@ -2,7 +2,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import api, { clearLegacyToken, decodeLegacyTokenPayload, getLegacyToken } from "../api/client";
 import { alertSocket } from "../api/socket";
-import { getExecutionHealth, hasTenantGovernanceV2Support } from "../api/wazuh";
+import { getExecutionHealth } from "../api/wazuh";
 import { APP_TIMEZONE_LABEL } from "../utils/time";
 import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
@@ -248,24 +248,9 @@ export default function AppLayout() {
   }, []);
 
   useEffect(() => {
-    if (!TENANT_GOVERNANCE_ENABLED) return undefined;
-    let active = true;
-    hasTenantGovernanceV2Support()
-      .then((supported) => {
-        if (!active) return;
-        if (supported === false) {
-          setOrgAdminAvailable(false);
-          return;
-        }
-        setOrgAdminAvailable(true);
-      })
-      .catch(() => {
-        if (!active) return;
-        setOrgAdminAvailable(true);
-      });
-    return () => {
-      active = false;
-    };
+    // Org Admin also hosts v1 AI configuration, so keep it reachable even when v2
+    // tenant endpoints are unavailable on a given appliance/backend version.
+    setOrgAdminAvailable(true);
   }, []);
 
   useEffect(() => {

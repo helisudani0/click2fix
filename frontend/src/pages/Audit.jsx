@@ -29,12 +29,18 @@ const auditRow = (row) => {
 
 export default function Audit() {
   const [rows, setRows] = useState([]);
+  const [query, setQuery] = useState("");
   const [actor, setActor] = useState("");
   const [action, setAction] = useState("");
   const [entityType, setEntityType] = useState("");
+  const [entityId, setEntityId] = useState("");
+  const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
 
   const normalizedRows = useMemo(() => rows.map(auditRow), [rows]);
-  const activeFilterCount = [actor, action, entityType].filter((value) => String(value || "").trim()).length;
+  const activeFilterCount = [query, actor, action, entityType, entityId, startTime, endTime]
+    .filter((value) => String(value || "").trim())
+    .length;
   const uniqueActorCount = useMemo(
     () => new Set(normalizedRows.map((row) => row.actor).filter(Boolean)).size,
     [normalizedRows],
@@ -45,13 +51,19 @@ export default function Audit() {
   );
 
   const load = useCallback(() => {
+    const hasExtendedSearch = [query, actor, action, entityType, entityId, startTime, endTime]
+      .some((value) => String(value || "").trim());
     getAudit({
+      q: query || undefined,
       actor: actor || undefined,
       action: action || undefined,
       entity_type: entityType || undefined,
-      limit: 200
+      entity_id: entityId || undefined,
+      start: startTime ? new Date(startTime).toISOString() : undefined,
+      end: endTime ? new Date(endTime).toISOString() : undefined,
+      limit: hasExtendedSearch ? 5000 : 200,
     }).then(r => setRows(r.data || []));
-  }, [actor, action, entityType]);
+  }, [query, actor, action, entityType, entityId, startTime, endTime]);
 
   useEffect(() => {
     load();
@@ -59,9 +71,16 @@ export default function Audit() {
 
   const exportAudit = (format) => {
     const params = new URLSearchParams();
+    if (query) params.append("q", query);
     if (actor) params.append("actor", actor);
     if (action) params.append("action", action);
     if (entityType) params.append("entity_type", entityType);
+    if (entityId) params.append("entity_id", entityId);
+    if (startTime) params.append("start", new Date(startTime).toISOString());
+    if (endTime) params.append("end", new Date(endTime).toISOString());
+    if ([query, actor, action, entityType, entityId, startTime, endTime].some((value) => String(value || "").trim())) {
+      params.append("limit", "5000");
+    }
     params.append("format", format);
     window.open(`/api/audit/export?${params.toString()}`, "_blank");
   };
@@ -113,6 +132,12 @@ export default function Audit() {
         <div className="page-actions mb-12">
           <input
             className="input"
+            placeholder="Search text (actor, action, detail, IP...)"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <input
+            className="input"
             placeholder="Actor"
             value={actor}
             onChange={(e) => setActor(e.target.value)}
@@ -129,8 +154,42 @@ export default function Audit() {
             value={entityType}
             onChange={(e) => setEntityType(e.target.value)}
           />
+          <input
+            className="input"
+            placeholder="Entity ID"
+            value={entityId}
+            onChange={(e) => setEntityId(e.target.value)}
+          />
+          <input
+            className="input"
+            type="datetime-local"
+            value={startTime}
+            onChange={(e) => setStartTime(e.target.value)}
+            title="Start time"
+          />
+          <input
+            className="input"
+            type="datetime-local"
+            value={endTime}
+            onChange={(e) => setEndTime(e.target.value)}
+            title="End time"
+          />
           <button className="btn secondary" onClick={load}>
             Filter
+          </button>
+          <button
+            className="btn secondary"
+            onClick={() => {
+              setQuery("");
+              setActor("");
+              setAction("");
+              setEntityType("");
+              setEntityId("");
+              setStartTime("");
+              setEndTime("");
+            }}
+          >
+            Clear
           </button>
         </div>
 

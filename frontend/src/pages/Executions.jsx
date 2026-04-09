@@ -15,6 +15,14 @@ const normalizeExecutionType = (value) => {
   return "";
 };
 
+const normalizeExecutionModule = (value) => {
+  const token = String(value || "").trim().toLowerCase();
+  if (token === "playbook" || token === "playbooks" || token === "playbook-module") return "playbook";
+  if (["global_shell", "global-shell", "globalshell", "shell", "shell-module"].includes(token)) return "global_shell";
+  if (token === "action" || token === "actions" || token === "action-module") return "action";
+  return "";
+};
+
 const inferExecutionType = ({ action, playbook, actionId, args }) => {
   if (String(playbook || "").trim()) return "playbook";
   const normalizedAction = String(actionId || action || "").trim().toLowerCase();
@@ -25,6 +33,16 @@ const inferExecutionType = ({ action, playbook, actionId, args }) => {
   }
   return "action";
 };
+
+const resolveExecutionType = (run) =>
+  normalizeExecutionType(run?.executionType || run?.execution_type)
+  || normalizeExecutionModule(run?.executionModule || run?.execution_module)
+  || inferExecutionType({
+    action: run?.action,
+    playbook: run?.playbook,
+    actionId: run?.actionId || run?.action_id,
+    args: run?.args,
+  });
 
 const executionRow = (row) => {
   if (Array.isArray(row)) {
@@ -55,6 +73,7 @@ const executionRow = (row) => {
   const actionId = row?.action_id || row?.actionId || action;
   const playbook = row?.playbook || row?.playbook_name || "";
   const executionType = normalizeExecutionType(row?.execution_type || row?.executionType)
+    || normalizeExecutionModule(row?.execution_module || row?.executionModule)
     || inferExecutionType({ action, playbook, actionId, args: row?.args });
   return {
     id: row?.id,
@@ -291,7 +310,7 @@ export default function Executions() {
         String(run.action || "").toLowerCase().includes(query) ||
         String(run.approvedBy || "").toLowerCase().includes(query);
       const matchesStatus = !statusFilter || String(run.status || "").toUpperCase() === statusFilter;
-      const matchesType = !typeFilter || normalizeExecutionType(run.executionType) === typeFilter;
+      const matchesType = !typeFilter || resolveExecutionType(run) === typeFilter;
       return matchesQuery && matchesStatus && matchesType;
     });
   }, [parsedRuns, executionSearch, statusFilter, typeFilter]);
@@ -353,7 +372,7 @@ export default function Executions() {
   }, [detailMode, selectedRun?.id]);
 
   const selectedPlaybookSnapshot = useMemo(() => {
-    if (!selectedRun || normalizeExecutionType(selectedRun.executionType) !== "playbook") return null;
+    if (!selectedRun || resolveExecutionType(selectedRun) !== "playbook") return null;
     const serverSnapshot = selectedRunDetail?.playbook_snapshot;
     if (serverSnapshot && typeof serverSnapshot === "object") return serverSnapshot;
     const execution = selectedRunDetail?.execution;
@@ -586,7 +605,7 @@ export default function Executions() {
           </details>
           <details className="ticketing-detail-section" open>
             <summary>Playbook Snapshot</summary>
-            {normalizeExecutionType(selectedRun.executionType) !== "playbook" ? (
+            {resolveExecutionType(selectedRun) !== "playbook" ? (
               <div className="empty-state">This execution was not triggered from a playbook.</div>
             ) : selectedRunDetailLoading ? (
               <div className="empty-state">Loading playbook snapshot...</div>

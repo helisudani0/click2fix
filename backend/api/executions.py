@@ -147,6 +147,8 @@ def _execution_summary(execution: dict[str, Any], targets: list[dict[str, Any]] 
     completed = _to_int(payload.get("target_completed"), 0)
     success = _to_int(payload.get("target_success"), 0)
     failed = _to_int(payload.get("target_failed"), 0)
+    target_success_count = _to_int(payload.get("target_success_count"), 0)
+    target_failed_count = _to_int(payload.get("target_failed_count"), 0)
 
     if isinstance(targets, list):
         actual_completed = len([row for row in targets if isinstance(row, dict)])
@@ -160,9 +162,11 @@ def _execution_summary(execution: dict[str, Any], targets: list[dict[str, Any]] 
     if total == 0:
         total = max(_to_int(payload.get("target_count"), 0), completed)
     if completed == 0:
-        completed = max(_to_int(payload.get("target_count"), 0), success + failed)
+        completed = max(_to_int(payload.get("target_count"), 0), success + failed, target_success_count + target_failed_count)
     if success == 0:
-        success = max(_to_int(payload.get("target_success"), 0), success)
+        success = max(_to_int(payload.get("target_success"), 0), target_success_count, success)
+    if failed == 0:
+        failed = max(_to_int(payload.get("target_failed"), 0), target_failed_count, failed)
     if failed == 0 and completed >= success:
         failed = max(failed, completed - success)
 
@@ -675,13 +679,26 @@ def list_executions(
                     COALESCE(e.target_success, 0) AS target_success,
                     COALESCE(e.target_failed, 0) AS target_failed,
                     COALESCE(e.batch_size, 0) AS batch_size,
-                    (
-                        SELECT COUNT(*)
-                        FROM execution_targets et
-                        WHERE et.execution_id = e.id
-                    ) AS target_count,
+                    COALESCE(tc.target_count, 0) AS target_count,
+                    COALESCE(tc.target_success_count, 0) AS target_success_count,
+                    COALESCE(tc.target_failed_count, 0) AS target_failed_count,
                     {latest_output_sql}
                 FROM executions e
+                LEFT JOIN LATERAL (
+                    SELECT
+                        COUNT(*) AS target_count,
+                        COALESCE(SUM(CASE WHEN latest.ok THEN 1 ELSE 0 END), 0) AS target_success_count,
+                        COALESCE(SUM(CASE WHEN latest.ok THEN 0 ELSE 1 END), 0) AS target_failed_count
+                    FROM (
+                        SELECT DISTINCT ON (
+                            COALESCE(NULLIF(et.agent_id, ''), et.target_ip, et.id::text)
+                        )
+                            COALESCE(et.ok, false) AS ok
+                        FROM execution_targets et
+                        WHERE et.execution_id = e.id
+                        ORDER BY COALESCE(NULLIF(et.agent_id, ''), et.target_ip, et.id::text), et.id DESC
+                    ) AS latest
+                ) AS tc ON true
                 {where_sql}
                 ORDER BY e.started_at DESC
                 {limit_sql}

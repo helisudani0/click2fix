@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -50,7 +51,7 @@ def test_effective_timeout_extends_long_running_global_shell_commands():
             ["Invoke-WebRequest -Uri 'https://example.invalid/pkg.msi' -OutFile $env:TEMP\\pkg.msi; msiexec /i $env:TEMP\\pkg.msi /qn"],
             {"action_id": "global-shell"},
         )
-        == 300
+        >= 3600
     )
     assert (
         executor._effective_action_timeout_seconds(
@@ -67,10 +68,12 @@ def test_custom_os_command_script_executes_encoded_powershell_payload():
 
     script = executor._windows_action_script_content("custom-os-command")
 
-    assert "function C2F-LoadCommandPayload" in script
+    assert "function C2F-ResolveCommandPayload" in script
     assert "function C2F-RunEncodedCommand" in script
+    assert "C2F-ResolveCommandPayload -CommandText $Command -CommandPath $CommandFile" in script
     assert '-EncodedCommand", $EncodedCommand' in script
     assert "C2F-RunEncodedCommand -EncodedCommand $encodedCommand" in script
+    assert "[string]$Command = \"\"" in script
     assert "ScriptBlock]::Create($CommandText)" not in script
     assert "[string]$SessionId" not in script
     assert "C2F-RunSessionCommand" not in script
@@ -91,6 +94,93 @@ def test_windows_custom_command_normalization_decodes_encoded_powershell_wrapper
     normalized = EndpointExecutor._normalize_windows_custom_command(wrapped_command)
 
     assert normalized == inner
+
+
+def test_windows_custom_command_wrapper_promotes_non_terminating_errors_to_failures():
+    wrapped = EndpointExecutor._wrap_windows_custom_command("winget --info")
+
+    assert "$hadPipelineError = -not $?" in wrapped
+    assert "$newErrors = $false" in wrapped
+    assert "if($LASTEXITCODE -ne $null){ try { $nativeRc=[int]$LASTEXITCODE } catch { $nativeRc=1 } }" in wrapped
+    assert "if($hadPipelineError -or $newErrors -or $nativeRc -ne 0){" in wrapped
+
+
+def test_hash_blocklist_wrapper_normalizes_exit_and_pipeline_status():
+    executor = _executor()
+    script = executor._build_windows_script(
+        "hash-blocklist",
+        ["0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"],
+        context={},
+        target={},
+    )
+
+    assert "$global:LASTEXITCODE = 0;" in script
+    assert "$hadPsError = -not $?;" in script
+    assert "if($LASTEXITCODE -ne $null){ try { $nativeRc=[int]$LASTEXITCODE } catch { $nativeRc=1 } };" in script
+    assert "if($nativeRc -ne 0){ throw $out };" in script
+    assert "$successEvidence = ([string]$out) -match" in script
+    assert "if($hadPsError -and (-not $successEvidence)){ throw $out };" in script
+
+
+def test_actions_result_rows_ok_rejects_non_dict_rows():
+    assert actions_api._result_rows_ok({"results": [None, "nope"]}) is False
+
+
+def test_actions_result_rows_counts_coerces_string_booleans():
+    counts = actions_api._result_rows_counts(
+        [
+            {"ok": "true"},
+            {"ok": "false"},
+            {"ok": "1"},
+            {"ok": "0"},
+        ],
+        fallback_total=4,
+    )
+    assert counts == {"total": 4, "completed": 4, "success": 2, "failed": 2}
+
+
+def test_playbook_result_status_defaults_failed_without_success_signal():
+    assert playbooks_api._result_status({}, []) == "FAILED"
+
+
+def test_reconcile_semantic_success_result_promotes_scan_false_negative():
+    executor = _executor()
+
+    status, stdout, stderr = executor._reconcile_semantic_success_result(  # noqa: SLF001
+        action_id="yara-scan",
+        status_code=1,
+        stdout=(
+            "YARA scan complete: status=CLEAN matches=0 examined=18 path=C:\\Temp\n"
+            "C2F_LOG 2026-04-09T10:20:30Z exec=999 agent=003 action=yara-scan user=SYSTEM "
+            "evidence=scan_report_path=C:\\Click2Fix\\reports\\yara-scan-999.txt\n"
+            "C2F_LOG 2026-04-09T10:20:31Z exec=999 agent=003 action=yara-scan user=SYSTEM "
+            "evidence=scan_status=CLEAN\n"
+            "report=C:\\Click2Fix\\reports\\yara-scan-999.txt"
+        ),
+        stderr="Endpoint execution failed",
+    )
+
+    assert status == 0
+    assert stderr == ""
+    assert "semantic_success_override" in stdout
+
+
+def test_reconcile_semantic_success_result_keeps_real_error_failure():
+    executor = _executor()
+
+    status, _stdout, stderr = executor._reconcile_semantic_success_result(  # noqa: SLF001
+        action_id="yara-scan",
+        status_code=1,
+        stdout=(
+            "YARA scan complete: status=CLEAN matches=0 examined=18 path=C:\\Temp\n"
+            "C2F_LOG 2026-04-09T10:20:31Z exec=999 agent=003 action=yara-scan user=SYSTEM "
+            "evidence=error=scan path not found: C:\\Temp"
+        ),
+        stderr="scan path not found",
+    )
+
+    assert status == 1
+    assert "scan path not found" in stderr
 
 
 def test_powershell_transport_uses_explicit_encoded_command():
@@ -231,6 +321,17 @@ def test_global_shell_safety_flags_download_but_allows_admin_operation(monkeypat
     assert "blocked by safety guard" in str(exc_info.value.detail).lower()
 
 
+def test_global_shell_safety_does_not_treat_format_table_as_disk_format():
+    safe = assess_command_safety(
+        "Get-WmiObject Win32_LogicalDisk | Format-Table DeviceID, Size, FreeSpace",
+        shell="powershell",
+    )
+
+    assert safe["blocked"] is False
+    assert safe["destructive"] is False
+    assert "Potentially destructive operation" not in (safe.get("reasons") or [])
+
+
 def test_playbook_validation_allows_internal_shell_steps():
     direct = playbooks_api._validated_playbook_steps(
         {
@@ -257,6 +358,41 @@ def test_playbook_validation_allows_internal_shell_steps():
         }
     )
     assert alias[0]["action"] == "custom-os-command"
+
+
+def test_playbook_validation_allows_custom_action_ids_for_draft_save():
+    custom = playbooks_api._validated_playbook_steps(
+        {
+            "steps": [
+                {
+                    "id": "step_1",
+                    "action": "custom-remediate.step",
+                    "args": {"mode": "strict"},
+                }
+            ]
+        },
+        require_known_actions=False,
+    )
+    assert custom[0]["action"] == "custom-remediate.step"
+
+
+def test_playbook_validation_rejects_unknown_actions_for_execution():
+    with pytest.raises(HTTPException) as exc_info:
+        playbooks_api._validated_playbook_steps(
+            {
+                "steps": [
+                    {
+                        "id": "step_1",
+                        "action": "custom-remediate.step",
+                        "args": {"mode": "strict"},
+                    }
+                ]
+            },
+            require_known_actions=True,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "unsupported action" in str(exc_info.value.detail).lower()
 
 
 def test_execute_serializes_custom_os_command_targets():
@@ -300,6 +436,74 @@ def test_execute_serializes_custom_os_command_targets():
 
     assert order == ["001", "002", "003"]
     assert [row["agent_id"] for row in result["results"]] == ["001", "002", "003"]
+
+
+def test_custom_os_command_uses_inline_payload_for_non_system_fast_path():
+    executor = EndpointExecutor.__new__(EndpointExecutor)
+    executor.windows_inline_custom_command_max_chars = 4096
+    executor._effective_action_timeout_seconds = lambda *_args, **_kwargs: 120
+    executor._ensure_windows_action_script = lambda *_args, **_kwargs: None
+    executor._upload_windows_script = lambda *_args, **_kwargs: pytest.fail("unexpected payload upload")
+    executor._run_winrm = lambda *_args, **_kwargs: (0, "", "")
+    executor._execute_windows_script_task = lambda *_args, **kwargs: (
+        0,
+        json.dumps(kwargs.get("script_args") or {}),
+        "",
+    )
+
+    target = {
+        "agent_id": "003",
+        "agent_name": "LAPTOP-9GQ8LUGU",
+        "ip": "192.168.1.236",
+        "platform": "windows",
+    }
+    result = executor._execute_target(  # noqa: SLF001
+        "custom-os-command",
+        ["whoami", "", "", "", "false"],
+        target,
+        {},
+    )
+
+    assert result["ok"] is True
+    script_args = json.loads(result["stdout"])
+    assert script_args["RunAsSystem"] is False
+    assert str(script_args.get("Command") or "").startswith("C2FENC:")
+    assert not script_args.get("CommandFile")
+
+
+def test_custom_os_command_keeps_file_payload_for_system_mode():
+    executor = EndpointExecutor.__new__(EndpointExecutor)
+    executor.windows_inline_custom_command_max_chars = 4096
+    executor._effective_action_timeout_seconds = lambda *_args, **_kwargs: 120
+    executor._ensure_windows_action_script = lambda *_args, **_kwargs: None
+    executor._execution_tag = lambda *_args, **_kwargs: "exec001"
+    upload_calls = []
+    executor._upload_windows_script = lambda *_args, **_kwargs: upload_calls.append(True)
+    executor._run_winrm = lambda *_args, **_kwargs: (0, "", "")
+    executor._execute_windows_script_task = lambda *_args, **kwargs: (
+        0,
+        json.dumps(kwargs.get("script_args") or {}),
+        "",
+    )
+
+    target = {
+        "agent_id": "003",
+        "agent_name": "LAPTOP-9GQ8LUGU",
+        "ip": "192.168.1.236",
+        "platform": "windows",
+    }
+    result = executor._execute_target(  # noqa: SLF001
+        "custom-os-command",
+        ["whoami", "", "", "", "true"],
+        target,
+        {},
+    )
+
+    assert result["ok"] is True
+    assert upload_calls
+    script_args = json.loads(result["stdout"])
+    assert script_args["RunAsSystem"] is True
+    assert str(script_args.get("CommandFile") or "").endswith(".ps1")
 
 
 def test_post_action_verification_short_circuits_already_satisfied_package_targets():

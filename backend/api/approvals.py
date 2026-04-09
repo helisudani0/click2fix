@@ -49,6 +49,16 @@ def _to_text(value):
         return str(value)
 
 
+def _to_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    if value is None:
+        return default
+    return bool(value)
+
+
 def _to_str_list(value: Any, *, limit: int = 6) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -84,7 +94,7 @@ def _store_execution_targets(conn, execution_id: int, rows) -> None:
                 "agent_name": str(row.get("agent_name") or ""),
                 "target_ip": str(row.get("target_ip") or row.get("ip") or ""),
                 "platform": str(row.get("platform") or ""),
-                "ok": bool(row.get("ok")),
+                "ok": _to_bool(row.get("ok"), False),
                 "status_code": int(row.get("status_code") or 0),
                 "stdout": _to_text(row.get("stdout")),
                 "stderr": _to_text(row.get("stderr")),

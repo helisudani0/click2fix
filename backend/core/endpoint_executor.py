@@ -120,11 +120,13 @@ class EndpointExecutor:
                 1200,
             ),
         )
+        # Keep this conservative. The command is wrapped and then base64-encoded again
+        # when launched via ScheduledTask, so effective command-line size grows quickly.
         self.windows_inline_custom_command_max_chars = max(
             256,
             _to_int(
-                os.getenv("C2F_WINDOWS_INLINE_COMMAND_MAX_CHARS", "4096"),
-                4096,
+                os.getenv("C2F_WINDOWS_INLINE_COMMAND_MAX_CHARS", "1200"),
+                1200,
             ),
         )
         self.indexer = IndexerClient()
@@ -712,7 +714,7 @@ class EndpointExecutor:
 	  try {
 	    $dir = Split-Path -Parent $LogFile
 	    if ($dir) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-	    Add-Content -Path $LogFile -Value $Line
+	    Add-Content -Path $LogFile -Value $Line -ErrorAction SilentlyContinue
 	  } catch { }
 	}
 
@@ -2618,7 +2620,7 @@ class EndpointExecutor:
 		  try {
 		    $dir = Split-Path -Parent $LogFile
 		    if ($dir) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-		    Add-Content -Path $LogFile -Value $Line
+		    Add-Content -Path $LogFile -Value $Line -ErrorAction SilentlyContinue
 		  } catch { }
 		}
 
@@ -2733,17 +2735,46 @@ class EndpointExecutor:
 				        throw ("custom-os-command timed out after " + [string]$TimeoutSeconds + "s")
 				      }
 				    }
-				    $stdoutText = ""
-				    $stderrText = ""
-				    try { if (Test-Path -LiteralPath $stdoutPath) { $stdoutText = [string](Get-Content -Path $stdoutPath -Raw -ErrorAction SilentlyContinue) } } catch { }
-				    try { if (Test-Path -LiteralPath $stderrPath) { $stderrText = [string](Get-Content -Path $stderrPath -Raw -ErrorAction SilentlyContinue) } } catch { }
-				    $combined = @(@($stdoutText, $stderrText) | Where-Object { $_ -and $_.Trim() })
-					    return @{
-					      rc = [int]($proc.ExitCode)
-					      output = [string]([string]::Join([Environment]::NewLine, $combined))
-					      error = ""
-					      state = "completed"
+					    $stdoutText = ""
+					    $stderrText = ""
+					    try { if (Test-Path -LiteralPath $stdoutPath) { $stdoutText = [string](Get-Content -Path $stdoutPath -Raw -ErrorAction SilentlyContinue) } } catch { }
+					    try { if (Test-Path -LiteralPath $stderrPath) { $stderrText = [string](Get-Content -Path $stderrPath -Raw -ErrorAction SilentlyContinue) } } catch { }
+					    $rc = 0
+					    try { $rc = [int]$proc.ExitCode } catch { $rc = 1 }
+					    if ($rc -eq 0) {
+					      $combinedLower = (($stdoutText + "`n" + $stderrText).ToLowerInvariant())
+					      if ($stderrText -and $stderrText.Trim()) {
+					        $stderrLower = $stderrText.ToLowerInvariant()
+					        $stderrSignalsFailure = (
+					          $stderrLower -match 'fullyqualifiederrorid' -or
+					          $stderrLower -match 'categoryinfo' -or
+					          $stderrLower -match 'nativecommandfailed' -or
+					          $stderrLower -match 'applicationfailedexception' -or
+					          $stderrLower -match 'commandnotfoundexception' -or
+					          $stderrLower -match 'is not recognized as an internal or external command' -or
+					          $stderrLower -match 'program .+ failed to run'
+					        )
+					        if ($stderrSignalsFailure) { $rc = 1 }
+					      }
+					      if ($rc -eq 0) {
+					        $outputSignalsFailure = (
+					          $combinedLower -match 'winget unavailable/inaccessible' -or
+					          $combinedLower -match 'an unexpected error occurred while executing the command' -or
+					          $combinedLower -match 'no package found matching input criteria' -or
+					          $combinedLower -match 'failed when searching source' -or
+					          $combinedLower -match 'installer hash does not match' -or
+					          $combinedLower -match '0x8a15000f'
+					        )
+					        if ($outputSignalsFailure) { $rc = 1 }
+					      }
 					    }
+					    $combined = @(@($stdoutText, $stderrText) | Where-Object { $_ -and $_.Trim() })
+						    return @{
+						      rc = [int]$rc
+						      output = [string]([string]::Join([Environment]::NewLine, $combined))
+						      error = ""
+						      state = "completed"
+						    }
 					  } finally {
 				    try { Remove-Item -Path $stdoutPath,$stderrPath -Force -ErrorAction SilentlyContinue } catch { }
 					  }
@@ -3034,7 +3065,7 @@ class EndpointExecutor:
 		  try {
 		    $dir = Split-Path -Parent $LogFile
 		    if ($dir) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-		    Add-Content -Path $LogFile -Value $Line
+		    Add-Content -Path $LogFile -Value $Line -ErrorAction SilentlyContinue
 		  } catch { }
 		}
 
@@ -3258,7 +3289,7 @@ class EndpointExecutor:
 		  try {
 		    $dir = Split-Path -Parent $LogFile
 		    if ($dir) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-		    Add-Content -Path $LogFile -Value $Line
+		    Add-Content -Path $LogFile -Value $Line -ErrorAction SilentlyContinue
 		  } catch { }
 		}
 
@@ -3482,7 +3513,7 @@ class EndpointExecutor:
 	  try {
 	    $dir = Split-Path -Parent $LogFile
 	    if ($dir) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-	    Add-Content -Path $LogFile -Value $Line
+	    Add-Content -Path $LogFile -Value $Line -ErrorAction SilentlyContinue
 	  } catch { }
 	}
 
@@ -3651,7 +3682,7 @@ class EndpointExecutor:
 	  try {
 	    $dir = Split-Path -Parent $LogFile
 	    if ($dir) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-	    Add-Content -Path $LogFile -Value $Line
+	    Add-Content -Path $LogFile -Value $Line -ErrorAction SilentlyContinue
 	  } catch { }
 	}
 
@@ -3817,7 +3848,7 @@ class EndpointExecutor:
 	  try {
 	    $dir = Split-Path -Parent $LogFile
 	    if ($dir) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-	    Add-Content -Path $LogFile -Value $Line
+	    Add-Content -Path $LogFile -Value $Line -ErrorAction SilentlyContinue
 	  } catch { }
 	}
 
@@ -3983,7 +4014,7 @@ class EndpointExecutor:
 	  try {
 	    $dir = Split-Path -Parent $LogFile
 	    if ($dir) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-	    Add-Content -Path $LogFile -Value $Line
+	    Add-Content -Path $LogFile -Value $Line -ErrorAction SilentlyContinue
 	  } catch { }
 	}
 
@@ -4140,7 +4171,7 @@ class EndpointExecutor:
 		  try {
 		    $dir = Split-Path -Parent $LogFile
 		    if ($dir) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-		    Add-Content -Path $LogFile -Value $Line
+		    Add-Content -Path $LogFile -Value $Line -ErrorAction SilentlyContinue
 		  } catch { }
 		}
 
@@ -4239,7 +4270,7 @@ function Write-C2FLogLine {
   try {
     $dir = Split-Path -Parent $LogFile
     if ($dir) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    Add-Content -Path $LogFile -Value $Line
+    Add-Content -Path $LogFile -Value $Line -ErrorAction SilentlyContinue
   } catch { }
 }
 
@@ -5879,6 +5910,7 @@ catch {
             elif aid in {"package-update", "malware-scan", "threat-hunt-persistence", "custom-os-command"}:
                 task_args: Dict[str, Any] = {}
                 command_file = ""
+                retry_command_file = ""
                 if aid == "package-update":
                     task_args["PackageSpec"] = action_args[0] if action_args else "all"
                     task_args["Version"] = action_args[1] if len(action_args) > 1 else ""
@@ -5962,12 +5994,47 @@ catch {
                         script_action_id=script_action_id,
                         script_args=task_args,
                     )
+                    if (
+                        aid == "custom-os-command"
+                        and status_code != 0
+                        and "command line is too long" in f"{stderr}\n{stdout}".lower()
+                        and not command_file
+                    ):
+                        # Fallback: force command-file execution to avoid command-line expansion
+                        # overhead in the scheduled-task invocation path.
+                        retry_command_file = (
+                            r"C:\Click2Fix\scripts\inputs\custom-cmd-"
+                            + self._execution_tag(context)
+                            + "-"
+                            + str(target.get("agent_id") or "agent")
+                            + "-"
+                            + uuid.uuid4().hex
+                            + ".ps1"
+                        )
+                        self._upload_windows_script(
+                            target,
+                            retry_command_file,
+                            str(task_args.get("Command") or ""),
+                        )
+                        retry_args = dict(task_args)
+                        retry_args.pop("Command", None)
+                        retry_args["CommandFile"] = retry_command_file
+                        status_code, stdout, stderr = self._execute_windows_script_task(
+                            target,
+                            context=context,
+                            timeout_seconds=timeout_seconds,
+                            action_id=logical_aid or aid,
+                            script_action_id=script_action_id,
+                            script_args=retry_args,
+                        )
                 finally:
-                    if command_file:
+                    for cleanup_file in [command_file, retry_command_file]:
+                        if not cleanup_file:
+                            continue
                         cleanup_script = (
                             "$ErrorActionPreference='SilentlyContinue';"
                             "$ProgressPreference='SilentlyContinue';"
-                            f"$cf={_ps_quote(command_file)};"
+                            f"$cf={_ps_quote(cleanup_file)};"
                             "try { Remove-Item -Path $cf -Force -ErrorAction SilentlyContinue } catch { };"
                         )
                         try:
@@ -6005,6 +6072,13 @@ catch {
             linux_action_id = logical_action_id if logical_aid in {"package-update", "software-install-upgrade"} else action_id
             script = self._build_linux_script(linux_action_id, action_args, context=context, target=target)
             status_code, stdout, stderr = self._run_ssh(target["ip"], script, timeout_seconds=timeout_seconds)
+
+        status_code, stdout, stderr = self._reconcile_semantic_success_result(
+            action_id=logical_aid or aid,
+            status_code=status_code,
+            stdout=stdout,
+            stderr=stderr,
+        )
 
         return {
             "agent_id": target["agent_id"],
@@ -6107,6 +6181,104 @@ catch {
             return ""
         return str(match.group(1)).strip()
 
+    @classmethod
+    def _has_semantic_success_evidence(cls, action_id: str, stdout: str) -> bool:
+        action = str(action_id or "").strip().lower()
+        text = str(stdout or "")
+        if not text.strip():
+            return False
+        lower = text.lower()
+        metrics = cls._extract_c2f_evidence_metrics(text)
+
+        if action == "hash-blocklist":
+            blocklist_status = str(metrics.get("blocklist_status") or "").strip().upper()
+            if blocklist_status in {"ADDED", "EXISTS"}:
+                return True
+            return (
+                "hash added to blocklist" in lower
+                or "hash already present in blocklist" in lower
+                or "blocklist=" in lower
+            )
+
+        semantic_scan_actions = {
+            "endpoint-healthcheck",
+            "ioc-scan",
+            "toc-scan",
+            "yara-scan",
+            "collect-forensics",
+            "collect-memory",
+            "malware-scan",
+            "threat-hunt-persistence",
+        }
+        if action not in semantic_scan_actions:
+            return False
+
+        scan_status = str(metrics.get("scan_status") or "").strip().upper()
+        report_path = str(metrics.get("scan_report_path") or "").strip()
+        summary = str(metrics.get("scan_summary") or "").strip()
+        if report_path and (scan_status in {"CLEAN", "MATCH", "SUCCESS"} or bool(summary)):
+            return True
+
+        return any(
+            marker in lower
+            for marker in (
+                "healthcheck ok",
+                " scan complete: status=",
+                "forensics collection complete:",
+                "memory collection complete:",
+                "persistence hunt complete:",
+                "report=",
+            )
+        )
+
+    @staticmethod
+    def _has_explicit_error_evidence(stdout: str, stderr: str) -> bool:
+        blob = f"{stdout}\n{stderr}".lower()
+        return any(
+            marker in blob
+            for marker in (
+                " evidence=error=",
+                " timed out",
+                "requires path argument",
+                "scan path not found",
+                "script missing",
+                "requires command argument",
+                "verification failed",
+                "failed to prepare endpoint script",
+            )
+        )
+
+    def _reconcile_semantic_success_result(
+        self,
+        *,
+        action_id: str,
+        status_code: int,
+        stdout: str,
+        stderr: str,
+    ) -> tuple[int, str, str]:
+        try:
+            code = int(status_code)
+        except Exception:
+            code = 1
+        out_text = str(stdout or "")
+        err_text = str(stderr or "")
+        if code == 0:
+            return code, out_text, err_text
+        if not self._has_semantic_success_evidence(action_id, out_text):
+            return code, out_text, err_text
+        if self._has_explicit_error_evidence(out_text, err_text):
+            return code, out_text, err_text
+        marker = (
+            "C2F_LOG reconciliation=semantic_success_override "
+            + "action="
+            + str(action_id or "").strip().lower()
+            + " prior_status="
+            + str(code)
+        )
+        if marker not in out_text:
+            out_text = (out_text + ("\n" if out_text else "") + marker).strip()
+        return 0, out_text, ""
+
     @staticmethod
     def _strip_wrapping_quotes(value: str) -> str:
         text = str(value or "").strip()
@@ -6132,13 +6304,26 @@ catch {
             [
                 "$ErrorActionPreference='Stop'",
                 "$ProgressPreference='SilentlyContinue'",
+                "try { if($error){ $error.Clear() } } catch { }",
+                "$global:LASTEXITCODE = 0",
                 "try {",
                 text,
-                "if($LASTEXITCODE -ne 0){ exit $LASTEXITCODE }",
+                "$hadPipelineError = -not $?",
+                "$nativeRc = 0",
+                "if($LASTEXITCODE -ne $null){ try { $nativeRc=[int]$LASTEXITCODE } catch { $nativeRc=1 } }",
+                "$newErrors = $false",
+                "try { if($error -and $error.Count -gt 0){ $newErrors = $true } } catch { }",
+                "if($hadPipelineError -or $newErrors -or $nativeRc -ne 0){",
+                "$err = ''",
+                "try { if($error -and $error.Count -gt 0){ $err = ($error[0] | Out-String) } } catch { }",
+                "if(-not $err -and $nativeRc -ne 0){ $err = ('command failed with exit_code=' + [string]$nativeRc) }",
+                "if(-not $err){ $err = 'command reported a PowerShell error' }",
+                "throw $err",
+                "}",
                 "} catch {",
                 "$err = $_ | Out-String",
                 "Write-Error $err",
-                "exit 1",
+                "[Environment]::Exit(1)",
                 "}",
             ]
         )
@@ -7425,6 +7610,11 @@ catch {
     ) -> str:
         args = [str(v) for v in (action_args or [])]
         aid = str(action_id or "").strip()
+        stream_error_guard = (
+            "if($nativeRc -ne 0){ throw $out };"
+            "$successEvidence = ([string]$out) -match '(?im)(healthcheck ok|scan complete: status=|forensics collection complete:|memory collection complete:|persistence hunt complete:|report=|blocklist=|hash added to blocklist|hash already present in blocklist|package update complete:)';"
+            "if($hadPsError -and (-not $successEvidence)){ throw $out };"
+        )
         if aid == "endpoint-healthcheck":
             inner = (
                 "$hostName=$env:COMPUTERNAME;"
@@ -7599,8 +7789,13 @@ catch {
                 f"$pkg={pkg};"
                 f"$ver={ver};"
                 f"$maxRuntime={max_runtime};"
+                "try { if($error){ $error.Clear() } } catch { };"
+                "$global:LASTEXITCODE = 0;"
                 "$out=(& $sp -ExecId $c2fExec -AgentId $c2fAgent -ActionId $c2fAction -LogFile $logFile -PackageSpec $pkg -Version $ver -MaxRuntimeSeconds $maxRuntime 2>&1 | Out-String);"
-                "if($LASTEXITCODE -ne 0){ throw $out };"
+                "$hadPsError = -not $?;"
+                "$nativeRc = 0;"
+                "if($LASTEXITCODE -ne $null){ try { $nativeRc=[int]$LASTEXITCODE } catch { $nativeRc=1 } };"
+                + stream_error_guard +
                 "Write-Output $out"
             )
             return self._wrap_windows_script(aid, inner, context or {}, target or {})
@@ -7709,8 +7904,13 @@ catch {
                 f"$sp={_ps_quote(script_path)};"
                 "if(-not (Test-Path $sp)){ throw ('threat-hunt-persistence script missing at '+$sp); };"
                 f"$maxRuntime={max_runtime};"
+                "try { if($error){ $error.Clear() } } catch { };"
+                "$global:LASTEXITCODE = 0;"
                 "$out=(& $sp -ExecId $c2fExec -AgentId $c2fAgent -ActionId $c2fAction -LogFile $logFile -MaxRuntimeSeconds $maxRuntime 2>&1 | Out-String);"
-                "if($LASTEXITCODE -ne 0){ throw $out };"
+                "$hadPsError = -not $?;"
+                "$nativeRc = 0;"
+                "if($LASTEXITCODE -ne $null){ try { $nativeRc=[int]$LASTEXITCODE } catch { $nativeRc=1 } };"
+                + stream_error_guard +
                 "Write-Output $out"
             )
             return self._wrap_windows_script(aid, inner, context or {}, target or {})
@@ -7721,8 +7921,13 @@ catch {
                 f"$sp={_ps_quote(script_path)};"
                 "if(-not (Test-Path $sp)){ throw ('ioc-scan script missing at '+$sp); };"
                 f"$iocSet={ioc_set};"
+                "try { if($error){ $error.Clear() } } catch { };"
+                "$global:LASTEXITCODE = 0;"
                 "$out=(& $sp -ExecId $c2fExec -AgentId $c2fAgent -ActionId $c2fAction -LogFile $logFile -IocSet $iocSet 2>&1 | Out-String);"
-                "if($LASTEXITCODE -ne 0){ throw $out };"
+                "$hadPsError = -not $?;"
+                "$nativeRc = 0;"
+                "if($LASTEXITCODE -ne $null){ try { $nativeRc=[int]$LASTEXITCODE } catch { $nativeRc=1 } };"
+                + stream_error_guard +
                 "Write-Output $out"
             )
             return self._wrap_windows_script(aid, inner, context or {}, target or {})
@@ -7735,8 +7940,13 @@ catch {
                 f"$sp={_ps_quote(script_path)};"
                 "if(-not (Test-Path $sp)){ throw ('yara-scan script missing at '+$sp); };"
                 f"$scanPath={scan_path};"
+                "try { if($error){ $error.Clear() } } catch { };"
+                "$global:LASTEXITCODE = 0;"
                 "$out=(& $sp -ExecId $c2fExec -AgentId $c2fAgent -ActionId $c2fAction -LogFile $logFile -ScanPath $scanPath 2>&1 | Out-String);"
-                "if($LASTEXITCODE -ne 0){ throw $out };"
+                "$hadPsError = -not $?;"
+                "$nativeRc = 0;"
+                "if($LASTEXITCODE -ne $null){ try { $nativeRc=[int]$LASTEXITCODE } catch { $nativeRc=1 } };"
+                + stream_error_guard +
                 "Write-Output $out"
             )
             return self._wrap_windows_script(aid, inner, context or {}, target or {})
@@ -7745,8 +7955,13 @@ catch {
             inner = (
                 f"$sp={_ps_quote(script_path)};"
                 "if(-not (Test-Path $sp)){ throw ('collect-forensics script missing at '+$sp); };"
+                "try { if($error){ $error.Clear() } } catch { };"
+                "$global:LASTEXITCODE = 0;"
                 "$out=(& $sp -ExecId $c2fExec -AgentId $c2fAgent -ActionId $c2fAction -LogFile $logFile 2>&1 | Out-String);"
-                "if($LASTEXITCODE -ne 0){ throw $out };"
+                "$hadPsError = -not $?;"
+                "$nativeRc = 0;"
+                "if($LASTEXITCODE -ne $null){ try { $nativeRc=[int]$LASTEXITCODE } catch { $nativeRc=1 } };"
+                + stream_error_guard +
                 "Write-Output $out"
             )
             return self._wrap_windows_script(aid, inner, context or {}, target or {})
@@ -7755,8 +7970,13 @@ catch {
             inner = (
                 f"$sp={_ps_quote(script_path)};"
                 "if(-not (Test-Path $sp)){ throw ('collect-memory script missing at '+$sp); };"
+                "try { if($error){ $error.Clear() } } catch { };"
+                "$global:LASTEXITCODE = 0;"
                 "$out=(& $sp -ExecId $c2fExec -AgentId $c2fAgent -ActionId $c2fAction -LogFile $logFile 2>&1 | Out-String);"
-                "if($LASTEXITCODE -ne 0){ throw $out };"
+                "$hadPsError = -not $?;"
+                "$nativeRc = 0;"
+                "if($LASTEXITCODE -ne $null){ try { $nativeRc=[int]$LASTEXITCODE } catch { $nativeRc=1 } };"
+                + stream_error_guard +
                 "Write-Output $out"
             )
             return self._wrap_windows_script(aid, inner, context or {}, target or {})
@@ -7768,8 +7988,13 @@ catch {
             inner = (
                 f"$sp={_ps_quote(script_path)};"
                 "if(-not (Test-Path $sp)){ throw ('hash-blocklist script missing at '+$sp); };"
+                "try { if($error){ $error.Clear() } } catch { };"
+                "$global:LASTEXITCODE = 0;"
                 f"$out=(& $sp -ExecId $c2fExec -AgentId $c2fAgent -ActionId $c2fAction -LogFile $logFile -Sha256Hash {sha} 2>&1 | Out-String);"
-                "if($LASTEXITCODE -ne 0){ throw $out };"
+                "$hadPsError = -not $?;"
+                "$nativeRc = 0;"
+                "if($LASTEXITCODE -ne $null){ try { $nativeRc=[int]$LASTEXITCODE } catch { $nativeRc=1 } };"
+                + stream_error_guard +
                 "Write-Output $out"
             )
             return self._wrap_windows_script(aid, inner, context or {}, target or {})
@@ -8376,3 +8601,4 @@ catch {
             )
             return self._wrap_linux_script(aid, inner, context or {}, target or {})
         raise HTTPException(status_code=400, detail=f"Unsupported action for Linux endpoint mode: {aid}")
+

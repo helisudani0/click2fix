@@ -49,6 +49,58 @@ _PLAYBOOK_STEP_UP_ACTION_IDS = {
     "win-route-null",
 }
 
+
+def _to_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _result_counts(payload: Dict[str, Any] | None, rows: List[Dict[str, Any]]) -> Dict[str, int]:
+    result = payload if isinstance(payload, dict) else {}
+    valid_rows = [row for row in (rows or []) if isinstance(row, dict)]
+    row_total = len(valid_rows)
+    row_success = sum(1 for row in valid_rows if _to_bool(row.get("ok"), False))
+    row_failed = row_total - row_success
+
+    payload_total = _to_int(result.get("total"), 0)
+    payload_success = _to_int(result.get("success"), 0)
+    payload_failed = _to_int(result.get("failed"), 0)
+    payload_completed = _to_int(result.get("completed"), payload_success + payload_failed)
+
+    total = max(row_total, payload_total, payload_completed)
+    success = max(row_success, payload_success)
+    failed = max(row_failed, payload_failed)
+    completed = max(row_total, payload_completed, success + failed)
+    total = max(total, completed)
+    return {
+        "total": max(0, int(total)),
+        "completed": max(0, int(completed)),
+        "success": max(0, int(success)),
+        "failed": max(0, int(failed)),
+    }
+
+
+def _result_status(payload: Dict[str, Any] | None, rows: List[Dict[str, Any]]) -> str:
+    result = payload if isinstance(payload, dict) else {}
+    explicit = str(result.get("overall_status") or result.get("status") or "").strip().upper()
+    if explicit in {"SUCCESS", "FAILED", "PARTIAL"}:
+        return explicit
+    counts = _result_counts(result, rows)
+    total = int(counts.get("total") or 0)
+    success = int(counts.get("success") or 0)
+    failed = int(counts.get("failed") or 0)
+    if total > 0 and success > 0 and failed > 0:
+        return "PARTIAL"
+    if total > 0 and success > 0 and failed == 0:
+        return "SUCCESS"
+    if total > 0 and failed > 0 and success == 0:
+        return "FAILED"
+    if "ok" in result:
+        return "SUCCESS" if _to_bool(result.get("ok"), False) else "FAILED"
+    return "FAILED"
+
 DEFAULT_PLAYBOOKS: dict[str, dict[str, Any]] = {
     "soc_windows_malware_containment.json": {
         "name": "SOC Windows Malware Containment",
@@ -360,17 +412,38 @@ def _run_playbook_async_job(
                     execution_id=execution_id,
                 )
                 result_payload = execution.get("result")
+                step_rows: List[Dict[str, Any]] = []
                 if isinstance(result_payload, dict) and isinstance(result_payload.get("results"), list):
-                    for row in result_payload.get("results") or []:
+                    for row in (result_payload.get("results") or []):
                         if not isinstance(row, dict):
                             continue
+                        step_rows.append(row)
                         aid = str(row.get("agent_id") or "").strip()
                         if aid:
                             target_rows[aid] = row
+                step_result_status = _result_status(
+                    result_payload if isinstance(result_payload, dict) else {},
+                    step_rows,
+                )
+                if step_result_status == "PARTIAL" and overall_status == "SUCCESS":
+                    overall_status = "PARTIAL"
+                if step_result_status == "FAILED":
+                    overall_status = "FAILED"
                 detail = f"channel={execution.get('channel')}; command={execution.get('command_used')}"
                 if execution.get("attempts"):
                     detail += f"; attempts={','.join(execution.get('attempts'))}"
                 stdout = f"{detail}\n{json.dumps(execution.get('result'), default=str)}"
+                step_counts = _result_counts(
+                    result_payload if isinstance(result_payload, dict) else {},
+                    step_rows,
+                )
+                step_stderr = ""
+                if step_result_status == "PARTIAL":
+                    step_stderr = (
+                        f"partial target outcome: success={step_counts['success']} failed={step_counts['failed']}"
+                    )
+                elif step_result_status == "FAILED":
+                    step_stderr = "step action reported failed targets"
                 db.execute(
                     text(
                         """
@@ -383,21 +456,27 @@ def _run_playbook_async_job(
                         "execution_id": execution_id,
                         "step": step_id,
                         "stdout": stdout,
-                        "stderr": "",
-                        "status": "SUCCESS",
+                        "stderr": step_stderr,
+                        "status": step_result_status,
                     },
                 )
                 db.commit()
                 publish_event(
                     execution_id,
                     {
-                        "type": "step_done",
+                        "type": (
+                            "step_done"
+                            if step_result_status == "SUCCESS"
+                            else ("step_warning" if step_result_status == "PARTIAL" else "step_failed")
+                        ),
                         "step": step_id,
-                        "status": "SUCCESS",
+                        "status": step_result_status,
                         "stdout": f"action={step_action}",
-                        "stderr": "",
+                        "stderr": step_stderr,
                     },
                 )
+                if step_result_status == "FAILED":
+                    break
                 if (
                     isinstance(result_payload, dict)
                     and isinstance(result_payload.get("results"), list)
@@ -542,30 +621,61 @@ def _run_playbook_async_job(
                 )
                 break
 
+        final_rows = list(target_rows.values())
+        final_counts = _result_counts({}, final_rows)
         db.execute(
             text(
                 """
                 UPDATE executions
-                SET status=:status, finished_at=:finished_at
+                SET
+                    status=:status,
+                    finished_at=:finished_at,
+                    target_total=:target_total,
+                    target_completed=:target_completed,
+                    target_success=:target_success,
+                    target_failed=:target_failed
                 WHERE id=:id
                 """
             ),
-            {"status": overall_status, "finished_at": utc_now_naive(), "id": execution_id},
+            {
+                "status": overall_status,
+                "finished_at": utc_now_naive(),
+                "target_total": int(final_counts.get("total") or 0),
+                "target_completed": int(final_counts.get("completed") or 0),
+                "target_success": int(final_counts.get("success") or 0),
+                "target_failed": int(final_counts.get("failed") or 0),
+                "id": execution_id,
+            },
         )
-        if target_rows:
-            _store_execution_targets(db, execution_id, list(target_rows.values()))
+        if final_rows:
+            _store_execution_targets(db, execution_id, final_rows)
         db.commit()
     except Exception as exc:
         overall_status = "FAILED"
+        failed_rows = list(target_rows.values())
+        failed_counts = _result_counts({}, failed_rows)
         db.execute(
             text(
                 """
                 UPDATE executions
-                SET status='FAILED', finished_at=:finished_at
+                SET
+                    status='FAILED',
+                    finished_at=:finished_at,
+                    target_total=:target_total,
+                    target_completed=:target_completed,
+                    target_success=:target_success,
+                    target_failed=:target_failed
                 WHERE id=:id
                 """
             ),
-            {"finished_at": utc_now_naive(), "id": execution_id},
+            {
+                "finished_at": utc_now_naive(),
+                "target_total": int(failed_counts.get("total") or 0),
+                "target_completed": int(failed_counts.get("completed") or 0),
+                "target_success": int(failed_counts.get("success") or 0),
+                "target_failed": int(failed_counts.get("failed") or 0),
+                "id": execution_id,
+            },
         )
         db.execute(
             text(
@@ -583,6 +693,8 @@ def _run_playbook_async_job(
                 "status": "FAILED",
             },
         )
+        if failed_rows:
+            _store_execution_targets(db, execution_id, failed_rows)
         db.commit()
     finally:
         db.close()
@@ -753,7 +865,7 @@ def _store_execution_targets(conn, execution_id: int, rows) -> None:
                 "agent_name": str(row.get("agent_name") or ""),
                 "target_ip": str(row.get("target_ip") or row.get("ip") or ""),
                 "platform": str(row.get("platform") or ""),
-                "ok": bool(row.get("ok")),
+                "ok": _to_bool(row.get("ok"), False),
                 "status_code": int(row.get("status_code") or 0),
                 "stdout": _to_text(row.get("stdout")),
                 "stderr": _to_text(row.get("stderr")),

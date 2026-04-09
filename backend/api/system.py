@@ -211,6 +211,18 @@ def _normalize_version_label(raw: str | None) -> str:
     return text if text.lower().startswith("v") else f"v{text}"
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    lowered = str(raw).strip().lower()
+    if lowered in {"1", "true", "yes", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def _org_id_from_user(user: dict | None) -> int:
     if not isinstance(user, dict):
         return 0
@@ -380,7 +392,14 @@ def system_version():
     version = next((v for v in (_normalize_version_label(x) for x in candidates) if v), "")
     if not version:
         version = _normalize_version_label(os.getenv("IMAGE_TAG")) or "dev"
-    return {"version": version, "source": "env"}
+    tenant_governance_v2 = _env_bool("C2F_ENABLE_V2_SOAR", False)
+    return {
+        "version": version,
+        "source": "env",
+        "capabilities": {
+            "tenant_governance_v2": tenant_governance_v2,
+        },
+    }
 
 
 @router.get("/ai-config")

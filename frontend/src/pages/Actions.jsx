@@ -8,6 +8,7 @@ const ACTIONS_SIDEBAR_WIDTH_STORAGE_KEY = "c2f-actions-sidebar-width-v4";
 const DEFAULT_ACTIONS_SIDEBAR_WIDTH = 420;
 const MIN_ACTIONS_SIDEBAR_WIDTH = 360;
 const MAX_ACTIONS_SIDEBAR_WIDTH = 560;
+const MULTI_TARGET_PREVIEW_LIMIT = 6;
 const DEFAULT_ACTION_JUSTIFICATION = "Action execution requested from Actions workspace.";
 const TARGET_MODE_LABELS = {
   agent: "Single agent",
@@ -257,6 +258,11 @@ export default function Actions() {
     () => connectedAgents.filter((agent) => selectedMultiAgentSet.has(agent.id)),
     [connectedAgents, selectedMultiAgentSet]
   );
+  const selectedMultiAgentPreview = useMemo(
+    () => selectedMultiAgents.slice(0, MULTI_TARGET_PREVIEW_LIMIT),
+    [selectedMultiAgents]
+  );
+  const selectedMultiAgentOverflow = Math.max(0, selectedMultiAgents.length - selectedMultiAgentPreview.length);
 
   const scopedTargets = useMemo(() => {
     if (targetMode === "agent") {
@@ -539,8 +545,9 @@ export default function Actions() {
             <div className="card-header">
               <div>
                 <h3>Target Selection</h3>
-                <p className="muted">Use fleet, multi, single, or group targeting before choosing and dispatching actions.</p>
+                <p className="muted">Scope targets quickly before dispatch.</p>
               </div>
+              <span className="chip">{resolvedTargetIds.length} selected</span>
             </div>
 
             <div className="actions-field-block">
@@ -635,8 +642,8 @@ export default function Actions() {
             ) : null}
 
             {targetMode === "multi" ? (
-              <div className="actions-selection-strip">
-                {selectedMultiAgents.length ? selectedMultiAgents.map((agent) => (
+              <div className="actions-selection-strip compact">
+                {selectedMultiAgentPreview.length ? selectedMultiAgentPreview.map((agent) => (
                   <span key={`selected-multi-${agent.id}`} className="chip">
                     <MaskedAgentId value={agent.id} />
                     <span>{agent.hostname}</span>
@@ -645,6 +652,9 @@ export default function Actions() {
                     </button>
                   </span>
                 )) : <div className="meta-line">No agents selected yet.</div>}
+                {selectedMultiAgentOverflow > 0 ? (
+                  <span className="chip">+{selectedMultiAgentOverflow} more</span>
+                ) : null}
               </div>
             ) : (
               <div className="meta-line">{TARGET_MODE_LABELS[targetMode]} resolves to {resolvedTargetIds.length} target(s).</div>
@@ -652,7 +662,7 @@ export default function Actions() {
 
             <div className="meta-line">
               {scopedTargets.length
-                ? `Resolved target preview hidden to keep the workspace focused. ${scopedTargets.length} target(s) will be used for execution.`
+                ? `${scopedTargets.length} target(s) ready for dispatch.`
                 : "No agents match the current target scope."}
             </div>
           </div>

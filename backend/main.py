@@ -19,9 +19,10 @@ from core.http_security import (
 from core.execution_reconciler import reconcile_orphan_executions
 from core.scheduler import start_scheduler, stop_scheduler
 from core.security import COOKIE_NAME, CSRF_COOKIE_NAME
+from core.security_posture import assess_security_posture, record_posture_findings
 from core.settings import SETTINGS
 from core.time_utils import utc_iso_now
-from core.ws_bus import set_main_loop
+from core.ws_bus import close_redis, init_redis, set_main_loop
 from db.database import init as init_db
 
 logger = logging.getLogger(__name__)
@@ -103,13 +104,28 @@ _RATE_RULES = [
 @app.on_event("startup")
 async def _register_ws_loop():
     # WS publish from threadpool workers must be scheduled on the app loop.
-    set_main_loop(asyncio.get_running_loop())
+    running_loop = asyncio.get_running_loop()
+    set_main_loop(running_loop)
+    try:
+        await init_redis(running_loop)
+    except Exception as exc:
+        logger.warning("Redis WS bus init failed: %s", exc)
+    try:
+        # Shared alert stream processor backs /ws/alerts with one poller.
+        await ws.start_alert_stream_processor(running_loop)
+    except Exception as exc:
+        logger.exception("Alert stream startup failed: %s", exc)
     try:
         # Ensure schema/tables exist on fresh appliance installs.
         init_db()
     except Exception as exc:
         logger.exception("Database initialization failed: %s", exc)
         raise
+    try:
+        posture = assess_security_posture()
+        record_posture_findings(posture)
+    except Exception as exc:
+        logger.exception("Security posture assessment failed: %s", exc)
     try:
         # Recover executions left RUNNING by prior process restarts.
         rec = reconcile_orphan_executions(timeout_seconds=300)
@@ -125,6 +141,14 @@ async def _register_ws_loop():
 
 @app.on_event("shutdown")
 async def _shutdown_background_services():
+    try:
+        await ws.stop_alert_stream_processor()
+    except Exception as exc:
+        logger.exception("Alert stream shutdown failed: %s", exc)
+    try:
+        await close_redis()
+    except Exception as exc:
+        logger.exception("Redis WS bus shutdown failed: %s", exc)
     stop_scheduler()
 
 

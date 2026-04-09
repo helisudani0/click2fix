@@ -283,7 +283,7 @@ def _store_execution_targets(conn, execution_id: int, rows) -> None:
                 "agent_name": str(row.get("agent_name") or ""),
                 "target_ip": str(row.get("target_ip") or row.get("ip") or ""),
                 "platform": str(row.get("platform") or ""),
-                "ok": bool(row.get("ok")),
+                "ok": _to_bool(row.get("ok"), False),
                 "status_code": int(row.get("status_code") or 0),
                 "stdout": _to_text(row.get("stdout")),
                 "stderr": _to_text(row.get("stderr")),
@@ -591,20 +591,26 @@ def _result_rows_ok(payload: Any) -> bool:
     result = payload if isinstance(payload, dict) else {}
     rows = result.get("results")
     if isinstance(rows, list) and rows:
-        return all(bool(row.get("ok")) for row in rows if isinstance(row, dict))
+        valid_rows = [row for row in rows if isinstance(row, dict)]
+        if not valid_rows:
+            return False
+        return all(_to_bool(row.get("ok"), False) for row in valid_rows)
     failed = _to_int(result.get("failed"), 0)
     if failed > 0:
         return False
-    if "ok" in result:
-        return bool(result.get("ok"))
-    return False
+    return _result_rows_status(result) == "SUCCESS"
 
 
 def _result_rows_status(payload: Any) -> str:
     result = payload if isinstance(payload, dict) else {}
+    explicit = str(result.get("overall_status") or result.get("status") or "").strip().upper()
+    if explicit in {"SUCCESS", "FAILED", "PARTIAL"}:
+        return explicit
     total = _to_int(result.get("total"), 0)
     success = _to_int(result.get("success"), 0)
     failed = _to_int(result.get("failed"), 0)
+    if total <= 0 and "ok" in result:
+        return "SUCCESS" if _to_bool(result.get("ok"), False) else "FAILED"
     if total > 0 and success > 0 and failed > 0:
         return "PARTIAL"
     if total > 0 and success > 0 and failed == 0:
@@ -614,8 +620,8 @@ def _result_rows_status(payload: Any) -> str:
 
 def _result_rows_counts(rows: Any, *, fallback_total: int = 0) -> dict[str, int]:
     valid_rows = [row for row in (rows or []) if isinstance(row, dict)]
-    success = sum(1 for row in valid_rows if row.get("ok"))
-    failed = sum(1 for row in valid_rows if not row.get("ok"))
+    success = sum(1 for row in valid_rows if _to_bool(row.get("ok"), False))
+    failed = sum(1 for row in valid_rows if not _to_bool(row.get("ok"), False))
     completed = len(valid_rows)
     total = max(int(fallback_total or 0), completed)
     return {
@@ -623,6 +629,40 @@ def _result_rows_counts(rows: Any, *, fallback_total: int = 0) -> dict[str, int]
         "completed": completed,
         "success": success,
         "failed": failed,
+    }
+
+
+def _execution_target_counts(conn, execution_id: int, *, fallback_total: int = 0) -> dict[str, int]:
+    row = conn.execute(
+        text(
+            """
+            SELECT
+                COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN latest.ok THEN 1 ELSE 0 END), 0) AS success,
+                COALESCE(SUM(CASE WHEN latest.ok THEN 0 ELSE 1 END), 0) AS failed
+            FROM (
+                SELECT DISTINCT ON (
+                    COALESCE(NULLIF(agent_id, ''), target_ip, id::text)
+                )
+                    COALESCE(ok, false) AS ok
+                FROM execution_targets
+                WHERE execution_id = :execution_id
+                ORDER BY COALESCE(NULLIF(agent_id, ''), target_ip, id::text), id DESC
+            ) AS latest
+            """
+        ),
+        {"execution_id": int(execution_id)},
+    ).mappings().first()
+    total = _to_int((row or {}).get("total"), 0)
+    success = _to_int((row or {}).get("success"), 0)
+    failed = _to_int((row or {}).get("failed"), 0)
+    completed = max(0, success + failed)
+    total = max(total, completed, int(fallback_total or 0))
+    return {
+        "total": max(0, total),
+        "completed": max(0, completed),
+        "success": max(0, success),
+        "failed": max(0, failed),
     }
 
 
@@ -1006,7 +1046,14 @@ def _run_global_shell_async_job(
         current_upper = str(current_status or "").strip().upper()
         if current_upper in {"KILLED", "CANCELLED"}:
             execution_status = current_upper
-        counts = _result_rows_counts(target_rows, fallback_total=len(selected_ids))
+        if incremental_rows_persisted:
+            counts = _execution_target_counts(
+                db,
+                int(execution_id),
+                fallback_total=len(selected_ids),
+            )
+        else:
+            counts = _result_rows_counts(target_rows, fallback_total=len(selected_ids))
         db.execute(
             text(
                 """

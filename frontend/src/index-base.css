@@ -1817,6 +1817,26 @@ button.kpi-card:hover {
   max-height: calc(100vh - 320px);
 }
 
+.page-route-actions .actions-targeting-card {
+  max-height: min(34vh, 320px);
+  overflow: auto;
+}
+
+.page-route-actions .actions-selection-strip.compact {
+  max-height: 72px;
+  overflow: auto;
+}
+
+.page-route-actions .actions-catalog-card {
+  min-height: min(66vh, 800px);
+  overflow: hidden;
+}
+
+.page-route-actions .actions-catalog-card .actions-catalog-scroll {
+  min-height: min(44vh, 500px);
+  max-height: none;
+}
+
 .actions-main-pane {
   display: flex;
   flex-direction: column;

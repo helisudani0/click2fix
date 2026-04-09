@@ -82,18 +82,31 @@ const severityBucket = (level) => {
   return "low";
 };
 
+const toIsoUtcString = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toISOString();
+};
+
 export default function Alerts() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryParam = searchParams.get("query") || "";
+  const startParam = searchParams.get("start") || "";
+  const endParam = searchParams.get("end") || "";
 
   const [query, setQuery] = useState(queryParam);
+  const [startTime, setStartTime] = useState(startParam);
+  const [endTime, setEndTime] = useState(endParam);
   const [agentFilter, setAgentFilter] = useState("");
   const [agentOnly, setAgentOnly] = useState(true);
   const [severityFilter, setSeverityFilter] = useState("all");
 
   const [agents, setAgents] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [totalAlerts, setTotalAlerts] = useState(0);
   const [selectedId, setSelectedId] = useState("");
   const [detailMode, setDetailMode] = useState(false);
   const [queuePage, setQueuePage] = useState(1);
@@ -105,9 +118,26 @@ export default function Alerts() {
 
   const loadAlerts = (q, options = {}, { silent = false } = {}) => {
     if (!silent) setLoading(true);
-    getAlerts(q, undefined, options)
+    const opts = options && typeof options === "object" ? options : {};
+    const start = String(opts.start || "").trim();
+    const end = String(opts.end || "").trim();
+    const deepSearch = Boolean(String(q || "").trim() || start || end);
+    const resolvedLimit = Number.isFinite(Number(opts.limit)) && Number(opts.limit) > 0
+      ? Number(opts.limit)
+      : deepSearch
+        ? 20000
+        : 1000;
+    getAlerts(q, resolvedLimit, { ...opts, includeTotal: true })
       .then((alertsRes) => {
-        const items = normalizeAlerts(alertsRes.data).sort(byNewestAlert);
+        const payload = alertsRes?.data;
+        const itemsRaw = Array.isArray(payload)
+          ? payload
+          : Array.isArray(payload?.items)
+            ? payload.items
+            : [];
+        const totalValue = Number(payload?.total);
+        setTotalAlerts(Number.isFinite(totalValue) && totalValue >= 0 ? totalValue : itemsRaw.length);
+        const items = normalizeAlerts(itemsRaw).sort(byNewestAlert);
         setAlerts(items);
         setSelectedId((current) => {
           if (!items.length) return "";
@@ -118,6 +148,7 @@ export default function Alerts() {
       })
       .catch((err) => {
         setAlerts([]);
+        setTotalAlerts(0);
         setSelectedId("");
         setError(err.response?.data?.detail || err.message || "Failed to load alerts");
       })
@@ -144,11 +175,15 @@ export default function Alerts() {
 
   useEffect(() => {
     setQuery(queryParam);
+    setStartTime(startParam);
+    setEndTime(endParam);
     loadAlerts(queryParam, {
       agentId: agentFilter || undefined,
       agentOnly,
+      start: toIsoUtcString(startParam) || undefined,
+      end: toIsoUtcString(endParam) || undefined,
     });
-  }, [queryParam, agentFilter, agentOnly]);
+  }, [queryParam, startParam, endParam, agentFilter, agentOnly]);
 
   const triageSummary = useMemo(() => {
     const bucket = { critical: 0, high: 0, medium: 0, low: 0, unknown: 0 };
@@ -202,7 +237,17 @@ export default function Alerts() {
           <p className="muted">Investigate detections, pivot context, and hand off response actions.</p>
         </div>
         <div className="page-actions">
-          <button className="btn secondary" onClick={() => loadAlerts(query, { agentId: agentFilter || undefined, agentOnly, force: true })}>
+          <button
+            className="btn secondary"
+            onClick={() =>
+              loadAlerts(query, {
+                agentId: agentFilter || undefined,
+                agentOnly,
+                start: toIsoUtcString(startTime) || undefined,
+                end: toIsoUtcString(endTime) || undefined,
+                force: true,
+              })}
+          >
             Refresh Feed
           </button>
           <button className="btn secondary" onClick={() => navigate("/approvals")}>
@@ -216,8 +261,8 @@ export default function Alerts() {
       <div className="ticketing-kpi-grid">
         <div className="ticketing-kpi">
           <div className="ticketing-kpi-label">Total Alerts</div>
-          <div className="ticketing-kpi-value">{alerts.length}</div>
-          <div className="ticketing-kpi-meta">Current filtered queue</div>
+          <div className="ticketing-kpi-value">{totalAlerts}</div>
+          <div className="ticketing-kpi-meta">Total matches for current search scope</div>
         </div>
         <div className="ticketing-kpi">
           <div className="ticketing-kpi-label">Critical</div>
@@ -358,6 +403,20 @@ export default function Alerts() {
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search by alert ID, rule, agent, IOC, or IP..."
             />
+            <input
+              className="input"
+              type="datetime-local"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
+              title="Start time"
+            />
+            <input
+              className="input"
+              type="datetime-local"
+              value={endTime}
+              onChange={(e) => setEndTime(e.target.value)}
+              title="End time"
+            />
             <select className="input" value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
               <option value="">All agents</option>
               {agents.map((agent) => (
@@ -375,13 +434,24 @@ export default function Alerts() {
               />
               Agent Alerts Only
             </label>
-            <button className="btn secondary" onClick={() => setSearchParams(query ? { query } : {})}>
+            <button
+              className="btn secondary"
+              onClick={() => {
+                const next = {};
+                if (query.trim()) next.query = query.trim();
+                if (startTime) next.start = startTime;
+                if (endTime) next.end = endTime;
+                setSearchParams(next);
+              }}
+            >
               Apply Search
             </button>
             <button
               className="btn secondary"
               onClick={() => {
                 setQuery("");
+                setStartTime("");
+                setEndTime("");
                 setSearchParams({});
               }}
             >

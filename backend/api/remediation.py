@@ -58,6 +58,16 @@ def _to_text(value):
         return str(value)
 
 
+def _to_bool(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    if value is None:
+        return default
+    return bool(value)
+
+
 def _store_execution_targets(conn, execution_id: int, rows) -> None:
     if not execution_id or not rows:
         return
@@ -80,7 +90,7 @@ def _store_execution_targets(conn, execution_id: int, rows) -> None:
                 "agent_name": str(row.get("agent_name") or ""),
                 "target_ip": str(row.get("target_ip") or row.get("ip") or ""),
                 "platform": str(row.get("platform") or ""),
-                "ok": bool(row.get("ok")),
+                "ok": _to_bool(row.get("ok"), False),
                 "status_code": int(row.get("status_code") or 0),
                 "stdout": _to_text(row.get("stdout")),
                 "stderr": _to_text(row.get("stderr")),
@@ -90,9 +100,14 @@ def _store_execution_targets(conn, execution_id: int, rows) -> None:
 
 def _result_execution_status(payload) -> str:
     result = payload if isinstance(payload, dict) else {}
+    explicit = str(result.get("overall_status") or result.get("status") or "").strip().upper()
+    if explicit in {"SUCCESS", "FAILED", "PARTIAL"}:
+        return explicit
     total = int(result.get("total") or 0)
     success = int(result.get("success") or 0)
     failed = int(result.get("failed") or 0)
+    if total <= 0 and "ok" in result:
+        return "SUCCESS" if _to_bool(result.get("ok"), False) else "FAILED"
     if total > 0 and success > 0 and failed > 0:
         return "PARTIAL"
     if total > 0 and success > 0 and failed == 0:
@@ -107,8 +122,8 @@ def _skip_post_action_verification(action_id: str) -> bool:
 
 def _result_counts(rows, *, fallback_total: int = 0) -> dict:
     valid_rows = [row for row in (rows or []) if isinstance(row, dict)]
-    success = sum(1 for row in valid_rows if row.get("ok"))
-    failed = sum(1 for row in valid_rows if not row.get("ok"))
+    success = sum(1 for row in valid_rows if _to_bool(row.get("ok"), False))
+    failed = sum(1 for row in valid_rows if not _to_bool(row.get("ok"), False))
     completed = len(valid_rows)
     total = max(int(fallback_total or 0), completed)
     return {

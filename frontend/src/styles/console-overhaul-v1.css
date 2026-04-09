@@ -2608,32 +2608,55 @@ body.console-redesign-v4 .page-route-actions .actions-workspace {
 }
 
 body.console-redesign-v4 .page-route-actions .actions-sidebar-pane {
-  position: relative;
-  top: 0;
-  max-height: none;
-  overflow: visible;
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 136px);
+  overflow: hidden;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
+  gap: 10px;
 }
 
 body.console-redesign-v4 .page-route-actions .actions-targeting-card {
-  padding-bottom: 12px;
+  max-height: min(30vh, 280px);
+  overflow: auto;
+  padding: 12px;
+  gap: 8px;
+}
+
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .card-header {
+  margin-bottom: 6px;
+  padding-bottom: 8px;
+}
+
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-field-block {
+  gap: 4px;
 }
 
 body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-selection-strip {
-  max-height: 112px;
+  max-height: 72px;
   overflow: auto;
+  gap: 6px;
+}
+
+body.console-redesign-v4 .page-route-actions .actions-targeting-card .actions-selection-strip.compact .chip {
+  max-width: 100%;
+  font-size: 0.72rem;
+  padding: 4px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 body.console-redesign-v4 .page-route-actions .actions-catalog-card {
-  min-height: min(64vh, 760px);
+  min-height: min(68vh, 820px);
+  overflow: hidden;
 }
 
 body.console-redesign-v4 .page-route-actions .actions-catalog-card .actions-catalog-scroll {
   flex: 1;
-  min-height: min(40vh, 420px);
-  max-height: min(58vh, 680px);
+  min-height: min(46vh, 520px);
+  max-height: none;
   overflow: auto;
 }
 
@@ -2648,6 +2671,17 @@ body.console-redesign-v4 .page-route-actions .actions-run-footer .btn {
 @media (max-width: 1100px) {
   body.console-redesign-v4 .page-route-actions .actions-workspace {
     grid-template-columns: 1fr;
+  }
+
+  body.console-redesign-v4 .page-route-actions .actions-sidebar-pane {
+    position: relative;
+    top: 0;
+    max-height: none;
+    overflow: visible;
+  }
+
+  body.console-redesign-v4 .page-route-actions .actions-targeting-card {
+    max-height: none;
   }
 
   body.console-redesign-v4 .page-route-actions .actions-main-pane {

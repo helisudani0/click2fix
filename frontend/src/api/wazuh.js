@@ -20,6 +20,7 @@ const buildApiUrl = (path, params = {}) => {
 };
 
 let openApiPathsPromise = null;
+let tenantV2SupportPromise = null;
 
 const loadOpenApiPaths = async () => {
   if (!openApiPathsPromise) {
@@ -44,12 +45,33 @@ const loadOpenApiPaths = async () => {
 
 const hasOpenApiPath = async (path) => {
   const paths = await loadOpenApiPaths();
-  if (!paths || typeof paths !== "object") return null;
+  if (!paths || typeof paths !== "object") return false;
   return Object.prototype.hasOwnProperty.call(paths, String(path || ""));
 };
 
-export const hasTenantGovernanceV2Support = async () =>
-  hasOpenApiPath("/api/v2/tenants");
+const readTenantGovernanceCapability = async () => {
+  try {
+    const response = await api.get("/system/version");
+    const caps = response?.data?.capabilities;
+    if (caps && Object.prototype.hasOwnProperty.call(caps, "tenant_governance_v2")) {
+      return Boolean(caps.tenant_governance_v2);
+    }
+  } catch {
+    // Fall through to OpenAPI capability detection.
+  }
+  return null;
+};
+
+export const hasTenantGovernanceV2Support = async () => {
+  if (!tenantV2SupportPromise) {
+    tenantV2SupportPromise = (async () => {
+      const declared = await readTenantGovernanceCapability();
+      if (declared !== null) return declared;
+      return hasOpenApiPath("/api/v2/tenants");
+    })().catch(() => false);
+  }
+  return tenantV2SupportPromise;
+};
 
 const unwrapV2 = (response) => {
   const payload = response?.data;
@@ -189,6 +211,7 @@ export const getAlerts = (query, limit, options = {}) => {
   if (typeof opts.agentOnly === "boolean") params.agent_only = opts.agentOnly;
   if (opts.start) params.start = opts.start;
   if (opts.end) params.end = opts.end;
+  if (opts.includeTotal) params.include_total = true;
 
   const key = stableParamsKey(params);
   const cached = alertsCache.get(key);

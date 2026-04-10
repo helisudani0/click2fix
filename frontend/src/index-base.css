@@ -1804,7 +1804,7 @@ button.kpi-card:hover {
 }
 
 .page-route-actions {
-  --actions-split-card-height: min(70vh, 860px);
+  --actions-split-card-height: clamp(620px, 82vh, 1120px);
 }
 
 .actions-catalog-pane,
@@ -1877,7 +1877,7 @@ button.kpi-card:hover {
 }
 
 .page-route-actions .actions-catalog-card .actions-catalog-scroll {
-  min-height: 220px;
+  min-height: clamp(320px, 58vh, 860px);
 }
 
 .actions-main-pane {

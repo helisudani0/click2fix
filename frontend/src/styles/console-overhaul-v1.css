@@ -3089,7 +3089,7 @@ body.console-redesign-v4 .page-route-actions .actions-selection-strip.compact {
 }
 
 body.console-redesign-v4 .page-route-actions {
-  --actions-split-card-height: min(70vh, 860px);
+  --actions-split-card-height: clamp(620px, 82vh, 1120px);
 }
 
 body.console-redesign-v4 .page-route-actions .actions-workspace {
@@ -3100,10 +3100,10 @@ body.console-redesign-v4 .page-route-actions .actions-workspace {
 
 body.console-redesign-v4 .page-route-actions .actions-catalog-pane {
   min-width: 0;
-  position: sticky;
-  top: 12px;
+  position: relative;
+  top: 0;
   align-self: start;
-  max-height: calc(100vh - 138px);
+  max-height: none;
 }
 
 body.console-redesign-v4 .page-route-actions .actions-catalog-card {
@@ -3134,7 +3134,7 @@ body.console-redesign-v4 .page-route-actions .actions-plan-scroll {
 }
 
 body.console-redesign-v4 .page-route-actions .actions-catalog-card .actions-catalog-scroll {
-  min-height: 220px;
+  min-height: clamp(320px, 58vh, 860px);
 }
 
 body.console-redesign-v4 .page-route-actions .actions-main-pane {

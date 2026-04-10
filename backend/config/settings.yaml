@@ -761,8 +761,12 @@ endpoint_connectors:
     verify_tls: false
     username: ""
     username_env: "C2F_WINRM_USERNAME"
+    username_template: ""
+    username_template_env: "C2F_WINRM_USERNAME_TEMPLATE"
     password: ""
     password_env: "C2F_WINRM_PASSWORD"
+    domain: ""
+    domain_env: "C2F_WINRM_DOMAIN"
     agent_credentials:
       "001":
         username: ""

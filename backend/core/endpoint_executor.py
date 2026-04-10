@@ -190,9 +190,17 @@ class EndpointExecutor:
                 _cfg("endpoint_connectors.windows.username", ""),
                 _cfg("endpoint_connectors.windows.username_env", "C2F_WINRM_USERNAME"),
             ),
+            "username_template": _read_secret(
+                _cfg("endpoint_connectors.windows.username_template", ""),
+                _cfg("endpoint_connectors.windows.username_template_env", "C2F_WINRM_USERNAME_TEMPLATE"),
+            ),
             "password": _read_secret(
                 _cfg("endpoint_connectors.windows.password", ""),
                 _cfg("endpoint_connectors.windows.password_env", "C2F_WINRM_PASSWORD"),
+            ),
+            "domain": _read_secret(
+                _cfg("endpoint_connectors.windows.domain", ""),
+                _cfg("endpoint_connectors.windows.domain_env", "C2F_WINRM_DOMAIN"),
             ),
         }
         raw_windows_agent_credentials = _cfg("endpoint_connectors.windows.agent_credentials", {})
@@ -244,6 +252,7 @@ class EndpointExecutor:
             ).union(self._discover_env_windows_agent_ids())
         )
         global_ready = bool(self.windows_cfg["username"] and self.windows_cfg["password"])
+        template_ready = bool(self.windows_cfg.get("username_template") and self.windows_cfg.get("password"))
         return {
             "windows": {
                 "enabled": self.windows_cfg["enabled"],
@@ -251,8 +260,10 @@ class EndpointExecutor:
                 "use_https": self.windows_cfg["use_https"],
                 "port": self.windows_cfg["port"],
                 "verify_tls": self.windows_cfg["verify_tls"],
-                "credentials_configured": global_ready or bool(per_agent_ready),
+                "credentials_configured": global_ready or template_ready or bool(per_agent_ready),
                 "global_credentials_configured": global_ready,
+                "template_credentials_configured": template_ready,
+                "username_template_configured": bool(self.windows_cfg.get("username_template")),
                 "per_agent_credentials_configured": per_agent_ready,
             },
             "linux": {
@@ -5515,28 +5526,127 @@ catch {
             )
 
     def _windows_credentials_for_agent(self, agent_id: Optional[str]) -> Dict[str, str]:
+        return self._windows_credentials_for_agent_target(agent_id=agent_id, target=None)
+
+    @staticmethod
+    def _sanitize_username_token(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        compact = re.sub(r"\s+", "", text)
+        return re.sub(r"[^A-Za-z0-9._$\-@]", "", compact)
+
+    def _windows_username_context(
+        self,
+        *,
+        agent_id: Optional[str],
+        target: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
         norm = self._normalize_agent_id(agent_id or "")
+        raw = target.get("raw") if isinstance(target, dict) and isinstance(target.get("raw"), dict) else {}
+        agent_name = ""
+        if isinstance(target, dict):
+            agent_name = str(target.get("agent_name") or "").strip()
+        if not agent_name:
+            agent_name = str(raw.get("name") or raw.get("hostname") or "").strip()
+        if not agent_name:
+            agent_name = norm
+
+        short_host = agent_name.split(".", 1)[0].strip()
+        domain = str(self.windows_cfg.get("domain") or "").strip()
+        if not domain and "." in agent_name:
+            domain = agent_name.split(".", 1)[1].strip()
+
+        return {
+            "agent_id": norm,
+            "agent_name": agent_name,
+            "agent_name_lower": agent_name.lower(),
+            "agent_name_upper": agent_name.upper(),
+            "hostname": agent_name,
+            "hostname_lower": agent_name.lower(),
+            "hostname_upper": agent_name.upper(),
+            "short_hostname": short_host,
+            "short_hostname_lower": short_host.lower(),
+            "short_hostname_upper": short_host.upper(),
+            "domain": domain,
+            "domain_lower": domain.lower(),
+            "domain_upper": domain.upper(),
+            "agent_token": self._sanitize_username_token(agent_name),
+            "short_token": self._sanitize_username_token(short_host),
+            "agent_id_token": self._sanitize_username_token(norm),
+        }
+
+    def _render_windows_username_template(
+        self,
+        *,
+        template: str,
+        context: Dict[str, str],
+    ) -> str:
+        raw_template = str(template or "").strip()
+        if not raw_template:
+            return ""
+
+        def _replace(match: re.Match[str]) -> str:
+            key = str(match.group(1) or "").strip().lower()
+            if not key:
+                return ""
+            return str(context.get(key, ""))
+
+        rendered = re.sub(r"\{([A-Za-z0-9_]+)\}", _replace, raw_template).strip()
+        return rendered
+
+    def _windows_credentials_for_agent_target(
+        self,
+        *,
+        agent_id: Optional[str],
+        target: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        norm = self._normalize_agent_id(agent_id or "")
+        global_password = str(self.windows_cfg.get("password") or "").strip()
         if norm:
             env_username = _resolve_env(f"C2F_WINRM_USERNAME_{norm}")
             env_password = _resolve_env(f"C2F_WINRM_PASSWORD_{norm}")
-            if env_username and env_password:
-                return {"username": env_username, "password": env_password}
+            if env_username and (env_password or global_password):
+                return {"username": env_username, "password": env_password or global_password}
             per_agent = self.windows_agent_credentials.get(norm) or {}
-            if per_agent.get("username") and per_agent.get("password"):
+            per_agent_username = str(per_agent.get("username") or "").strip()
+            per_agent_password = str(per_agent.get("password") or "").strip()
+            if per_agent_username and (per_agent_password or global_password):
                 return {
-                    "username": per_agent.get("username", ""),
-                    "password": per_agent.get("password", ""),
+                    "username": per_agent_username,
+                    "password": per_agent_password or global_password,
+                }
+        global_username = str(self.windows_cfg.get("username") or "").strip()
+        if global_username and global_password:
+            return {
+                "username": global_username,
+                "password": global_password,
+            }
+        username_template = str(self.windows_cfg.get("username_template") or "").strip()
+        if username_template and global_password:
+            context = self._windows_username_context(agent_id=agent_id, target=target)
+            templated_username = self._render_windows_username_template(
+                template=username_template,
+                context=context,
+            )
+            if templated_username:
+                return {
+                    "username": templated_username,
+                    "password": global_password,
                 }
         return {
-            "username": self.windows_cfg.get("username", ""),
-            "password": self.windows_cfg.get("password", ""),
+            "username": global_username,
+            "password": global_password,
         }
 
     def has_windows_credentials(self, agent_id: Optional[str] = None) -> bool:
         if agent_id:
-            creds = self._windows_credentials_for_agent(agent_id)
+            cached_target = self._target_cache.get(self._normalize_agent_id(agent_id))
+            creds = self._windows_credentials_for_agent_target(agent_id=agent_id, target=cached_target)
             return bool(creds.get("username") and creds.get("password"))
         if self.windows_cfg.get("username") and self.windows_cfg.get("password"):
+            return True
+        if self.windows_cfg.get("username_template") and self.windows_cfg.get("password"):
             return True
         if self._discover_env_windows_agent_ids():
             return True
@@ -5559,7 +5669,7 @@ catch {
                 continue
             username = _resolve_env(key)
             password = _resolve_env(f"C2F_WINRM_PASSWORD_{suffix}")
-            if username and password:
+            if username and (password or self.windows_cfg.get("password")):
                 found.append(norm)
         return sorted(set(found))
 
@@ -6345,6 +6455,68 @@ catch {
         )
         return not any(marker in blob for marker in hard_error_markers)
 
+    @staticmethod
+    def _is_idempotent_nonfatal_failure(action_id: str, stdout: str, stderr: str) -> bool:
+        action = str(action_id or "").strip().lower()
+        out = str(stdout or "")
+        err = str(stderr or "")
+        blob = f"{out}\n{err}".lower()
+        hard_error_markers = (
+            "parsererror",
+            "expectedvalueexpression",
+            "unexpected token",
+            "must provide a value expression following",
+            "cannot find the path specified",
+            "cannot find the file specified",
+            "not recognized as the name",
+            "requires command argument",
+            "verification failed",
+            "timed out",
+            "outofmemoryexception",
+            "winrm connection failed",
+            "failed to upload custom command payload",
+            "service cannot be stopped",
+            "service cannot be started",
+            "the user name could not be found",
+        )
+        if any(marker in blob for marker in hard_error_markers):
+            return False
+
+        if action in {"kill-process", "terminate-process", "process-kill"} and "not running " in blob:
+            return True
+
+        if action in {"firewall-drop", "route-null", "win-route-null", "netsh"} and (
+            "blocked " in blob or "unblocked " in blob or "null-route " in blob
+        ):
+            return True
+
+        if action in {"disable-account", "disable-guest", "account-disable"} and "disabled guest" in blob:
+            return True
+
+        if action == "service-restart" and "waiting for service" in blob and "status=failed" not in blob:
+            return True
+
+        if action == "service-restart" and (
+            "service restarted " in blob or "restarted wazuhsvc" in blob
+        ) and "status=failed" not in blob:
+            return True
+
+        if action == "rollback-kb" and "rollback kb" in blob and "triggered" in blob:
+            return True
+
+        if action == "custom-os-command" and (
+            "not running " in blob
+            or "blocked " in blob
+            or "unblocked " in blob
+            or "disabled guest" in blob
+            or "service restarted " in blob
+            or "restarted wazuhsvc" in blob
+            or ("rollback kb" in blob and "triggered" in blob)
+        ):
+            return True
+
+        return False
+
     def _reconcile_semantic_success_result(
         self,
         *,
@@ -6362,6 +6534,18 @@ catch {
         action = str(action_id or "").strip().lower()
         if code == 0:
             return code, out_text, err_text
+        if self._is_idempotent_nonfatal_failure(action, out_text, err_text):
+            marker = (
+                "C2F_LOG reconciliation=semantic_success_override "
+                + "action="
+                + action
+                + " prior_status="
+                + str(code)
+                + " reason=idempotent_nonfatal"
+            )
+            if marker not in out_text:
+                out_text = (out_text + ("\n" if out_text else "") + marker).strip()
+            return 0, out_text, ""
         if action == "custom-os-command":
             embedded = self._extract_custom_command_embedded_output(err_text)
             if embedded and self._is_benign_custom_command_clixml_failure(err_text, embedded):
@@ -6377,6 +6561,22 @@ catch {
                     + action
                     + " prior_status="
                     + str(code)
+                    + " reason=benign_clixml"
+                )
+                if marker not in merged_stdout:
+                    merged_stdout = (merged_stdout + ("\n" if merged_stdout else "") + marker).strip()
+                return 0, merged_stdout, ""
+            if embedded and self._is_idempotent_nonfatal_failure(action, embedded, err_text):
+                merged_stdout = out_text.strip()
+                if embedded not in merged_stdout:
+                    merged_stdout = (merged_stdout + ("\n" if merged_stdout else "") + embedded).strip()
+                marker = (
+                    "C2F_LOG reconciliation=semantic_success_override "
+                    + "action="
+                    + action
+                    + " prior_status="
+                    + str(code)
+                    + " reason=idempotent_nonfatal_embedded"
                 )
                 if marker not in merged_stdout:
                     merged_stdout = (merged_stdout + ("\n" if merged_stdout else "") + marker).strip()
@@ -7558,7 +7758,7 @@ catch {
             raise HTTPException(status_code=400, detail="Windows endpoint connector is disabled")
         agent_id = str(target.get("agent_id") or "")
         ip = str(target.get("ip") or "")
-        creds = self._windows_credentials_for_agent(agent_id)
+        creds = self._windows_credentials_for_agent_target(agent_id=agent_id, target=target)
         username = creds.get("username", "")
         password = creds.get("password", "")
         if not username or not password:

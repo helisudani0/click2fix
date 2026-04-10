@@ -3088,10 +3088,14 @@ body.console-redesign-v4 .page-route-actions .actions-selection-strip.compact {
   overflow: visible;
 }
 
+body.console-redesign-v4 .page-route-actions {
+  --actions-split-card-height: min(70vh, 860px);
+}
+
 body.console-redesign-v4 .page-route-actions .actions-workspace {
   grid-template-columns: minmax(330px, 0.95fr) minmax(0, 1.05fr);
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
 }
 
 body.console-redesign-v4 .page-route-actions .actions-catalog-pane {
@@ -3105,15 +3109,28 @@ body.console-redesign-v4 .page-route-actions .actions-catalog-pane {
 body.console-redesign-v4 .page-route-actions .actions-catalog-card {
   display: flex;
   flex-direction: column;
-  min-height: min(70vh, 860px);
+  height: var(--actions-split-card-height);
+  min-height: var(--actions-split-card-height);
+  max-height: var(--actions-split-card-height);
   overflow: hidden;
 }
 
-body.console-redesign-v4 .page-route-actions .actions-catalog-card .actions-catalog-scroll {
+body.console-redesign-v4 .page-route-actions .actions-plan-card {
+  display: flex;
+  flex-direction: column;
+  height: var(--actions-split-card-height);
+  min-height: var(--actions-split-card-height);
+  max-height: var(--actions-split-card-height);
+  overflow: hidden;
+}
+
+body.console-redesign-v4 .page-route-actions .actions-catalog-card .actions-catalog-scroll,
+body.console-redesign-v4 .page-route-actions .actions-plan-scroll {
   flex: 1;
-  min-height: min(50vh, 560px);
+  min-height: 0;
   max-height: none;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 body.console-redesign-v4 .page-route-actions .actions-main-pane {
@@ -3129,6 +3146,13 @@ body.console-redesign-v4 .page-route-actions .actions-main-pane {
   body.console-redesign-v4 .page-route-actions .actions-catalog-pane {
     position: relative;
     top: 0;
+    max-height: none;
+  }
+
+  body.console-redesign-v4 .page-route-actions .actions-catalog-card,
+  body.console-redesign-v4 .page-route-actions .actions-plan-card {
+    height: auto;
+    min-height: 0;
     max-height: none;
   }
 }

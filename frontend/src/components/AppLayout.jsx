@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import api, { clearLegacyToken, decodeLegacyTokenPayload, getLegacyToken } from "../api/client";
 import { alertSocket } from "../api/socket";
 import { getExecutionHealth } from "../api/wazuh";
+import { preloadRouteByPath } from "../routes/lazyRoutes";
 import { APP_TIMEZONE_LABEL } from "../utils/time";
 import { resolveDisplayVersion, UI_APP_VERSION } from "../utils/appVersion";
 
@@ -438,12 +439,17 @@ export default function AppLayout() {
   const submitSearch = (event) => {
     event.preventDefault();
     const term = search.trim();
+    void preloadRouteByPath("/alerts");
     if (!term) {
       navigate("/alerts", { replace: false });
       return;
     }
     navigate(`/alerts?query=${encodeURIComponent(term)}`);
   };
+
+  const warmRoute = useCallback((path) => {
+    void preloadRouteByPath(path);
+  }, []);
 
   const openOpsConsole = () => {
     if (typeof window === "undefined") return;
@@ -552,6 +558,10 @@ export default function AppLayout() {
                     key={item.to}
                     to={item.to}
                     className={({ isActive }) => `shell-quick-link${isActive ? " active" : ""}`}
+                    onMouseEnter={() => warmRoute(item.to)}
+                    onFocus={() => warmRoute(item.to)}
+                    onPointerDown={() => warmRoute(item.to)}
+                    onTouchStart={() => warmRoute(item.to)}
                   >
                     <span className="shell-nav-icon">{shortLabel(item.label)}</span>
                     <span className="shell-quick-text">{item.label}</span>
@@ -578,6 +588,10 @@ export default function AppLayout() {
                       end={Boolean(link.end)}
                       className={({ isActive }) => `shell-nav-link${isActive ? " active" : ""}`}
                       data-label={link.label}
+                      onMouseEnter={() => warmRoute(link.to)}
+                      onFocus={() => warmRoute(link.to)}
+                      onPointerDown={() => warmRoute(link.to)}
+                      onTouchStart={() => warmRoute(link.to)}
                     >
                       <span className="shell-nav-icon">{shortLabel(link.label)}</span>
                       <span className="shell-nav-text">{link.label}</span>
@@ -737,6 +751,10 @@ export default function AppLayout() {
                     to={item.to}
                     className={({ isActive }) => `workspace-shortcut-card${isActive ? " active" : ""}`}
                     onClick={() => setPriorityPanelOpen(false)}
+                    onMouseEnter={() => warmRoute(item.to)}
+                    onFocus={() => warmRoute(item.to)}
+                    onPointerDown={() => warmRoute(item.to)}
+                    onTouchStart={() => warmRoute(item.to)}
                   >
                     <span className="workspace-shortcut-kicker">{shortLabel(item.label)}</span>
                     <span className="workspace-shortcut-title">{item.label}</span>
@@ -789,6 +807,10 @@ export default function AppLayout() {
                         to={link.to}
                         className={({ isActive }) => `workspace-ops-link${isActive ? " active" : ""}`}
                         onClick={() => setOpsPanelOpen(false)}
+                        onMouseEnter={() => warmRoute(link.to)}
+                        onFocus={() => warmRoute(link.to)}
+                        onPointerDown={() => warmRoute(link.to)}
+                        onTouchStart={() => warmRoute(link.to)}
                       >
                         {link.label}
                       </NavLink>

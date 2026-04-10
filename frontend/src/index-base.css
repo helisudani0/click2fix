@@ -1799,22 +1799,28 @@ button.kpi-card:hover {
   display: grid;
   grid-template-columns: minmax(320px, 0.95fr) minmax(0, 1.05fr);
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
   min-width: 0;
+}
+
+.page-route-actions {
+  --actions-split-card-height: min(70vh, 860px);
 }
 
 .actions-catalog-pane,
 .actions-main-pane {
   min-width: 0;
+  align-self: stretch;
 }
 
 .actions-catalog-pane {
-  align-self: start;
+  align-self: stretch;
 }
 
 .actions-catalog-scroll {
-  min-height: min(58vh, 640px);
-  max-height: calc(100vh - 290px);
+  min-height: 0;
+  max-height: none;
+  overflow: auto;
 }
 
 .page-route-actions .actions-targeting-card {
@@ -1844,13 +1850,30 @@ button.kpi-card:hover {
 }
 
 .page-route-actions .actions-catalog-card {
-  min-height: min(68vh, 820px);
+  display: flex;
+  flex-direction: column;
+  height: var(--actions-split-card-height);
+  min-height: var(--actions-split-card-height);
+  max-height: var(--actions-split-card-height);
   overflow: hidden;
 }
 
-.page-route-actions .actions-catalog-card .actions-catalog-scroll {
-  min-height: min(48vh, 520px);
+.page-route-actions .actions-plan-card {
+  display: flex;
+  flex-direction: column;
+  height: var(--actions-split-card-height);
+  min-height: var(--actions-split-card-height);
+  max-height: var(--actions-split-card-height);
+  overflow: hidden;
+}
+
+.page-route-actions .actions-catalog-card .actions-catalog-scroll,
+.page-route-actions .actions-plan-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
   max-height: none;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .actions-main-pane {
@@ -3983,6 +4006,13 @@ svg {
   }
 
   .actions-catalog-scroll {
+    max-height: none;
+  }
+
+  .page-route-actions .actions-catalog-card,
+  .page-route-actions .actions-plan-card {
+    height: auto;
+    min-height: 0;
     max-height: none;
   }
 

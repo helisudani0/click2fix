@@ -717,7 +717,7 @@ export default function Actions() {
 
         <div className="actions-main-pane">
           <div className="actions-console-grid">
-            <div ref={executionPlanRef} className="card">
+            <div ref={executionPlanRef} className="card actions-plan-card">
               <div className="card-header">
                 <div>
                   <h3>Execution Plan</h3>
@@ -725,54 +725,56 @@ export default function Actions() {
                 </div>
               </div>
 
-              {selectedAction ? (
-                <>
-                  <div className="actions-detail-grid">
-                    <div className="list-item readable">
-                      <div className="mission-label">Action</div>
-                      <div className="actions-row-name">{actionLabel(selectedAction)}</div>
-                      <div className="meta-line">{toDisplay(selectedAction?.description, "No description provided.")}</div>
+              <div className="actions-plan-scroll">
+                {selectedAction ? (
+                  <>
+                    <div className="actions-detail-grid">
+                      <div className="list-item readable">
+                        <div className="mission-label">Action</div>
+                        <div className="actions-row-name">{actionLabel(selectedAction)}</div>
+                        <div className="meta-line">{toDisplay(selectedAction?.description, "No description provided.")}</div>
+                      </div>
+                      <div className="list-item readable">
+                        <div className="mission-label">Category</div>
+                        <div className="actions-row-name">{actionCategory(selectedAction)}</div>
+                        <div className="meta-line">Action ID: {String(selectedAction?.id || "-")}</div>
+                      </div>
+                      <div className="list-item readable">
+                        <div className="mission-label">Targets</div>
+                        <div className="actions-row-name">{resolvedTargetIds.length}</div>
+                        <div className="meta-line">{resolvedTargetIds.length ? `${resolvedTargetIds.length} agents queued for dispatch.` : "Select target agents before dispatch."}</div>
+                      </div>
                     </div>
-                    <div className="list-item readable">
-                      <div className="mission-label">Category</div>
-                      <div className="actions-row-name">{actionCategory(selectedAction)}</div>
-                      <div className="meta-line">Action ID: {String(selectedAction?.id || "-")}</div>
-                    </div>
-                    <div className="list-item readable">
-                      <div className="mission-label">Targets</div>
-                      <div className="actions-row-name">{resolvedTargetIds.length}</div>
-                      <div className="meta-line">{resolvedTargetIds.length ? `${resolvedTargetIds.length} agents queued for dispatch.` : "Select target agents before dispatch."}</div>
-                    </div>
-                  </div>
 
-                  <div className="actions-field-grid">
-                    {actionInputsList.map((field) => {
-                      const name = String(field.name || "").trim();
-                      const multiline = Boolean(field.multiline) || MULTILINE_INPUT_FIELDS.has(name.toLowerCase());
-                      const value = String(actionInputs?.[name] ?? "");
-                      return (
-                        <div key={name} className="actions-field-block">
-                          <label className="actions-field-label">{inputLabel(field)}{field.required ? " *" : ""}</label>
-                          {multiline ? (
-                            <textarea className="input" placeholder={inputPlaceholder(field)} value={value} onChange={(event) => handleActionInputChange(name, event.target.value)} disabled={isActionRunning} />
-                          ) : (
-                            <input className="input" type="text" placeholder={inputPlaceholder(field)} value={value} onChange={(event) => handleActionInputChange(name, event.target.value)} disabled={isActionRunning} />
-                          )}
-                          {inputPlaceholder(field) ? <div className="meta-line">{inputPlaceholder(field)}</div> : null}
-                        </div>
-                      );
-                    })}
-                  </div>
+                    <div className="actions-field-grid">
+                      {actionInputsList.map((field) => {
+                        const name = String(field.name || "").trim();
+                        const multiline = Boolean(field.multiline) || MULTILINE_INPUT_FIELDS.has(name.toLowerCase());
+                        const value = String(actionInputs?.[name] ?? "");
+                        return (
+                          <div key={name} className="actions-field-block">
+                            <label className="actions-field-label">{inputLabel(field)}{field.required ? " *" : ""}</label>
+                            {multiline ? (
+                              <textarea className="input" placeholder={inputPlaceholder(field)} value={value} onChange={(event) => handleActionInputChange(name, event.target.value)} disabled={isActionRunning} />
+                            ) : (
+                              <input className="input" type="text" placeholder={inputPlaceholder(field)} value={value} onChange={(event) => handleActionInputChange(name, event.target.value)} disabled={isActionRunning} />
+                            )}
+                            {inputPlaceholder(field) ? <div className="meta-line">{inputPlaceholder(field)}</div> : null}
+                          </div>
+                        );
+                      })}
+                    </div>
 
-                  <div className="actions-field-block">
-                    <label className="actions-field-label">Justification</label>
-                    <textarea className="input" placeholder="State why this action is being executed." value={justification} onChange={(event) => setJustification(event.target.value)} disabled={isActionRunning} />
-                    <div className="meta-line">Optional. If left blank, a default justification is attached automatically.</div>
-                  </div>
-                </>
-              ) : (
-                <div className="empty-state">No action selected. Pick an action from the catalog to build the execution plan.</div>
-              )}
+                    <div className="actions-field-block">
+                      <label className="actions-field-label">Justification</label>
+                      <textarea className="input" placeholder="State why this action is being executed." value={justification} onChange={(event) => setJustification(event.target.value)} disabled={isActionRunning} />
+                      <div className="meta-line">Optional. If left blank, a default justification is attached automatically.</div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="empty-state">No action selected. Pick an action from the catalog to build the execution plan.</div>
+                )}
+              </div>
             </div>
           </div>
 

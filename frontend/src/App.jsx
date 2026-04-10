@@ -1,36 +1,72 @@
-import { lazy, Suspense, useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { Routes, Route } from "react-router-dom";
 import AppLayout from "./components/AppLayout";
 import RequireAuth from "./components/RequireAuth";
+import {
+  Actions,
+  AgentSca,
+  Agents,
+  Alerts,
+  Analytics,
+  Approvals,
+  Audit,
+  Cases,
+  Changes,
+  Dashboard,
+  Executions,
+  GlobalShell,
+  Governance,
+  Incidents,
+  Login,
+  OrgAdmin,
+  Playbooks,
+  Scheduler,
+  ScaFleet,
+  Vulnerabilities,
+  preloadRoutesInBackground,
+} from "./routes/lazyRoutes";
 import "./index-base.css";
 import "./styles/console-overhaul-v1.css";
-
-const Dashboard = lazy(() => import("./components/Dashboard"));
-const Agents = lazy(() => import("./pages/Agents"));
-const AgentSca = lazy(() => import("./pages/AgentSca"));
-const Actions = lazy(() => import("./pages/Actions"));
-const Alerts = lazy(() => import("./pages/Alerts"));
-const ScaFleet = lazy(() => import("./pages/ScaFleet"));
-const Vulnerabilities = lazy(() => import("./pages/Vulnerabilities"));
-const Playbooks = lazy(() => import("./pages/Playbooks"));
-const Approvals = lazy(() => import("./pages/Approvals"));
-const Executions = lazy(() => import("./pages/Executions"));
-const Cases = lazy(() => import("./pages/Cases"));
-const Incidents = lazy(() => import("./pages/Incidents"));
-const Governance = lazy(() => import("./pages/Governance"));
-const Scheduler = lazy(() => import("./pages/Scheduler"));
-const OrgAdmin = lazy(() => import("./pages/OrgAdmin"));
-const Analytics = lazy(() => import("./pages/Analytics"));
-const Audit = lazy(() => import("./pages/Audit"));
-const Changes = lazy(() => import("./pages/Changes"));
-const GlobalShell = lazy(() => import("./pages/GlobalShell"));
-const Login = lazy(() => import("./pages/Login"));
 
 export default function App() {
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
     document.body.classList.add("console-redesign-v4");
     return () => document.body.classList.remove("console-redesign-v4");
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const connection = navigator?.connection;
+    const saveData = Boolean(connection?.saveData);
+    const slowConnection =
+      typeof connection?.effectiveType === "string" &&
+      /(^|-)2g$/i.test(connection.effectiveType.trim());
+    if (saveData || slowConnection) return undefined;
+
+    let cancelled = false;
+    let idleId = null;
+    let timerId = null;
+    const startWarmup = () => {
+      if (cancelled) return;
+      void preloadRoutesInBackground();
+    };
+
+    if (typeof window.requestIdleCallback === "function") {
+      idleId = window.requestIdleCallback(startWarmup, { timeout: 1800 });
+    } else {
+      timerId = window.setTimeout(startWarmup, 1000);
+    }
+
+    return () => {
+      cancelled = true;
+      if (idleId !== null && typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timerId !== null) {
+        window.clearTimeout(timerId);
+      }
+    };
   }, []);
 
   return (

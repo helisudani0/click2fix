@@ -3133,6 +3133,10 @@ body.console-redesign-v4 .page-route-actions .actions-plan-scroll {
   overscroll-behavior: contain;
 }
 
+body.console-redesign-v4 .page-route-actions .actions-catalog-card .actions-catalog-scroll {
+  min-height: 220px;
+}
+
 body.console-redesign-v4 .page-route-actions .actions-main-pane {
   min-width: 0;
   padding-left: 0;

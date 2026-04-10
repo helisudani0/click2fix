@@ -191,6 +191,7 @@ export default function Actions() {
   const [connectorError, setConnectorError] = useState("");
   const [connectorLoaded, setConnectorLoaded] = useState(false);
   const [isActionRunning, setIsActionRunning] = useState(false);
+  const [actionCatalogError, setActionCatalogError] = useState("");
 
   const selectedAction = useMemo(
     () => actions.find((action) => String(action?.id || "") === String(actionId)) || null,
@@ -307,8 +308,9 @@ export default function Actions() {
     try {
       const response = await getActions();
       setActions(Array.isArray(response?.data) ? response.data : []);
-    } catch {
-      setActions([]);
+      setActionCatalogError("");
+    } catch (error) {
+      setActionCatalogError(formatApiError(error, "Action catalog unavailable."));
     }
   }, []);
 
@@ -680,6 +682,7 @@ export default function Actions() {
               </div>
             ) : null}
             <div className="meta-line">Select an action to populate the execution plan.</div>
+            {actionCatalogError ? <div className="actions-inline-status failed">{actionCatalogError}</div> : null}
             <div className="actions-catalog-scroll">
               {filteredActions.length ? (
                 <div className="actions-catalog-list">
@@ -708,8 +711,10 @@ export default function Actions() {
                     );
                   })}
                 </div>
-              ) : (
+              ) : actions.length ? (
                 <div className="empty-state">No actions match the current filters.</div>
+              ) : (
+                <div className="empty-state">No actions loaded. Click Refresh Catalog.</div>
               )}
             </div>
           </div>

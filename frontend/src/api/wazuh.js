@@ -65,6 +65,21 @@ const unwrapV2Items = (response) => {
   };
 };
 
+const normalizeListResponseData = (payload, keys = ["data", "items", "affected_items", "actions", "commands"]) => {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") return [];
+  for (const key of keys) {
+    const value = payload?.[key];
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object") {
+      for (const nestedKey of keys) {
+        if (Array.isArray(value?.[nestedKey])) return value[nestedKey];
+      }
+    }
+  }
+  return [];
+};
+
 const agentCacheKey = (group, options = {}) => {
   const compact = options.compact !== false ? "compact" : "full";
   const status = String(options.status || "").trim().toLowerCase();
@@ -211,7 +226,11 @@ export const getAlerts = (query, limit, options = {}) => {
 
   return writePromiseCache(alertsCache, key, request, cached);
 };
-export const getActions = () => api.get("/actions");
+export const getActions = () =>
+  api.get("/actions").then((response) => ({
+    ...response,
+    data: normalizeListResponseData(response?.data),
+  }));
 export const getActionConnectorStatus = () => api.get("/actions/connector-status");
 export const testActionPath = (payload) => api.post("/actions/test", payload);
 export const validateAction = (payload) => api.post("/actions/validate", payload);

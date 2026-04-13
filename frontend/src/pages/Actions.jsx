@@ -503,136 +503,136 @@ export default function Actions() {
         </div>
       </div>
 
-      <div className="card actions-targeting-card">
-        <div className="card-header">
-          <div>
-            <h3>Target Selection</h3>
-            <p className="muted">Scope targets quickly before dispatch.</p>
-          </div>
-          <span className="chip">{resolvedTargetIds.length} selected</span>
-        </div>
-
-        <div className="actions-field-block">
-          <label className="actions-field-label">Target Scope</label>
-          <select
-            className="input"
-            value={targetMode}
-            onChange={(event) => setTargetMode(event.target.value)}
-          >
-            <option value="fleet">Fleet (all connected agents)</option>
-            <option value="multi">Multiple agents</option>
-            <option value="agent">Single agent</option>
-            <option value="group">Specific group</option>
-          </select>
-        </div>
-
-        {targetMode === "multi" ? (
-          <div className="actions-field-block">
-            <label className="actions-field-label">Pick Agents</label>
-            <div className="actions-targeting-controls">
-              <select
-                className="input"
-                value={multiPickAgentId}
-                onChange={(event) => setMultiPickAgentId(formatAgentId(event.target.value))}
-              >
-                <option value="">Select connected agent</option>
-                {connectedAgents.map((agent) => (
-                  <option key={`multi-target-${agent.id}`} value={agent.id}>
-                    {agent.id} - {agent.hostname}{agent.groupText ? ` (${agent.groupText})` : ""}
-                  </option>
-                ))}
-              </select>
-              <div className="actions-targeting-actions">
-                <button
-                  type="button"
-                  className="btn secondary"
-                  onClick={() => {
-                    if (!multiPickAgentId) return;
-                    setTargetAgentIds((current) => {
-                      const ids = new Set(current.map((id) => formatAgentId(id)).filter(Boolean));
-                      ids.add(multiPickAgentId);
-                      return Array.from(ids);
-                    });
-                  }}
-                  disabled={!multiPickAgentId}
-                >
-                  Add
-                </button>
-                <button
-                  type="button"
-                  className="btn secondary"
-                  onClick={() => setTargetAgentIds(connectedAgents.map((agent) => agent.id))}
-                  disabled={!connectedAgents.length}
-                >
-                  All
-                </button>
-                <button
-                  type="button"
-                  className="btn secondary"
-                  onClick={() => setTargetAgentIds([])}
-                  disabled={!targetAgentIds.length}
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        {targetMode === "agent" ? (
-          <div className="actions-field-block">
-            <label className="actions-field-label">Single Agent</label>
-            <select className="input" value={singleTargetId} onChange={(event) => setSingleTargetId(event.target.value)}>
-              <option value="">Select agent</option>
-              {connectedAgents.map((agent) => (
-                <option key={`single-target-${agent.id}`} value={agent.id}>
-                  {agent.id} - {agent.hostname}{agent.groupText ? ` (${agent.groupText})` : ""}
-                </option>
-              ))}
-            </select>
-          </div>
-        ) : null}
-
-        {targetMode === "group" ? (
-          <div className="actions-field-block">
-            <label className="actions-field-label">Target Group</label>
-            <select className="input" value={groupTarget} onChange={(event) => setGroupTarget(event.target.value)}>
-              <option value="">Select group</option>
-              {availableGroups.map((group) => (
-                <option key={`group-target-${group}`} value={group}>{group}</option>
-              ))}
-            </select>
-          </div>
-        ) : null}
-
-        {targetMode === "multi" ? (
-          <div className="actions-selection-strip compact">
-            {selectedMultiAgentPreview.length ? selectedMultiAgentPreview.map((agent) => (
-              <span key={`selected-multi-${agent.id}`} className="chip">
-                <MaskedAgentId value={agent.id} />
-                <span>{agent.hostname}</span>
-                <button type="button" className="panel-collapse-btn" onClick={() => handleToggleAgent(agent.id)} aria-label={`Remove ${agent.hostname}`}>
-                  x
-                </button>
-              </span>
-            )) : <div className="meta-line">No agents selected yet.</div>}
-            {selectedMultiAgentOverflow > 0 ? (
-              <span className="chip">+{selectedMultiAgentOverflow} more</span>
-            ) : null}
-          </div>
-        ) : (
-          <div className="meta-line">{TARGET_MODE_LABELS[targetMode]} resolves to {resolvedTargetIds.length} target(s).</div>
-        )}
-
-        <div className="meta-line">
-          {scopedTargets.length
-            ? `${scopedTargets.length} target(s) ready for dispatch.`
-            : "No agents match the current target scope."}
-        </div>
-      </div>
-
       <div className="actions-workspace">
         <div className="actions-catalog-pane" data-tour-id="action-catalog">
+          <div className="card actions-targeting-card">
+            <div className="card-header">
+              <div>
+                <h3>Target Selection</h3>
+                <p className="muted">Scope targets quickly before dispatch.</p>
+              </div>
+              <span className="chip">{resolvedTargetIds.length} selected</span>
+            </div>
+
+            <div className="actions-field-block">
+              <label className="actions-field-label">Target Scope</label>
+              <select
+                className="input"
+                value={targetMode}
+                onChange={(event) => setTargetMode(event.target.value)}
+              >
+                <option value="fleet">Fleet (all connected agents)</option>
+                <option value="multi">Multiple agents</option>
+                <option value="agent">Single agent</option>
+                <option value="group">Specific group</option>
+              </select>
+            </div>
+
+            {targetMode === "multi" ? (
+              <div className="actions-field-block">
+                <label className="actions-field-label">Pick Agents</label>
+                <div className="actions-targeting-controls">
+                  <select
+                    className="input"
+                    value={multiPickAgentId}
+                    onChange={(event) => setMultiPickAgentId(formatAgentId(event.target.value))}
+                  >
+                    <option value="">Select connected agent</option>
+                    {connectedAgents.map((agent) => (
+                      <option key={`multi-target-${agent.id}`} value={agent.id}>
+                        {agent.id} - {agent.hostname}{agent.groupText ? ` (${agent.groupText})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="actions-targeting-actions">
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      onClick={() => {
+                        if (!multiPickAgentId) return;
+                        setTargetAgentIds((current) => {
+                          const ids = new Set(current.map((id) => formatAgentId(id)).filter(Boolean));
+                          ids.add(multiPickAgentId);
+                          return Array.from(ids);
+                        });
+                      }}
+                      disabled={!multiPickAgentId}
+                    >
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      onClick={() => setTargetAgentIds(connectedAgents.map((agent) => agent.id))}
+                      disabled={!connectedAgents.length}
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      onClick={() => setTargetAgentIds([])}
+                      disabled={!targetAgentIds.length}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {targetMode === "agent" ? (
+              <div className="actions-field-block">
+                <label className="actions-field-label">Single Agent</label>
+                <select className="input" value={singleTargetId} onChange={(event) => setSingleTargetId(event.target.value)}>
+                  <option value="">Select agent</option>
+                  {connectedAgents.map((agent) => (
+                    <option key={`single-target-${agent.id}`} value={agent.id}>
+                      {agent.id} - {agent.hostname}{agent.groupText ? ` (${agent.groupText})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+
+            {targetMode === "group" ? (
+              <div className="actions-field-block">
+                <label className="actions-field-label">Target Group</label>
+                <select className="input" value={groupTarget} onChange={(event) => setGroupTarget(event.target.value)}>
+                  <option value="">Select group</option>
+                  {availableGroups.map((group) => (
+                    <option key={`group-target-${group}`} value={group}>{group}</option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+
+            {targetMode === "multi" ? (
+              <div className="actions-selection-strip compact">
+                {selectedMultiAgentPreview.length ? selectedMultiAgentPreview.map((agent) => (
+                  <span key={`selected-multi-${agent.id}`} className="chip">
+                    <MaskedAgentId value={agent.id} />
+                    <span>{agent.hostname}</span>
+                    <button type="button" className="panel-collapse-btn" onClick={() => handleToggleAgent(agent.id)} aria-label={`Remove ${agent.hostname}`}>
+                      x
+                    </button>
+                  </span>
+                )) : <div className="meta-line">No agents selected yet.</div>}
+                {selectedMultiAgentOverflow > 0 ? (
+                  <span className="chip">+{selectedMultiAgentOverflow} more</span>
+                ) : null}
+              </div>
+            ) : (
+              <div className="meta-line">{TARGET_MODE_LABELS[targetMode]} resolves to {resolvedTargetIds.length} target(s).</div>
+            )}
+
+            <div className="meta-line">
+              {scopedTargets.length
+                ? `${scopedTargets.length} target(s) ready for dispatch.`
+                : "No agents match the current target scope."}
+            </div>
+          </div>
+
           <div className="card actions-catalog-card">
             <div className="card-header">
               <div>
@@ -732,7 +732,7 @@ export default function Actions() {
         </div>
 
         <div className="actions-main-pane">
-          <div className="actions-console-grid">
+          <div className="actions-plan-guardrails">
             <div ref={executionPlanRef} className="card actions-plan-card">
               <div className="card-header">
                 <div>
@@ -792,10 +792,7 @@ export default function Actions() {
                 )}
               </div>
             </div>
-          </div>
-
-          <div className="actions-docs-grid">
-            <div className="card">
+            <div className="card actions-guardrails-card">
               <div className="card-header">
                 <div>
                   <h3>Command Guardrails</h3>

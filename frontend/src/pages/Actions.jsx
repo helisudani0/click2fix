@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ExecutionStream from "../components/ExecutionStream";
 import { getActions, getAgents, getActionConnectorStatus, runAction } from "../api/wazuh";
 import { formatApiError } from "../utils/httpErrors";
+import "../styles/actions-pro.css";
 
 const MULTILINE_INPUT_FIELDS = new Set(["command", "custom_command", "script"]);
 const MULTI_TARGET_PREVIEW_LIMIT = 6;
@@ -303,6 +304,15 @@ export default function Actions() {
   const actionStatusTone = statusToneFromText(actionStatus);
   const missingRequiredInput = actionInputsList.some((field) => field.required && !String(actionInputs?.[field.name] ?? "").trim());
   const canExecute = Boolean(selectedAction) && resolvedTargetIds.length > 0 && !missingRequiredInput && !isActionRunning;
+  const readiness = useMemo(() => {
+    if (isActionRunning) return "Running";
+    if (!selectedAction) return "Select action";
+    if (!resolvedTargetIds.length) return "Select targets";
+    if (missingRequiredInput) return "Missing inputs";
+    return "Ready";
+  }, [isActionRunning, selectedAction, resolvedTargetIds.length, missingRequiredInput]);
+  const readinessTone =
+    readiness === "Ready" ? "success" : readiness === "Running" ? "pending" : "failed";
 
   const loadActions = useCallback(async () => {
     try {
@@ -447,7 +457,7 @@ export default function Actions() {
   }, [selectedAction, resolvedTargetIds, missingRequiredInput, isActionRunning, actionId, actionInputs, effectiveJustification]);
 
   return (
-    <div className="page actions-page page-route-actions">
+    <div className="page actions-page page-route-actions actions-pro">
       <div className="page-header">
         <div>
           <h2>Actions Workspace</h2>
@@ -477,7 +487,7 @@ export default function Actions() {
           <div className="mission-label">Target Scope</div>
           <div className="mission-value">{resolvedTargetIds.length}</div>
           <div className="mission-meta">
-            {TARGET_MODE_LABELS[targetMode]}{selectedAgents.length === 1 ? " • 1 agent selected" : ` • ${selectedAgents.length} agents selected`}
+            {TARGET_MODE_LABELS[targetMode]}{selectedAgents.length === 1 ? " - 1 agent selected" : ` - ${selectedAgents.length} agents selected`}
           </div>
         </div>
         <div className="mission-card">
@@ -486,9 +496,10 @@ export default function Actions() {
           <div className="mission-meta">{agents.length} agents loaded from inventory</div>
         </div>
         <div className="mission-card">
-          <div className="mission-label">Execution Feed</div>
-          <div className="mission-value">{activeExecutionId ? `#${activeExecutionId}` : "-"}</div>
-          <div className="mission-meta">{activeExecutionId ? "Live output stream attached" : "No active action stream"}</div>
+          <div className="mission-label">Execution Readiness</div>
+          <div className="mission-value">{readiness}</div>
+          <div className="mission-meta">{activeExecutionId ? `Streaming execution #${activeExecutionId}` : "Plan status for next dispatch"}</div>
+          <span className={`status-pill ${readinessTone}`}>{readiness}</span>
         </div>
       </div>
 

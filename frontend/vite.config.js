@@ -33,6 +33,7 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: proxyTarget,
           ws: true,
+          rewriteWsOrigin: true,
           changeOrigin: true
         },
         '/ops': {
@@ -54,6 +55,7 @@ export default defineConfig(({ mode }) => {
         '/ws': {
           target: proxyTarget,
           ws: true,
+          rewriteWsOrigin: true,
           changeOrigin: true
         }
       }

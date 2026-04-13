@@ -1,8 +1,7 @@
 import asyncio
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from core.origin_policy import configured_cors_origins, normalize_origin
+from core.origin_policy import configured_cors_origins, normalize_origin, origin_matches_request_hosts
 from core.ws_bus import subscribe, unsubscribe
 from core.security import COOKIE_NAME, decode_token
 
@@ -36,13 +35,7 @@ def _validate_ws_origin(ws: WebSocket) -> None:
     allowed = _allowed_origins()
     if "*" in allowed:
         raise HTTPException(status_code=403, detail="Wildcard WS origin is not allowed")
-    try:
-        parsed_origin = urlsplit(origin)
-        origin_host = str(parsed_origin.hostname or "").strip().lower()
-    except Exception:
-        origin_host = ""
-    request_host = str((ws.headers.get("host") or "").split(":", 1)[0]).strip().lower()
-    if origin_host and request_host and origin_host == request_host:
+    if origin_matches_request_hosts(origin, ws.headers):
         return
     if origin not in allowed:
         raise HTTPException(status_code=403, detail="WebSocket origin not allowed")

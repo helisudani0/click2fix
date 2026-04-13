@@ -11,6 +11,19 @@
   --actions-accent-soft: rgba(89, 169, 255, 0.2);
 }
 
+.actions-pro.actions-page {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.actions-pro,
+.actions-pro *,
+.actions-pro *::before,
+.actions-pro *::after {
+  box-sizing: border-box;
+}
+
 .actions-pro .page-header {
   display: flex;
   align-items: flex-start;
@@ -97,6 +110,8 @@
   gap: 10px;
   margin-bottom: 14px;
   padding: 12px;
+  max-height: 220px;
+  overflow: auto;
 }
 
 .actions-pro .actions-targeting-card .actions-field-block {
@@ -148,9 +163,16 @@
 
 .actions-pro .actions-workspace {
   display: grid !important;
-  grid-template-columns: minmax(640px, 1.3fr) minmax(560px, 1fr) !important;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr) !important;
   gap: var(--actions-gap) !important;
   align-items: start !important;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.actions-pro .actions-workspace > * {
+  min-width: 0;
 }
 
 .actions-pro .actions-catalog-pane {
@@ -164,6 +186,7 @@
   height: auto;
   min-height: 0;
   max-height: none;
+  overflow-x: hidden;
 }
 
 .actions-pro.page-route-actions .actions-main-pane {
@@ -171,32 +194,39 @@
   display: grid;
   gap: var(--actions-gap);
   padding-left: 0 !important;
+  grid-auto-rows: min-content;
+  overflow-x: hidden;
+  align-content: start;
 }
 
 /* Plan + guardrails are stacked for full-width readability */
 
 .actions-pro .actions-catalog-card {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto auto 1fr;
   flex: 1 1 auto;
   min-height: 0 !important;
   height: auto !important;
   max-height: none !important;
   overflow: hidden;
+  min-width: 0;
 }
 
 .actions-pro .actions-plan-card,
 .actions-pro .actions-guardrails-card {
   display: flex;
   flex-direction: column;
-  min-height: 280px;
+  height: auto !important;
+  min-height: 0 !important;
   max-height: none !important;
   overflow: hidden;
+  min-width: 0;
+  align-content: start;
 }
 
 .actions-pro .actions-catalog-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(150px, 190px) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 220px) auto;
   gap: 8px;
   align-items: center;
   margin-bottom: 0;
@@ -210,6 +240,7 @@
 .actions-pro .actions-field-grid textarea.input,
 .actions-pro .actions-field-block textarea.input {
   min-height: 38px;
+  min-width: 0;
 }
 
 .actions-pro .actions-field-block textarea.input {
@@ -258,18 +289,38 @@
   overscroll-behavior: contain;
   padding-right: 3px;
   padding-bottom: 6px;
-  max-height: 520px;
+  max-height: none;
 }
 
 .actions-pro .actions-catalog-card .actions-catalog-scroll {
   flex: 1 1 auto;
-  min-height: 420px;
-  height: clamp(420px, 56vh, 740px);
+  min-height: 320px;
+  height: min(62vh, 680px);
   overflow: auto !important;
   overscroll-behavior: contain;
   padding-right: 3px;
   padding-bottom: 6px;
-  max-height: 740px;
+  max-height: min(62vh, 680px);
+}
+
+.actions-pro .actions-catalog-item-meta code,
+.actions-pro .actions-catalog-item-title,
+.actions-pro .actions-catalog-item-desc {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.actions-pro .actions-catalog-item-head {
+  flex-wrap: wrap;
+}
+
+.actions-pro .code-block,
+.actions-pro pre,
+.actions-pro .ticketing-detail-section pre {
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: hidden;
 }
 
 .actions-pro .actions-guardrails-card .actions-help-list {

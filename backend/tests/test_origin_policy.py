@@ -50,3 +50,26 @@ def test_websocket_allowed_origins_follow_env(monkeypatch):
         "http://192.168.1.237:5173",
         "http://localhost:5173",
     }
+
+
+def test_origin_matches_request_hosts_supports_forwarded_proxy_chain():
+    headers = {
+        "origin": "http://10.22.33.44:5173",
+        "host": "backend:8000",
+        "x-forwarded-host": "10.22.33.44:5173, c2f-lb:8000",
+    }
+
+    assert origin_policy.origin_matches_request_hosts("http://10.22.33.44:5173", headers) is True
+
+
+def test_websocket_origin_validation_allows_forwarded_host_match(monkeypatch):
+    monkeypatch.setenv("C2F_CORS_ORIGINS", "http://localhost:5173")
+    headers = {
+        "origin": "http://10.22.33.44:5173",
+        "host": "backend:8000",
+        "x-forwarded-host": "10.22.33.44:5173",
+    }
+    fake_ws = type("FakeWs", (), {"headers": headers})()
+
+    ws._validate_ws_origin(fake_ws)
+    ws_exec._validate_ws_origin(fake_ws)

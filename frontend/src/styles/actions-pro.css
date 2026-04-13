@@ -171,11 +171,10 @@
   display: grid !important;
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr) !important;
   gap: var(--actions-gap) !important;
-  align-items: stretch !important;
+  align-items: start !important;
   width: 100%;
   max-width: 100%;
   overflow-x: hidden;
-  min-height: var(--actions-column-height);
 }
 
 .actions-pro .actions-workspace > * {
@@ -184,16 +183,16 @@
 
 .actions-pro .actions-catalog-pane {
   min-width: 0;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto auto;
   gap: 12px;
   position: relative;
   top: 0;
   align-self: stretch;
-  height: var(--actions-column-height);
-  min-height: var(--actions-column-height);
-  max-height: var(--actions-column-height);
-  overflow-x: hidden;
+  height: auto;
+  min-height: 0;
+  max-height: none;
+  overflow: visible;
 }
 
 .actions-pro.page-route-actions .actions-main-pane {
@@ -202,9 +201,11 @@
   flex-direction: column;
   gap: var(--actions-gap);
   padding-left: 0 !important;
-  overflow-x: hidden;
+  overflow: visible;
   align-content: start;
+  height: auto;
   min-height: 0;
+  max-height: none;
 }
 
 /* Plan + guardrails are stacked for full-width readability */
@@ -212,11 +213,11 @@
   display: flex;
   flex-direction: column;
   gap: var(--actions-gap);
-  height: var(--actions-column-height);
-  min-height: var(--actions-column-height);
-  max-height: var(--actions-column-height);
+  height: auto;
+  min-height: 0;
+  max-height: none;
   min-width: 0;
-  overflow-x: hidden;
+  overflow: visible;
 }
 
 .actions-pro .actions-catalog-card {
@@ -226,7 +227,7 @@
   min-height: 0 !important;
   height: auto !important;
   max-height: none !important;
-  overflow: hidden;
+  overflow: visible;
   min-width: 0;
   overflow-x: hidden;
 }
@@ -238,10 +239,26 @@
   height: auto !important;
   min-height: 0 !important;
   max-height: none !important;
-  overflow: hidden;
+  overflow: visible;
   min-width: 0;
   align-content: start;
   overflow-x: hidden;
+}
+
+.actions-pro.page-route-actions .actions-catalog-card,
+.actions-pro.page-route-actions .actions-plan-card {
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+.actions-pro.page-route-actions .actions-catalog-card .actions-catalog-scroll,
+.actions-pro.page-route-actions .actions-plan-scroll {
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: visible !important;
 }
 
 .actions-pro .actions-plan-card {
@@ -315,7 +332,7 @@
 .actions-pro .actions-plan-scroll {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto !important;
+  overflow: visible !important;
   overscroll-behavior: contain;
   padding-right: 3px;
   padding-bottom: 6px;
@@ -326,7 +343,7 @@
   flex: 1 1 auto;
   min-height: 0;
   height: auto;
-  overflow: auto !important;
+  overflow: visible !important;
   overscroll-behavior: contain;
   padding-right: 3px;
   padding-bottom: 6px;
@@ -547,6 +564,7 @@
     height: auto;
     min-height: 0;
     max-height: none;
+    overflow: visible;
   }
 
   .actions-pro .actions-plan-stack {
@@ -574,6 +592,7 @@
     height: auto;
     min-height: 0;
     max-height: none;
+    overflow: visible;
   }
 }
 

@@ -1,5 +1,5 @@
 .actions-pro {
-  --actions-pane-height: clamp(600px, 76vh, 980px);
+  --actions-pane-height: clamp(560px, 72vh, 920px);
   --actions-gap: 12px;
   --actions-radius: 14px;
   --actions-border: rgba(112, 150, 212, 0.3);
@@ -148,7 +148,7 @@
 
 .actions-pro .actions-workspace {
   display: grid !important;
-  grid-template-columns: minmax(520px, 1.4fr) minmax(0, 2fr) !important;
+  grid-template-columns: minmax(640px, 1.3fr) minmax(560px, 1fr) !important;
   gap: var(--actions-gap) !important;
   align-items: start !important;
 }
@@ -158,12 +158,12 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  position: sticky;
-  top: 10px;
+  position: relative;
+  top: 0;
   align-self: start;
-  height: var(--actions-pane-height);
-  min-height: var(--actions-pane-height);
-  max-height: var(--actions-pane-height);
+  height: auto;
+  min-height: 0;
+  max-height: none;
 }
 
 .actions-pro.page-route-actions .actions-main-pane {
@@ -180,7 +180,7 @@
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0 !important;
-  height: 100% !important;
+  height: auto !important;
   max-height: none !important;
   overflow: hidden;
 }
@@ -189,7 +189,7 @@
 .actions-pro .actions-guardrails-card {
   display: flex;
   flex-direction: column;
-  min-height: clamp(360px, 46vh, 520px);
+  min-height: 280px;
   max-height: none !important;
   overflow: hidden;
 }
@@ -251,7 +251,6 @@
   font-size: 0.8rem;
 }
 
-.actions-pro .actions-catalog-card .actions-catalog-scroll,
 .actions-pro .actions-plan-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -259,8 +258,18 @@
   overscroll-behavior: contain;
   padding-right: 3px;
   padding-bottom: 6px;
-  height: 100%;
-  max-height: none !important;
+  max-height: 520px;
+}
+
+.actions-pro .actions-catalog-card .actions-catalog-scroll {
+  flex: 1 1 auto;
+  min-height: 420px;
+  height: clamp(420px, 56vh, 740px);
+  overflow: auto !important;
+  overscroll-behavior: contain;
+  padding-right: 3px;
+  padding-bottom: 6px;
+  max-height: 740px;
 }
 
 .actions-pro .actions-guardrails-card .actions-help-list {
@@ -438,7 +447,7 @@
   }
 
   .actions-pro {
-    --actions-pane-height: clamp(520px, 72vh, 880px);
+    --actions-pane-height: clamp(500px, 70vh, 860px);
   }
 }
 
@@ -459,8 +468,14 @@
   .actions-pro .actions-plan-card,
   .actions-pro .actions-guardrails-card {
     height: auto !important;
-    min-height: 420px !important;
+    min-height: 380px !important;
     max-height: none !important;
+  }
+
+  .actions-pro .actions-catalog-card .actions-catalog-scroll {
+    height: auto;
+    min-height: 300px;
+    max-height: none;
   }
 }
 

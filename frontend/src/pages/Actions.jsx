@@ -732,16 +732,15 @@ export default function Actions() {
         </div>
 
         <div className="actions-main-pane">
-          <div className="actions-plan-guardrails">
-            <div ref={executionPlanRef} className="card actions-plan-card">
-              <div className="card-header">
-                <div>
-                  <h3>Execution Plan</h3>
-                  <p className="muted">Review the selected action, preserve raw input text, and dispatch once the plan is ready.</p>
-                </div>
+          <div ref={executionPlanRef} className="card actions-plan-card">
+            <div className="card-header">
+              <div>
+                <h3>Execution Plan</h3>
+                <p className="muted">Review the selected action, preserve raw input text, and dispatch once the plan is ready.</p>
               </div>
+            </div>
 
-              <div className="actions-plan-scroll">
+            <div className="actions-plan-scroll">
                 {selectedAction ? (
                   <>
                     <div className="actions-detail-grid">
@@ -791,34 +790,34 @@ export default function Actions() {
                   <div className="empty-state">No action selected. Pick an action from the catalog to build the execution plan.</div>
                 )}
               </div>
+          </div>
+
+          <div className="card actions-guardrails-card">
+            <div className="card-header">
+              <div>
+                <h3>Command Guardrails</h3>
+                <p className="muted">Keep the payload exact and visible before dispatch.</p>
+              </div>
             </div>
-            <div className="card actions-guardrails-card">
-              <div className="card-header">
-                <div>
-                  <h3>Command Guardrails</h3>
-                  <p className="muted">Keep the payload exact and visible before dispatch.</p>
-                </div>
-              </div>
-              <div className="actions-help-list">
-                {actionHints.map((hint, index) => (
-                  <div key={`${index}-${hint}`} className="actions-help-item">{hint}</div>
-                ))}
-              </div>
-              <div className="mission-label">Payload Preview</div>
-              <details className="ticketing-detail-section" open>
-                <summary>View Technical Payload</summary>
-                <pre className="code-block">{payloadPreview || "Select an action to generate the request payload preview."}</pre>
-              </details>
-              <div className="actions-run-footer">
-                {actionStatus ? (
-                  <div className={`actions-inline-status ${actionStatusTone}`}>{actionStatus}</div>
-                ) : (
-                  <div className="meta-line">Review the plan and payload, then dispatch.</div>
-                )}
-                <button type="button" className="btn" onClick={() => void handleExecuteAction()} disabled={!canExecute}>
-                  {isActionRunning ? "Running..." : "Run Command"}
-                </button>
-              </div>
+            <div className="actions-help-list">
+              {actionHints.map((hint, index) => (
+                <div key={`${index}-${hint}`} className="actions-help-item">{hint}</div>
+              ))}
+            </div>
+            <div className="mission-label">Payload Preview</div>
+            <details className="ticketing-detail-section" open>
+              <summary>View Technical Payload</summary>
+              <pre className="code-block">{payloadPreview || "Select an action to generate the request payload preview."}</pre>
+            </details>
+            <div className="actions-run-footer">
+              {actionStatus ? (
+                <div className={`actions-inline-status ${actionStatusTone}`}>{actionStatus}</div>
+              ) : (
+                <div className="meta-line">Review the plan and payload, then dispatch.</div>
+              )}
+              <button type="button" className="btn" onClick={() => void handleExecuteAction()} disabled={!canExecute}>
+                {isActionRunning ? "Running..." : "Run Command"}
+              </button>
             </div>
           </div>
 

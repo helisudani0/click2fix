@@ -1,5 +1,6 @@
 .actions-pro {
   --actions-pane-height: clamp(560px, 72vh, 920px);
+  --actions-column-height: clamp(720px, 78vh, 980px);
   --actions-gap: 12px;
   --actions-radius: 14px;
   --actions-border: rgba(112, 150, 212, 0.3);
@@ -165,7 +166,7 @@
   display: grid !important;
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr) !important;
   gap: var(--actions-gap) !important;
-  align-items: start !important;
+  align-items: stretch !important;
   width: 100%;
   max-width: 100%;
   overflow-x: hidden;
@@ -183,20 +184,23 @@
   position: relative;
   top: 0;
   align-self: start;
-  height: auto;
-  min-height: 0;
-  max-height: none;
+  height: var(--actions-column-height);
+  min-height: var(--actions-column-height);
+  max-height: var(--actions-column-height);
   overflow-x: hidden;
 }
 
 .actions-pro.page-route-actions .actions-main-pane {
   min-width: 0;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: var(--actions-gap);
   padding-left: 0 !important;
-  grid-auto-rows: min-content;
   overflow-x: hidden;
   align-content: start;
+  height: var(--actions-column-height);
+  min-height: var(--actions-column-height);
+  max-height: var(--actions-column-height);
 }
 
 /* Plan + guardrails are stacked for full-width readability */
@@ -222,6 +226,15 @@
   overflow: hidden;
   min-width: 0;
   align-content: start;
+}
+
+.actions-pro .actions-plan-card {
+  flex: 0 0 auto;
+}
+
+.actions-pro .actions-guardrails-card {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .actions-pro .actions-catalog-toolbar {
@@ -301,6 +314,10 @@
   padding-right: 3px;
   padding-bottom: 6px;
   max-height: min(62vh, 680px);
+}
+
+.actions-pro .actions-guardrails-card .actions-run-footer {
+  margin-top: auto;
 }
 
 .actions-pro .actions-catalog-item-meta code,
@@ -512,6 +529,7 @@
     top: 0;
     height: auto;
     min-height: 0;
+    max-height: none;
   }
 
 
@@ -526,6 +544,12 @@
   .actions-pro .actions-catalog-card .actions-catalog-scroll {
     height: auto;
     min-height: 300px;
+    max-height: none;
+  }
+
+  .actions-pro.page-route-actions .actions-main-pane {
+    height: auto;
+    min-height: 0;
     max-height: none;
   }
 }

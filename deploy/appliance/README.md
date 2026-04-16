@@ -65,6 +65,8 @@ Separate install tracks:
   - Pull and apply new image tags on Windows hosts.
 - `upgrade-patch-workbench.sh` / `upgrade-patch-workbench.ps1`
   - Upgrade scripts for the dedicated Patch Workbench stack.
+- `bootstrap-patch-workbench.sh` / `bootstrap-patch-workbench.ps1`
+  - Raw GitHub bootstrap scripts that download only Patch Workbench installer files and min image defaults.
 - `build-local-images.sh` / `build-local-images.ps1`
   - Build local backend/frontend images from this repo.
 - `export-images.sh` / `export-images.ps1`
@@ -183,6 +185,21 @@ VERSION=v1.1.4
 curl -fsSL "https://raw.githubusercontent.com/helisudani0/click2fix/${VERSION}/deploy/appliance/bootstrap-from-github.sh" -o ./bootstrap-from-github.sh
 chmod +x ./bootstrap-from-github.sh
 OWNER=helisudani0 REPO=click2fix VERSION=${VERSION} INSTALL_DIR=/opt/click2fix PULL_IMAGES=true ./bootstrap-from-github.sh
+```
+
+Patch Workbench bootstrap (min release tags):
+
+```powershell
+$version = "min-v1.1.4"
+Invoke-WebRequest "https://raw.githubusercontent.com/helisudani0/click2fix/$version/deploy/appliance/bootstrap-patch-workbench.ps1" -OutFile .\bootstrap-patch-workbench.ps1
+powershell -ExecutionPolicy Bypass -File .\bootstrap-patch-workbench.ps1 -Owner helisudani0 -Repo click2fix -Version $version -InstallDir C:\Click2Fix-PatchWorkbench -PullImages
+```
+
+```bash
+VERSION=min-v1.1.4
+curl -fsSL "https://raw.githubusercontent.com/helisudani0/click2fix/${VERSION}/deploy/appliance/bootstrap-patch-workbench.sh" -o ./bootstrap-patch-workbench.sh
+chmod +x ./bootstrap-patch-workbench.sh
+OWNER=helisudani0 REPO=click2fix VERSION=${VERSION} INSTALL_DIR=/opt/click2fix-patch-workbench PULL_IMAGES=true ./bootstrap-patch-workbench.sh
 ```
 
 No backend/frontend repo workflow is needed on the customer side.
@@ -348,6 +365,7 @@ Note:
 Release workflow file:
 
 - `.github/workflows/release-appliance.yml`
+- `.github/workflows/release-appliance-min.yml`
 - `.github/workflows/publish-ova-asset.yml`
 
 What it does on `v*` tag:
@@ -357,6 +375,13 @@ What it does on `v*` tag:
 3. Builds installer bundle zip
 4. Publishes release assets to GitHub Releases
 5. Optionally publishes a prebuilt `.ova` + `.ova.sha256` (when provided via `workflow_dispatch` `ova_url`)
+
+What `release-appliance-min` does on `min-v*` tag:
+
+1. Builds backend/frontend min images (`-backend-min`, `-frontend-min`)
+2. Pushes min images to GHCR
+3. Builds Patch Workbench installer bundle zip
+4. Publishes min release assets to GitHub Releases
 
 Maintainer release steps:
 

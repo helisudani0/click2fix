@@ -8,8 +8,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-# Import all routers including websocket streams
-from api import actions, agents, alerts, analytics, approvals, audit, auth, cases, changes, dashboard, executions, forensics, governance, incidents, integration, ioc, ops, orgs, playbooks, remediation, scheduler, system, vulnerabilities, ws, ws_exec
+_PATCH_WORKBENCH_MODE = str(os.getenv("C2F_PATCH_WORKBENCH_MODE", "false")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+# Import only the required API modules for the selected runtime surface.
+if _PATCH_WORKBENCH_MODE:
+    from api import actions, agents, auth, executions, ops, system, vulnerabilities, ws_exec
+else:
+    from api import actions, agents, alerts, analytics, approvals, audit, auth, cases, changes, dashboard, executions, forensics, governance, incidents, integration, ioc, ops, orgs, playbooks, remediation, scheduler, system, vulnerabilities, ws, ws_exec
 from core.http_security import (
     CSRFMiddleware,
     InMemoryRateLimitMiddleware,
@@ -102,7 +112,6 @@ _ENABLE_V1_SOAR_DEPRECATION_HEADERS = _parse_bool(os.getenv("C2F_ENABLE_V1_SOAR_
 _V1_SOAR_SUNSET = str(
     os.getenv("C2F_V1_SOAR_SUNSET", "Wed, 30 Sep 2026 00:00:00 GMT")
 ).strip()
-_PATCH_WORKBENCH_MODE = _parse_bool(os.getenv("C2F_PATCH_WORKBENCH_MODE"), False)
 
 _PATCH_WORKBENCH_PUBLIC_GET_PATHS = {
     "/docs",

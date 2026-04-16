@@ -1,0 +1,248 @@
+name: release-appliance-min
+
+on:
+  push:
+    tags:
+      - "min-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version tag (for example min-v1.2.0)"
+        required: true
+        type: string
+      publish_latest:
+        description: "Also update :latest image tags"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  packages: write
+  attestations: write
+  id-token: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            PUBLISH_LATEST="${{ github.event.inputs.publish_latest }}"
+            if [ "${VERSION#min-v}" = "${VERSION}" ]; then
+              if [ "${VERSION#v}" != "${VERSION}" ]; then
+                VERSION="min-${VERSION}"
+              else
+                VERSION="min-v${VERSION}"
+              fi
+            fi
+          else
+            VERSION="${GITHUB_REF_NAME}"
+            PUBLISH_LATEST="true"
+          fi
+          CLEAN="${VERSION#min-v}"
+          if [ "${CLEAN}" = "${VERSION}" ]; then
+            CLEAN="${VERSION#v}"
+          fi
+          OWNER_LC="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          REPO_LC="$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "clean=${CLEAN}" >> "$GITHUB_OUTPUT"
+          echo "publish_latest=${PUBLISH_LATEST}" >> "$GITHUB_OUTPUT"
+          echo "owner_lc=${OWNER_LC}" >> "$GITHUB_OUTPUT"
+          echo "repo_lc=${REPO_LC}" >> "$GITHUB_OUTPUT"
+          echo "backend_image=ghcr.io/${OWNER_LC}/${REPO_LC}-backend-min" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=ghcr.io/${OWNER_LC}/${REPO_LC}-frontend-min" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: image_tags
+        run: |
+          {
+            echo "backend_version=${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}"
+            echo "backend_latest=${{ steps.meta.outputs.backend_image }}:latest"
+            echo "frontend_version=${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}"
+            echo "frontend_latest=${{ steps.meta.outputs.frontend_image }}:latest"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create release output directory
+        shell: bash
+        run: |
+          mkdir -p "deploy/releases/${{ steps.meta.outputs.version }}"
+
+      - name: Build backend min smoke image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/backend-min.Dockerfile
+          load: true
+          tags: click2fix-backend-min-smoke:${{ steps.meta.outputs.clean }}
+
+      - name: Smoke test backend min image imports
+        shell: bash
+        run: |
+          docker run --rm \
+            -e DATABASE_URL="sqlite:////tmp/click2fix-smoke.db" \
+            -e JWT_SECRET="click2fix-smoke-secret-value-0123456789abcdef" \
+            -e WAZUH_URL="https://wazuh.example.invalid" \
+            -e WAZUH_USER="smoke-user" \
+            -e WAZUH_PASSWORD="smoke-password" \
+            -e INDEXER_URL="https://indexer.example.invalid" \
+            -e INDEXER_USER="smoke-user" \
+            -e INDEXER_PASSWORD="smoke-password" \
+            --entrypoint python \
+            click2fix-backend-min-smoke:${{ steps.meta.outputs.clean }} \
+            -c "import importlib; importlib.import_module('main'); print('backend min import smoke passed')"
+
+      - name: Build and push backend min image
+        id: backend_build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/backend-min.Dockerfile
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ steps.image_tags.outputs.backend_version }}
+
+      - name: Attest backend min image provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ steps.meta.outputs.backend_image }}
+          subject-digest: ${{ steps.backend_build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Build and push frontend min image
+        id: frontend_build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/frontend-min.Dockerfile
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ steps.image_tags.outputs.frontend_version }}
+
+      - name: Promote latest image tags
+        if: ${{ steps.meta.outputs.publish_latest == 'true' }}
+        shell: bash
+        run: |
+          docker buildx imagetools create \
+            -t "${{ steps.image_tags.outputs.backend_latest }}" \
+            "${{ steps.image_tags.outputs.backend_version }}"
+          docker buildx imagetools create \
+            -t "${{ steps.image_tags.outputs.frontend_latest }}" \
+            "${{ steps.image_tags.outputs.frontend_version }}"
+
+      - name: Attest frontend min image provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ${{ steps.meta.outputs.frontend_image }}
+          subject-digest: ${{ steps.frontend_build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Generate backend min image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}
+          format: spdx-json
+          output-file: deploy/releases/${{ steps.meta.outputs.version }}/backend-image.spdx.json
+          artifact-name: backend-image-sbom
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate frontend min image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}
+          format: spdx-json
+          output-file: deploy/releases/${{ steps.meta.outputs.version }}/frontend-image.spdx.json
+          artifact-name: frontend-image-sbom
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Build min installer bundle
+        shell: pwsh
+        run: |
+          ./deploy/appliance/release/build-installer-bundle-min.ps1 `
+            -Version "${{ steps.meta.outputs.version }}" `
+            -Owner "${{ steps.meta.outputs.owner_lc }}" `
+            -BackendImage "${{ steps.meta.outputs.backend_image }}" `
+            -FrontendImage "${{ steps.meta.outputs.frontend_image }}" `
+            -ImageTag "${{ steps.meta.outputs.clean }}"
+
+      - name: Attest min installer bundle
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: deploy/releases/${{ steps.meta.outputs.version }}/click2fix-patch-workbench-installer-${{ steps.meta.outputs.version }}.zip
+
+      - name: Build release asset list
+        id: assets
+        shell: bash
+        run: |
+          OUT_DIR="deploy/releases/${{ steps.meta.outputs.version }}"
+          {
+            echo "files<<EOF"
+            echo "${OUT_DIR}/click2fix-patch-workbench-installer-${{ steps.meta.outputs.version }}.zip"
+            echo "${OUT_DIR}/click2fix-patch-workbench-installer-${{ steps.meta.outputs.version }}.sha256"
+            echo "${OUT_DIR}/backend-image.spdx.json"
+            echo "${OUT_DIR}/frontend-image.spdx.json"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release notes
+        id: notes
+        shell: bash
+        run: |
+          NOTES_FILE="deploy/releases/${{ steps.meta.outputs.version }}/RELEASE_NOTES.md"
+          cat > "${NOTES_FILE}" <<EOF
+          Click2Fix Patch Workbench release: ${{ steps.meta.outputs.version }}
+
+          Customer download:
+          - click2fix-patch-workbench-installer-${{ steps.meta.outputs.version }}.zip
+          - click2fix-patch-workbench-installer-${{ steps.meta.outputs.version }}.sha256
+
+          Published images:
+          - ${{ steps.meta.outputs.backend_image }}:${{ steps.meta.outputs.clean }}
+          - ${{ steps.meta.outputs.frontend_image }}:${{ steps.meta.outputs.clean }}
+
+          Supply-chain evidence:
+          - backend-image.spdx.json
+          - frontend-image.spdx.json
+          - GitHub provenance attestations published for backend image, frontend image, and installer bundle
+
+          Quick install:
+          1. Download installer zip from this release.
+          2. Extract on target machine.
+          3. Run install-patch-workbench.ps1 (Windows) or install-patch-workbench.sh (Linux).
+          4. Fill prompted Wazuh/indexer/endpoint credentials.
+          EOF
+          echo "path=${NOTES_FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.version }}
+          name: Click2Fix Patch Workbench ${{ steps.meta.outputs.version }}
+          body_path: ${{ steps.notes.outputs.path }}
+          overwrite_files: true
+          files: ${{ steps.assets.outputs.files }}

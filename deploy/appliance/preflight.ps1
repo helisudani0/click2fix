@@ -29,7 +29,7 @@ function Get-ZoneMarkedFiles {
   return $blocked
 }
 
-$required = @(
+$fullRequired = @(
   "install.ps1",
   "manage.ps1",
   "upgrade.ps1",
@@ -38,6 +38,25 @@ $required = @(
   ".env.appliance.template",
   "setup.cmd"
 )
+
+$patchWorkbenchRequired = @(
+  "install-patch-workbench.ps1",
+  "manage-patch-workbench.ps1",
+  "upgrade-patch-workbench.ps1",
+  "install-patch-workbench.sh",
+  "manage-patch-workbench.sh",
+  "upgrade-patch-workbench.sh",
+  "docker-compose.patch-workbench.yml",
+  "nginx.conf",
+  ".env.patch-workbench.template",
+  "README.md"
+)
+
+$isPatchWorkbenchBundle = (Test-Path (Join-Path $Root "docker-compose.patch-workbench.yml")) -or
+  (Test-Path (Join-Path $Root "install-patch-workbench.ps1")) -or
+  (Test-Path (Join-Path $Root "manage-patch-workbench.ps1"))
+
+$required = if ($isPatchWorkbenchBundle) { $patchWorkbenchRequired } else { $fullRequired }
 
 Unblock-Click2FixBundle -PathRoot $Root
 

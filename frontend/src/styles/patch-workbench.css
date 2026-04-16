@@ -132,10 +132,11 @@ body.patch-min-ui .login-card .empty-state {
   font-size: 1.05rem;
 }
 
-.patch-workbench-scope-card .list-item,
-.patch-workbench-vuln-card,
-.patch-workbench-live-card,
-.patch-workbench-history-card {
+body:not(.patch-min-ui) .patch-workbench-scope-card .list-item,
+body:not(.patch-min-ui) .patch-workbench-vuln-card,
+body:not(.patch-min-ui) .patch-workbench-live-card,
+body:not(.patch-min-ui) .patch-workbench-history-card,
+body:not(.patch-min-ui) .patch-workbench-command-card {
   background: linear-gradient(165deg, rgba(18, 28, 42, 0.96), rgba(11, 20, 33, 0.96));
 }
 
@@ -181,7 +182,7 @@ body.patch-min-ui .login-card .empty-state {
   max-width: 420px;
 }
 
-.patch-workbench-page .table tbody tr.selected {
+body:not(.patch-min-ui) .patch-workbench-page .table tbody tr.selected {
   outline: 1px solid rgba(56, 189, 248, 0.52);
   background: rgba(15, 35, 58, 0.72);
 }
@@ -196,10 +197,27 @@ body.patch-min-ui .patch-workbench-page .card,
 body.patch-min-ui .patch-workbench-page .patch-workbench-scope-card .list-item,
 body.patch-min-ui .patch-workbench-page .patch-workbench-vuln-card,
 body.patch-min-ui .patch-workbench-page .patch-workbench-live-card,
-body.patch-min-ui .patch-workbench-page .patch-workbench-history-card {
+body.patch-min-ui .patch-workbench-page .patch-workbench-history-card,
+body.patch-min-ui .patch-workbench-page .patch-workbench-command-card {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(246, 251, 255, 0.99));
   border-color: rgba(0, 78, 134, 0.16);
   box-shadow: 0 8px 18px rgba(7, 52, 93, 0.08);
+}
+
+body.patch-min-ui .patch-workbench-page .list-item,
+body.patch-min-ui .patch-workbench-page button.list-item {
+  background: #f6fbff;
+  border-color: rgba(0, 78, 134, 0.18);
+  color: #12314f;
+}
+
+body.patch-min-ui .patch-workbench-page .list-item.selected {
+  background: rgba(0, 119, 200, 0.14);
+  border-color: rgba(0, 119, 200, 0.32);
+}
+
+body.patch-min-ui .patch-workbench-page .meta-line {
+  color: #607b96;
 }
 
 body.patch-min-ui .patch-workbench-page .table,

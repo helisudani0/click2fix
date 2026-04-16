@@ -939,68 +939,68 @@ export default function PatchWorkbench() {
               )}
             </div>
           </div>
+        </div>
+      </div>
 
-          <div className="card">
-            <div className="card-header">
-              <div>
-                <h3>3) Command Runner</h3>
-                <p className="muted">Choose shell, enter command, and run against selected scope.</p>
-              </div>
+      <div className="card patch-workbench-command-card">
+        <div className="card-header">
+          <div>
+            <h3>3) Command Runner</h3>
+            <p className="muted">Choose shell, enter command, and run against selected scope.</p>
+          </div>
+        </div>
+        <div className="list">
+          <div className="list-item readable">
+            <div className="muted">Shell</div>
+            <div className="page-actions mt-8">
+              <select className="input" value={shell} onChange={(event) => setShell(event.target.value)}>
+                <option value="powershell">PowerShell</option>
+                <option value="cmd">CMD</option>
+                <option value="bash">Bash</option>
+                <option value="sh">SH</option>
+              </select>
             </div>
-            <div className="list">
-              <div className="list-item readable">
-                <div className="muted">Shell</div>
-                <div className="page-actions mt-8">
-                  <select className="input" value={shell} onChange={(event) => setShell(event.target.value)}>
-                    <option value="powershell">PowerShell</option>
-                    <option value="cmd">CMD</option>
-                    <option value="bash">Bash</option>
-                    <option value="sh">SH</option>
-                  </select>
-                </div>
-                <label className="mt-10 inline-check">
-                  <input type="checkbox" checked={runAsSystem} onChange={(event) => setRunAsSystem(Boolean(event.target.checked))} />
-                  <span className="muted">Run as admin ({shellTargetPlatform === "windows" ? "SYSTEM" : "sudo/root"})</span>
-                </label>
-                <label className="mt-10 inline-check">
-                  <input type="checkbox" checked={allowDestructive} onChange={(event) => setAllowDestructive(Boolean(event.target.checked))} />
-                  <span className="muted">Allow destructive commands</span>
-                </label>
-              </div>
+            <label className="mt-10 inline-check">
+              <input type="checkbox" checked={runAsSystem} onChange={(event) => setRunAsSystem(Boolean(event.target.checked))} />
+              <span className="muted">Run as admin ({shellTargetPlatform === "windows" ? "SYSTEM" : "sudo/root"})</span>
+            </label>
+            <label className="mt-10 inline-check">
+              <input type="checkbox" checked={allowDestructive} onChange={(event) => setAllowDestructive(Boolean(event.target.checked))} />
+              <span className="muted">Allow destructive commands</span>
+            </label>
+          </div>
 
-              <div className="list-item readable">
-                <div className="muted">Command</div>
-                <textarea
-                  className="input mt-8 mono"
-                  rows={8}
-                  value={command}
-                  onChange={(event) => setCommand(event.target.value)}
-                  placeholder={
-                    shell === "powershell"
-                      ? "Example: Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -AutoReboot"
-                      : shell === "cmd"
-                        ? "Example: winget upgrade --all"
-                        : "Example: sudo apt-get update && sudo apt-get upgrade -y"
-                  }
-                />
-              </div>
+          <div className="list-item readable">
+            <div className="muted">Command</div>
+            <textarea
+              className="input mt-8 mono"
+              rows={8}
+              value={command}
+              onChange={(event) => setCommand(event.target.value)}
+              placeholder={
+                shell === "powershell"
+                  ? "Example: Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -AutoReboot"
+                  : shell === "cmd"
+                    ? "Example: winget upgrade --all"
+                    : "Example: sudo apt-get update && sudo apt-get upgrade -y"
+              }
+            />
+          </div>
 
-              <div className="list-item readable">
-                <div className="muted">Justification (optional)</div>
-                <input
-                  className="input mt-8"
-                  value={justification}
-                  onChange={(event) => setJustification(event.target.value)}
-                  placeholder="Reason for this patch command"
-                />
-              </div>
+          <div className="list-item readable">
+            <div className="muted">Justification (optional)</div>
+            <input
+              className="input mt-8"
+              value={justification}
+              onChange={(event) => setJustification(event.target.value)}
+              placeholder="Reason for this patch command"
+            />
+          </div>
 
-              <div className="page-actions">
-                <button className="btn" type="button" onClick={runPatchCommand} disabled={submitting}>
-                  {submitting ? "Queueing..." : "Run Patch Command"}
-                </button>
-              </div>
-            </div>
+          <div className="page-actions">
+            <button className="btn" type="button" onClick={runPatchCommand} disabled={submitting}>
+              {submitting ? "Queueing..." : "Run Patch Command"}
+            </button>
           </div>
         </div>
       </div>

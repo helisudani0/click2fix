@@ -447,7 +447,7 @@ EOF
       ;;
     7)
       resolve_port_conflicts
-      bash "${SCRIPT_DIR}/upgrade.sh"
+      bash "${SCRIPT_DIR}/upgrade-patch-workbench.sh"
       ;;
     8)
       configured_host="$(env_get C2F_PUBLIC_HOST "${ENV_FILE}")"

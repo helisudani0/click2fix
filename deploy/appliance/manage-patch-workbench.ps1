@@ -499,7 +499,7 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $envPath = Join-Path $scriptDir $EnvFile
 $composePath = Join-Path $scriptDir $ComposeFile
 $installScript = Join-Path $scriptDir "install-patch-workbench.ps1"
-$upgradeScript = Join-Path $scriptDir "upgrade.ps1"
+$upgradeScript = Join-Path $scriptDir "upgrade-patch-workbench.ps1"
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
   throw "Docker is not installed."

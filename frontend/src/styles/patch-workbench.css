@@ -170,6 +170,10 @@ body:not(.patch-min-ui) .patch-workbench-command-card {
   overflow: auto;
 }
 
+.patch-workbench-run-status {
+  margin-top: 8px;
+}
+
 .patch-workbench-history-scroll {
   max-height: 42vh;
 }

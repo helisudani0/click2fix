@@ -1553,8 +1553,11 @@ def _extract_vuln_record(record: Dict[str, Any]) -> Dict[str, Any]:
     cve = str(
         _pick(
             vuln.get("cve"),
+            vuln.get("id"),
             vuln_data.get("cve"),
+            vuln_data.get("id"),
             data.get("cve"),
+            data.get("id"),
             record.get("cve"),
         )
         or ""

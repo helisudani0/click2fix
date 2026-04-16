@@ -594,7 +594,7 @@ export default function PatchWorkbench() {
       return;
     }
     if (!selectedVulnerabilityRows.length) {
-      setRunStatus("Select at least one vulnerability before running the command.");
+      setRunStatus("Select at least one vulnerability from step 2 before running the command.");
       return;
     }
     if (!eligibleScopedAgents.length) {
@@ -681,7 +681,6 @@ export default function PatchWorkbench() {
 
       {agentsError ? <div className="empty-state">Agent feed: {agentsError}</div> : null}
       {vulnerabilityError ? <div className="empty-state">Vulnerabilities feed: {vulnerabilityError}</div> : null}
-      {runStatus ? <div className="empty-state">{runStatus}</div> : null}
 
       <div className="stat-grid patch-workbench-stat-grid">
         <div className="stat-card">
@@ -1002,6 +1001,7 @@ export default function PatchWorkbench() {
               {submitting ? "Queueing..." : "Run Patch Command"}
             </button>
           </div>
+          {runStatus ? <div className="empty-state patch-workbench-run-status">{runStatus}</div> : null}
         </div>
       </div>
 

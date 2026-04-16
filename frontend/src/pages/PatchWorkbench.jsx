@@ -593,10 +593,6 @@ export default function PatchWorkbench() {
       setRunStatus("Select a valid agent scope first.");
       return;
     }
-    if (!selectedVulnerabilityRows.length) {
-      setRunStatus("Select at least one vulnerability from step 2 before running the command.");
-      return;
-    }
     if (!eligibleScopedAgents.length) {
       setRunStatus(`No connected ${shellTargetLabel} agents in this scope for shell "${shell}".`);
       return;
@@ -614,12 +610,14 @@ export default function PatchWorkbench() {
         justification: justification.trim().length >= 12
           ? justification.trim()
           : `Patch workbench execution (${shell})`,
-        vulnerability_context: buildVulnerabilityContext(selectedVulnerabilityRows, {
+      };
+      if (selectedVulnerabilityRows.length) {
+        payload.vulnerability_context = buildVulnerabilityContext(selectedVulnerabilityRows, {
           target_mode: targetMode,
           target_value: targetMode === "agent" ? normalizedTargetValue : normalizedGroupValue,
           target_agent_ids: targetMode === "multi" ? Array.from(selectedAgentSet) : undefined,
-        }),
-      };
+        });
+      }
 
       if (targetMode === "agent") payload.agent_id = normalizedTargetValue;
       else if (targetMode === "group") payload.group = normalizedGroupValue;
@@ -663,7 +661,7 @@ export default function PatchWorkbench() {
         <div>
           <h2>Patch Workbench</h2>
           <p className="muted">
-            One-page patch flow: choose scope, select vulnerabilities, run global shell command, and track live execution.
+            One-page patch flow: choose scope, optionally select vulnerabilities, run global shell command, and track live execution.
           </p>
         </div>
         <div className="page-actions">

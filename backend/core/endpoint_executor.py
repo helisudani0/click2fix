@@ -98,6 +98,25 @@ def _to_int(value: Any, default: int = 0) -> int:
 
 class EndpointExecutor:
     _target_cache: Dict[str, Dict[str, Any]] = {}
+    SCAN_REPORT_ACTIONS = {
+        "ioc-scan",
+        "toc-scan",
+        "yara-scan",
+        "collect-forensics",
+        "collect-memory",
+        "malware-scan",
+        "threat-hunt-persistence",
+    }
+    SCAN_REPORT_PREFIX_BY_ACTION = {
+        "ioc-scan": "ioc-scan",
+        "toc-scan": "toc-scan",
+        "yara-scan": "yara-scan",
+        "collect-forensics": "forensics",
+        "collect-memory": "memory",
+        "malware-scan": "malware-scan",
+        "threat-hunt-persistence": "persistence-hunt",
+    }
+    SCAN_TERMINAL_STATES = {"CLEAN", "MATCH", "SUCCESS", "COMPLETED"}
 
     def __init__(self, wazuh_client):
         self.client = wazuh_client
@@ -242,6 +261,29 @@ class EndpointExecutor:
             ),
             "key_file": _cfg("endpoint_connectors.linux.key_file", ""),
         }
+        raw_linux_agent_credentials = _cfg("endpoint_connectors.linux.agent_credentials", {})
+        self.linux_agent_credentials: Dict[str, Dict[str, str]] = {}
+        if isinstance(raw_linux_agent_credentials, dict):
+            for key, value in raw_linux_agent_credentials.items():
+                if not isinstance(value, dict):
+                    continue
+                aid = self._normalize_agent_id(str(key))
+                if not aid:
+                    continue
+                self.linux_agent_credentials[aid] = {
+                    "username": _read_secret(
+                        value.get("username", ""),
+                        value.get("username_env"),
+                    ),
+                    "password": _read_secret(
+                        value.get("password", ""),
+                        value.get("password_env"),
+                    ),
+                    "key_file": _read_secret(
+                        value.get("key_file", ""),
+                        value.get("key_file_env"),
+                    ),
+                }
 
     def connector_status(self) -> Dict[str, Any]:
         per_agent_ready = sorted(
@@ -253,6 +295,17 @@ class EndpointExecutor:
         )
         global_ready = bool(self.windows_cfg["username"] and self.windows_cfg["password"])
         template_ready = bool(self.windows_cfg.get("username_template") and self.windows_cfg.get("password"))
+        linux_per_agent_ready = sorted(
+            set(
+                aid
+                for aid, creds in self.linux_agent_credentials.items()
+                if creds.get("username") and (creds.get("password") or creds.get("key_file"))
+            ).union(self._discover_env_linux_agent_ids())
+        )
+        linux_global_ready = bool(
+            self.linux_cfg["username"]
+            and (self.linux_cfg["password"] or self.linux_cfg["key_file"])
+        )
         return {
             "windows": {
                 "enabled": self.windows_cfg["enabled"],
@@ -269,10 +322,9 @@ class EndpointExecutor:
             "linux": {
                 "enabled": self.linux_cfg["enabled"],
                 "port": self.linux_cfg["port"],
-                "credentials_configured": bool(
-                    self.linux_cfg["username"]
-                    and (self.linux_cfg["password"] or self.linux_cfg["key_file"])
-                ),
+                "credentials_configured": linux_global_ready or bool(linux_per_agent_ready),
+                "global_credentials_configured": linux_global_ready,
+                "per_agent_credentials_configured": linux_per_agent_ready,
                 "key_file_configured": bool(self.linux_cfg["key_file"]),
             },
             "limits": {
@@ -373,6 +425,10 @@ class EndpointExecutor:
             return max(base, 5400)
         if aid in {"package-update", "software-install-upgrade"}:
             return max(base, 3600)
+        if aid in self.SCAN_REPORT_ACTIONS:
+            # Endpoint scans can take several minutes on large hosts;
+            # keep a larger budget to avoid premature orchestration failures.
+            return max(base, 1800)
         if aid == "custom-os-command":
             command = str((action_args or [""])[0] if action_args else "").strip()
             if self._looks_like_long_running_windows_command(command):
@@ -3178,12 +3234,174 @@ class EndpointExecutor:
 		  $reportDir = "C:\Click2Fix\reports"
 		  New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
 		  $reportPath = Join-Path $reportDir ("malware-scan-" + $ExecId + ".txt")
+		  $reportJsonPath = Join-Path $reportDir ("malware-scan-" + $ExecId + ".json")
+		  $reportPdfPath = Join-Path $reportDir ("malware-scan-" + $ExecId + ".pdf")
 		  $scanStarted = Get-Date
+		  $scanStartEpoch = [int64]([DateTimeOffset]$scanStarted).ToUnixTimeSeconds()
+
+		  function Convert-C2FToEpoch {
+		    param([object]$Value)
+		    try {
+		      if ($null -eq $Value) { return 0 }
+		      return [int64]([DateTimeOffset][DateTime]$Value).ToUnixTimeSeconds()
+		    } catch { return 0 }
+		  }
+
+		  function Get-C2FDefenderSnapshot {
+		    $snap = [ordered]@{
+		      quick_start = ""
+		      quick_end = ""
+		      quick_start_epoch = 0
+		      quick_end_epoch = 0
+		      full_start = ""
+		      full_end = ""
+		      full_start_epoch = 0
+		      full_end_epoch = 0
+		      antivirus_enabled = $false
+		      service_enabled = $false
+		      am_engine_version = ""
+		      am_product_version = ""
+		    }
+		    try {
+		      $st = Get-MpComputerStatus -ErrorAction SilentlyContinue
+		      if ($st) {
+		        try { $snap.quick_start = [string]$st.QuickScanStartTime } catch { }
+		        try { $snap.quick_end = [string]$st.QuickScanEndTime } catch { }
+		        try { $snap.full_start = [string]$st.FullScanStartTime } catch { }
+		        try { $snap.full_end = [string]$st.FullScanEndTime } catch { }
+		        try { $snap.quick_start_epoch = Convert-C2FToEpoch $st.QuickScanStartTime } catch { }
+		        try { $snap.quick_end_epoch = Convert-C2FToEpoch $st.QuickScanEndTime } catch { }
+		        try { $snap.full_start_epoch = Convert-C2FToEpoch $st.FullScanStartTime } catch { }
+		        try { $snap.full_end_epoch = Convert-C2FToEpoch $st.FullScanEndTime } catch { }
+		        try { $snap.antivirus_enabled = [bool]$st.AntivirusEnabled } catch { }
+		        try { $snap.service_enabled = [bool]$st.AMServiceEnabled } catch { }
+		        try { $snap.am_engine_version = [string]$st.AMEngineVersion } catch { }
+		        try { $snap.am_product_version = [string]$st.AMProductVersion } catch { }
+		      }
+		    } catch { }
+		    return $snap
+		  }
+
+		  function Get-C2FThreatSeverity {
+		    param([string]$ThreatName)
+		    $n = [string]$ThreatName
+		    if ($n -match '(?i)mimikatz|cobalt|trickbot|emotet|ransom|credential|lsass|backdoor|stealer|meterpreter') { return "high" }
+		    if ($n -match '(?i)trojan|worm|exploit|rootkit') { return "medium" }
+		    if ($n -match '(?i)pua|pup|adware') { return "low" }
+		    return "medium"
+		  }
+
+		  function Get-C2FRecommendation {
+		    param([string]$ThreatName)
+		    $n = [string]$ThreatName
+		    if ($n -match '(?i)mimikatz|credential|lsass|stealer') {
+		      return "Isolate host immediately, rotate privileged credentials, invalidate active sessions, and investigate lateral movement."
+		    }
+		    if ($n -match '(?i)ransom|encrypt|locker') {
+		      return "Isolate host, disable SMB shares, preserve volatile evidence, and trigger ransomware containment playbook."
+		    }
+		    if ($n -match '(?i)cobalt|meterpreter|beacon|backdoor') {
+		      return "Isolate endpoint, block C2 indicators at EDR/Firewall, and execute threat-hunt for persistence and lateral movement."
+		    }
+		    return "Quarantine malicious artifacts, verify Defender remediation state, and run IOC/YARA follow-up scan across peer endpoints."
+		  }
+
+		  function Get-C2FMitreTechnique {
+		    param([string]$ThreatName)
+		    $n = [string]$ThreatName
+		    if ($n -match '(?i)mimikatz|credential|lsass|sekurlsa') { return "T1003 (OS Credential Dumping)" }
+		    if ($n -match '(?i)cobalt|beacon|meterpreter|backdoor') { return "T1105 (Ingress Tool Transfer)" }
+		    if ($n -match '(?i)ransom|encrypt|locker') { return "T1486 (Data Encrypted for Impact)" }
+		    if ($n -match '(?i)powershell|encodedcommand|script') { return "T1059.001 (PowerShell)" }
+		    if ($n -match '(?i)persistence|autorun|registry run') { return "T1547 (Boot or Logon Autostart Execution)" }
+		    return "T1059 (Command and Scripting Interpreter)"
+		  }
+
+		  function Convert-C2FMarkdownCell {
+		    param([string]$Value)
+		    $v = [string]$Value
+		    if (-not $v) { return "-" }
+		    $v = $v.Replace("|", "\|")
+		    $v = $v -replace '\r?\n', '<br/>'
+		    if ($v.Length -gt 280) { $v = $v.Substring(0, 280) + "..." }
+		    return $v
+		  }
+
+		  function Write-C2FSimplePdf {
+		    param([string[]]$Lines, [string]$PdfPath)
+		    try {
+		      if (-not $Lines -or $Lines.Count -eq 0) { $Lines = @("Click2Fix Scan Report") }
+		      $safeLines = New-Object System.Collections.Generic.List[string]
+		      foreach ($line in ($Lines | Select-Object -First 90)) {
+		        $s = [string]$line
+		        if (-not $s) { $s = " " }
+		        $s = $s -replace '\\', '\\\\'
+		        $s = $s -replace '\(', '\\('
+		        $s = $s -replace '\)', '\\)'
+		        $s = $s -replace '\r?\n', ' '
+		        if ($s.Length -gt 150) { $s = $s.Substring(0, 150) + "..." }
+		        $safeLines.Add($s) | Out-Null
+		      }
+
+		      $contentLines = New-Object System.Collections.Generic.List[string]
+		      $contentLines.Add("BT") | Out-Null
+		      $contentLines.Add("/F1 9 Tf") | Out-Null
+		      $contentLines.Add("50 800 Td") | Out-Null
+		      $contentLines.Add("12 TL") | Out-Null
+		      foreach ($safe in $safeLines) {
+		        $contentLines.Add("(" + $safe + ") Tj") | Out-Null
+		        $contentLines.Add("T*") | Out-Null
+		      }
+		      $contentLines.Add("ET") | Out-Null
+		      $stream = ($contentLines -join "`n") + "`n"
+		      $streamBytes = [Text.Encoding]::ASCII.GetBytes($stream)
+		      $streamLiteral = [Text.Encoding]::ASCII.GetString($streamBytes)
+
+		      $builder = New-Object System.Text.StringBuilder
+		      $offsets = New-Object System.Collections.Generic.List[int]
+
+		      function Add-C2FPdfObject {
+		        param([int]$Num, [string]$Body)
+		        $offset = [Text.Encoding]::ASCII.GetByteCount($builder.ToString())
+		        $offsets.Add($offset) | Out-Null
+		        [void]$builder.Append($Num.ToString() + " 0 obj`n")
+		        [void]$builder.Append($Body)
+		        [void]$builder.Append("`nendobj`n")
+		      }
+
+		      [void]$builder.Append("%PDF-1.4`n")
+		      Add-C2FPdfObject 1 "<</Type/Catalog/Pages 2 0 R>>"
+		      Add-C2FPdfObject 2 "<</Type/Pages/Count 1/Kids[3 0 R]>>"
+		      Add-C2FPdfObject 3 "<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 842]/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>"
+		      Add-C2FPdfObject 4 "<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>"
+		      Add-C2FPdfObject 5 ("<</Length " + [string]$streamBytes.Length + ">>`nstream`n" + $streamLiteral + "endstream")
+
+		      $xrefOffset = [Text.Encoding]::ASCII.GetByteCount($builder.ToString())
+		      [void]$builder.Append("xref`n")
+		      [void]$builder.Append("0 6`n")
+		      [void]$builder.Append("0000000000 65535 f `n")
+		      foreach ($off in $offsets) {
+		        [void]$builder.Append(([string]::Format("{0:0000000000} 00000 n `n", [int]$off)))
+		      }
+		      [void]$builder.Append("trailer`n")
+		      [void]$builder.Append("<</Size 6/Root 1 0 R>>`n")
+		      [void]$builder.Append("startxref`n")
+		      [void]$builder.Append([string]$xrefOffset)
+		      [void]$builder.Append("`n%%EOF")
+		      Set-Content -Path $PdfPath -Value $builder.ToString() -Encoding ASCII
+		    } catch {
+		      throw ("failed to generate pdf report: " + $_.Exception.Message)
+		    }
+		  }
 
 		  C2F-Evidence "scan_type=malware"
 		  C2F-Evidence ("scan_scope=" + $scopeDetail)
 		  C2F-Evidence "scan_engine=windows-defender"
 		  C2F-Evidence ("scan_timeout_seconds=" + $maxSeconds)
+
+		  $beforeSnapshot = Get-C2FDefenderSnapshot
+		  if ($beforeSnapshot.quick_end_epoch -gt 0) { C2F-Evidence ("defender_quick_end_before=" + [string]$beforeSnapshot.quick_end_epoch) }
+		  if ($beforeSnapshot.quick_start_epoch -gt 0) { C2F-Evidence ("defender_quick_start_before=" + [string]$beforeSnapshot.quick_start_epoch) }
 
 		  $command = ""
 		  if ($scanType -eq "CustomScan") {
@@ -3193,7 +3411,11 @@ class EndpointExecutor:
 		    $command = "Start-MpScan -ScanType " + $scanType
 		  }
 		  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-		  $proc = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-EncodedCommand", $encoded) -PassThru -WindowStyle Hidden
+		  $tmpRunDir = Join-Path $env:TEMP ("c2f-malware-" + $ExecId + "-" + ([Guid]::NewGuid().ToString("N")))
+		  New-Item -ItemType Directory -Path $tmpRunDir -Force | Out-Null
+		  $procStdOutPath = Join-Path $tmpRunDir "scan.stdout.log"
+		  $procStdErrPath = Join-Path $tmpRunDir "scan.stderr.log"
+		  $proc = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-EncodedCommand", $encoded) -PassThru -WindowStyle Hidden -RedirectStandardOutput $procStdOutPath -RedirectStandardError $procStdErrPath
 		  C2F-Evidence ("scan_process_pid=" + [string]$proc.Id)
 
 		  $nextHeartbeat = Get-Date
@@ -3212,11 +3434,19 @@ class EndpointExecutor:
 		    Start-Sleep -Seconds 2
 		  }
 
+		  $scanStdOut = ""
+		  $scanStdErr = ""
+		  try { if (Test-Path $procStdOutPath) { $scanStdOut = [string](Get-Content -Path $procStdOutPath -Raw -ErrorAction SilentlyContinue) } } catch { $scanStdOut = "" }
+		  try { if (Test-Path $procStdErrPath) { $scanStdErr = [string](Get-Content -Path $procStdErrPath -Raw -ErrorAction SilentlyContinue) } } catch { $scanStdErr = "" }
+		  try { Remove-Item -Path $tmpRunDir -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+
 		  $scanRc = 0
 		  try { $scanRc = [int]$proc.ExitCode } catch { $scanRc = 1 }
-		  if ($scanRc -ne 0) {
-		    throw ("malware-scan process failed rc=" + [string]$scanRc)
-		  }
+		  C2F-Evidence ("scan_process_exit_code=" + [string]$scanRc)
+
+		  $afterSnapshot = Get-C2FDefenderSnapshot
+		  if ($afterSnapshot.quick_end_epoch -gt 0) { C2F-Evidence ("defender_quick_end_after=" + [string]$afterSnapshot.quick_end_epoch) }
+		  if ($afterSnapshot.quick_start_epoch -gt 0) { C2F-Evidence ("defender_quick_start_after=" + [string]$afterSnapshot.quick_start_epoch) }
 
 		  $detections = @()
 		  try {
@@ -3230,19 +3460,60 @@ class EndpointExecutor:
 		    $detections = @()
 		  }
 
-		  $scanFinished = Get-Date
-		  $status = if ($detections.Count -gt 0) { "MATCH" } else { "CLEAN" }
-		  $summary = ("Malware scan complete: status=" + $status + " scope=" + $scopeDetail + " detections=" + [string]$detections.Count)
+		  $freshQuickScan = $false
+		  if (($afterSnapshot.quick_end_epoch -ge ($scanStartEpoch - 30)) -or ($afterSnapshot.quick_start_epoch -ge ($scanStartEpoch - 30))) {
+		    $freshQuickScan = $true
+		  }
+		  C2F-Evidence ("scan_fresh_quickscan=" + [string]$freshQuickScan)
 
+		  $nonFatalRc = $false
+		  $scanRcReason = ""
+		  if ($scanRc -ne 0) {
+		    $flatErr = ([string]$scanStdErr -replace '\r?\n',' ').Trim()
+		    if ($flatErr.Length -gt 260) { $flatErr = $flatErr.Substring(0, 260) + "..." }
+		    $flatOut = ([string]$scanStdOut -replace '\r?\n',' ').Trim()
+		    if ($flatOut.Length -gt 260) { $flatOut = $flatOut.Substring(0, 260) + "..." }
+		    if ($flatErr) { C2F-Evidence ("scan_process_stderr=" + ($flatErr -replace '\|','/')) }
+		    if ($flatOut) { C2F-Evidence ("scan_process_stdout=" + ($flatOut -replace '\|','/')) }
+
+		    $knownBenign = (($flatErr -match '(?i)scan.+already.+running') -or ($flatErr -match '(?i)0x8050800c') -or ($flatOut -match '(?i)scan.+already.+running'))
+		    if ($freshQuickScan -or $knownBenign -or $detections.Count -gt 0) {
+		      $nonFatalRc = $true
+		      $scanRcReason = "rc_nonfatal_with_fresh_telemetry"
+		    } else {
+		      $detail = if ($flatErr) { $flatErr } elseif ($flatOut) { $flatOut } else { "no_stdout_or_stderr" }
+		      throw ("malware-scan process failed rc=" + [string]$scanRc + "; detail=" + $detail)
+		    }
+		  }
+
+		  $scanFinished = Get-Date
+		  $durationSeconds = [int]((New-TimeSpan -Start $scanStarted -End $scanFinished).TotalSeconds)
+		  $status = if ($detections.Count -gt 0) { "MATCH" } else { "CLEAN" }
+		  $outcome = if ($scanRc -eq 0) { "SUCCESS" } elseif ($nonFatalRc) { "SUCCESS_WITH_WARNINGS" } else { "FAILED" }
+		  if ($scanRc -ne 0 -and $nonFatalRc) {
+		    C2F-Evidence ("scan_process_rc_nonfatal=true")
+		    C2F-Evidence ("scan_process_rc_reason=" + $scanRcReason)
+		  }
+
+		  $highCount = 0
+		  $mediumCount = 0
+		  $lowCount = 0
+		  $findingObjects = New-Object System.Collections.Generic.List[object]
+		  $recommendations = @()
 		  $reportLines = New-Object System.Collections.Generic.List[string]
 		  $reportLines.Add("Click2Fix Malware Scan Report")
+		  $reportLines.Add("Report Schema: c2f.scan-report.v2")
 		  $reportLines.Add("Execution ID: " + $ExecId)
 		  $reportLines.Add("Agent ID: " + $AgentId)
 		  $reportLines.Add("Started: " + $scanStarted.ToString("o"))
 		  $reportLines.Add("Finished: " + $scanFinished.ToString("o"))
+		  $reportLines.Add("Duration Seconds: " + [string]$durationSeconds)
 		  $reportLines.Add("Scope: " + $scopeDetail)
 		  $reportLines.Add("Engine: windows-defender")
 		  $reportLines.Add("Status: " + $status)
+		  $reportLines.Add("Outcome: " + $outcome)
+		  $reportLines.Add("Process Exit Code: " + [string]$scanRc)
+		  $reportLines.Add("Fresh Quick Scan Telemetry: " + [string]$freshQuickScan)
 		  $reportLines.Add("Detections: " + [string]$detections.Count)
 		  $reportLines.Add("")
 		  if ($detections.Count -gt 0) {
@@ -3254,39 +3525,205 @@ class EndpointExecutor:
 		      $actionSuccess = [string]$d.ActionSuccess
 		      $when = ""
 		      try { $when = [string]$d.InitialDetectionTime } catch { $when = "" }
-		      $recommendation = "Isolate endpoint, remove/quarantine affected file(s), and perform credential hygiene if execution occurred."
-		      if ($threat -match '(?i)mimikatz|credential|lsass') {
-		        $recommendation = "Potential credential theft: isolate host immediately, reset privileged credentials, and investigate lateral movement."
-		      }
+		      $severity = Get-C2FThreatSeverity $threat
+		      $mitreTechnique = Get-C2FMitreTechnique $threat
+		      $recommendation = Get-C2FRecommendation $threat
+		      if ($severity -eq "high") { $highCount++ } elseif ($severity -eq "medium") { $mediumCount++ } else { $lowCount++ }
+		      if ($recommendations -notcontains $recommendation) { $recommendations += $recommendation }
+
+		      $findingObjects.Add([ordered]@{
+		        finding_id = ("malware-" + [string]($i + 1))
+		        threat_name = $threat
+		        severity = $severity
+		        confidence = "high"
+		        resource = $resource
+		        action_success = $actionSuccess
+		        detected_at = $when
+		        mitre_technique = $mitreTechnique
+		        recommendation = $recommendation
+		      })
+
 		      $reportLines.Add(("#" + [string]($i + 1)))
 		      $reportLines.Add(("Threat: " + $threat))
+		      $reportLines.Add(("Severity: " + $severity.ToUpper()))
 		      $reportLines.Add(("Resource: " + $resource))
 		      if ($when) { $reportLines.Add(("Detected At: " + $when)) }
 		      $reportLines.Add(("Action Success: " + $actionSuccess))
+		      $reportLines.Add(("MITRE Technique: " + $mitreTechnique))
 		      $reportLines.Add(("Recommendation: " + $recommendation))
 		      $reportLines.Add("")
 
 		      $safeResource = ($resource -replace '\|','/' -replace '\r?\n',' ')
 		      if ($safeResource.Length -gt 220) { $safeResource = $safeResource.Substring(0, 220) + "..." }
 		      $safeRecommendation = ($recommendation -replace '\|','/' -replace '\r?\n',' ')
-		      C2F-Evidence ("scan_hit_" + [string]$i + "=malware|" + $threat + "|detail=" + $safeResource + "|recommendation=" + $safeRecommendation)
+		      C2F-Evidence ("scan_hit_" + [string]$i + "=malware|" + $threat + "|severity=" + $severity + "|detail=" + $safeResource + "|recommendation=" + $safeRecommendation)
 		    }
 		  } else {
 		    $reportLines.Add("No malware detections were reported by Defender in this scan window.")
+		    if ($recommendations -notcontains "Continue with IOC/YARA and persistence hunt for defense-in-depth validation.") {
+		      $recommendations += "Continue with IOC/YARA and persistence hunt for defense-in-depth validation."
+		    }
+		  }
+
+		  $riskScore = 5
+		  if ($detections.Count -gt 0) {
+		    $riskScore = 30 + ($highCount * 25) + ($mediumCount * 12) + ($lowCount * 5)
+		    if ($riskScore -gt 100) { $riskScore = 100 }
+		  } elseif ($scanRc -ne 0 -and $nonFatalRc) {
+		    $riskScore = 20
+		  }
+		  $summary = ("Malware scan complete: status=" + $status + " outcome=" + $outcome + " scope=" + $scopeDetail + " detections=" + [string]$detections.Count + " risk_score=" + [string]$riskScore)
+
+		  $reportLines.Add("")
+		  $reportLines.Add("Recommendations")
+		  for ($ri = 0; $ri -lt $recommendations.Count; $ri++) {
+		    $reportLines.Add(("- " + [string]$recommendations[$ri]))
 		  }
 		  $reportLines.Add("")
 		  $reportLines.Add("Summary: " + $summary)
 		  Set-Content -Path $reportPath -Value $reportLines -Encoding UTF8
 
+		  $severityLabel = "LOW"
+		  if ($highCount -gt 0) { $severityLabel = "CRITICAL" }
+		  elseif ($mediumCount -gt 0) { $severityLabel = "HIGH" }
+		  elseif ($lowCount -gt 0) { $severityLabel = "MEDIUM" }
+		  elseif ($outcome -eq "SUCCESS_WITH_WARNINGS") { $severityLabel = "MEDIUM" }
+
+		  $markdownLines = New-Object System.Collections.Generic.List[string]
+		  $markdownLines.Add("# Click2Fix Malware Threat Report")
+		  $markdownLines.Add("")
+		  $markdownLines.Add("## Executive Summary")
+		  $markdownLines.Add("| Field | Value |")
+		  $markdownLines.Add("| --- | --- |")
+		  $markdownLines.Add("| Execution ID | " + (Convert-C2FMarkdownCell $ExecId) + " |")
+		  $markdownLines.Add("| Agent ID | " + (Convert-C2FMarkdownCell $AgentId) + " |")
+		  $markdownLines.Add("| Engine | windows-defender |")
+		  $markdownLines.Add("| Scope | " + (Convert-C2FMarkdownCell $scopeDetail) + " |")
+		  $markdownLines.Add("| Status | " + (Convert-C2FMarkdownCell $status) + " |")
+		  $markdownLines.Add("| Outcome | " + (Convert-C2FMarkdownCell $outcome) + " |")
+		  $markdownLines.Add("| Risk Score | " + [string]$riskScore + "/100 |")
+		  $markdownLines.Add("| Priority | " + (Convert-C2FMarkdownCell $severityLabel) + " |")
+		  $markdownLines.Add("| Detections | " + [string]$detections.Count + " |")
+		  $markdownLines.Add("| Started (UTC) | " + (Convert-C2FMarkdownCell $scanStarted.ToUniversalTime().ToString("o")) + " |")
+		  $markdownLines.Add("| Finished (UTC) | " + (Convert-C2FMarkdownCell $scanFinished.ToUniversalTime().ToString("o")) + " |")
+		  $markdownLines.Add("")
+		  $markdownLines.Add("## Detection Findings")
+			  if ($findingObjects.Count -gt 0) {
+			    $markdownLines.Add("| Threat | Severity | MITRE | Asset/Resource | Action |")
+			    $markdownLines.Add("| --- | --- | --- | --- | --- |")
+			    for ($fi = 0; $fi -lt $findingObjects.Count; $fi++) {
+			      $f = $findingObjects[$fi]
+			      $findingRow = "| "
+			      $findingRow += (Convert-C2FMarkdownCell $f.threat_name)
+			      $findingRow += " | "
+			      $findingRow += (Convert-C2FMarkdownCell $f.severity)
+			      $findingRow += " | "
+			      $findingRow += (Convert-C2FMarkdownCell $f.mitre_technique)
+			      $findingRow += " | "
+			      $findingRow += (Convert-C2FMarkdownCell $f.resource)
+			      $findingRow += " | "
+			      $findingRow += (Convert-C2FMarkdownCell $f.action_success)
+			      $findingRow += " |"
+			      $markdownLines.Add($findingRow)
+			    }
+			  } else {
+		    $markdownLines.Add("No active malware detections were returned by Defender for this scan window.")
+		  }
+		  $markdownLines.Add("")
+		  $markdownLines.Add("## Analyst Recommendations")
+		  if ($recommendations.Count -gt 0) {
+		    for ($ri = 0; $ri -lt $recommendations.Count; $ri++) {
+		      $markdownLines.Add("- " + (Convert-C2FMarkdownCell $recommendations[$ri]))
+		    }
+		  } else {
+		    $markdownLines.Add("- Continue routine monitoring and periodic IOC/YARA validation.")
+		  }
+		  $markdownLines.Add("")
+		  $markdownLines.Add("## Telemetry")
+		  $markdownLines.Add("| Signal | Value |")
+		  $markdownLines.Add("| --- | --- |")
+		  $markdownLines.Add("| Process Exit Code | " + [string]$scanRc + " |")
+		  $markdownLines.Add("| Fresh Quick Scan | " + (Convert-C2FMarkdownCell ([string]$freshQuickScan)) + " |")
+		  $markdownLines.Add("| Non-fatal RC Path | " + (Convert-C2FMarkdownCell ([string]$nonFatalRc)) + " |")
+		  if ($scanRcReason) { $markdownLines.Add("| RC Reason | " + (Convert-C2FMarkdownCell $scanRcReason) + " |") }
+		  $markdownLines.Add("")
+		  $markdownLines.Add("## Final Verdict")
+		  $markdownLines.Add((Convert-C2FMarkdownCell $summary))
+		  Write-C2FSimplePdf -Lines $markdownLines -PdfPath $reportPdfPath
+
+		  $findingArray = @()
+		  foreach ($fo in $findingObjects) {
+		    $findingArray += [pscustomobject]$fo
+		  }
+		  $reportObject = [pscustomobject]@{
+		    schema_version = "c2f.scan-report.v2"
+		    generated_at = (Get-Date).ToString("o")
+		    product = "Click2Fix"
+		    execution = [pscustomobject]@{
+		      execution_id = [string]$ExecId
+		      agent_id = [string]$AgentId
+		      action_id = [string]$ActionId
+		      started_at = $scanStarted.ToString("o")
+		      finished_at = $scanFinished.ToString("o")
+		      duration_seconds = [int]$durationSeconds
+		    }
+		    scanner = [pscustomobject]@{
+		      engine = "windows-defender"
+		      scope = $scopeDetail
+		      scan_type = [string]$scanType
+		      max_runtime_seconds = [int]$maxSeconds
+		    }
+		    telemetry = [pscustomobject]@{
+		      process_exit_code = [int]$scanRc
+		      process_rc_nonfatal = [bool]$nonFatalRc
+		      process_rc_reason = [string]$scanRcReason
+		      process_pid = [int]$proc.Id
+		      fresh_quick_scan = [bool]$freshQuickScan
+		      defender_snapshot_before = $beforeSnapshot
+		      defender_snapshot_after = $afterSnapshot
+		    }
+		    summary = [pscustomobject]@{
+		      status = [string]$status
+		      outcome = [string]$outcome
+		      detections = [int]$detections.Count
+		      risk_score = [int]$riskScore
+		      severity = [pscustomobject]@{
+		        high = [int]$highCount
+		        medium = [int]$mediumCount
+		        low = [int]$lowCount
+		      }
+		      message = [string]$summary
+		    }
+		    findings = $findingArray
+		    recommendations = @($recommendations)
+		    report_artifacts = [pscustomobject]@{
+		      txt = $reportPath
+		      json = $reportJsonPath
+		      pdf = $reportPdfPath
+		    }
+		  }
+		  $reportJson = $reportObject | ConvertTo-Json -Depth 12
+		  Set-Content -Path $reportJsonPath -Value $reportJson -Encoding UTF8
+
 		  C2F-Evidence ("scan_report_path=" + $reportPath)
+		  C2F-Evidence ("scan_report_json_path=" + $reportJsonPath)
+		  C2F-Evidence ("scan_report_pdf_path=" + $reportPdfPath)
+		  C2F-Evidence ("scan_report_schema=c2f.scan-report.v2")
+		  C2F-Evidence ("scan_report_format=txt+json+pdf")
 		  C2F-Evidence ("scan_total_examined=" + [string][Math]::Max($detections.Count, 1))
 		  C2F-Evidence ("scan_matches=" + [string]$detections.Count)
 		  C2F-Evidence ("scan_status=" + $status)
+		  C2F-Evidence ("scan_outcome=" + $outcome)
+		  C2F-Evidence ("scan_risk_score=" + [string]$riskScore)
 		  C2F-Evidence ("artifact_0=report|" + $reportPath + "|format=txt")
+		  C2F-Evidence ("artifact_1=report|" + $reportJsonPath + "|format=json")
+		  C2F-Evidence ("artifact_2=report|" + $reportPdfPath + "|format=pdf")
 		  C2F-Evidence ("scan_summary=" + ($summary -replace '\|','/' -replace '\r?\n',' '))
-		  C2F-Status "SUCCESS"
+		  C2F-Status "SUCCESS" $summary
 		  Write-Output $summary
 		  Write-Output ("report=" + $reportPath)
+		  Write-Output ("report_json=" + $reportJsonPath)
+		  Write-Output ("report_pdf=" + $reportPdfPath)
 		  exit 0
 		}
 		catch {
@@ -3348,11 +3785,12 @@ class EndpointExecutor:
 
 		try {
 		  C2F-Status "START"
-		  $started = Get-Date
-		  $reportDir = "C:\Click2Fix\reports"
-		  New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
-		  $reportPath = Join-Path $reportDir ("persistence-hunt-" + $ExecId + ".txt")
-		  $hits = @()
+			  $started = Get-Date
+			  $reportDir = "C:\Click2Fix\reports"
+			  New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
+			  $reportPath = Join-Path $reportDir ("persistence-hunt-" + $ExecId + ".txt")
+			  $reportJsonPath = Join-Path $reportDir ("persistence-hunt-" + $ExecId + ".json")
+			  $hits = @()
 		  $totalExamined = 0
 		  $maxHits = 120
 		  $maxRuntime = [Math]::Max(180, [int]$MaxRuntimeSeconds)
@@ -3487,18 +3925,47 @@ class EndpointExecutor:
 		  } else {
 		    $lines.Add("No suspicious persistence indicators were detected.")
 		  }
-		  $lines.Add("")
-		  $lines.Add("Summary: " + $summary)
-		  Set-Content -Path $reportPath -Value $lines -Encoding UTF8
+			  $lines.Add("")
+			  $lines.Add("Summary: " + $summary)
+			  Set-Content -Path $reportPath -Value $lines -Encoding UTF8
+			  $reportObject = [ordered]@{
+			    schema_version = "c2f.scan-report.v2"
+			    generated_at = (Get-Date).ToString("o")
+			    product = "Click2Fix"
+			    execution = [ordered]@{
+			      execution_id = [string]$ExecId
+			      agent_id = [string]$AgentId
+			      action_id = [string]$ActionId
+			      started_at = $started.ToString("o")
+			      finished_at = $finished.ToString("o")
+			      duration_seconds = [int]((New-TimeSpan -Start $started -End $finished).TotalSeconds)
+			    }
+			    scanner = [ordered]@{
+			      engine = "builtin-heuristics"
+			      scope = "startup+runkeys+tasks+services"
+			      scan_type = "persistence"
+			    }
+			    summary = [ordered]@{
+			      status = [string]$scanStatus
+			      matches = [int]$hits.Count
+			      total_examined = [int]$totalExamined
+			      message = [string]$summary
+			    }
+			    findings = @($hits)
+			  }
+			  Set-Content -Path $reportJsonPath -Value ($reportObject | ConvertTo-Json -Depth 10) -Encoding UTF8
 
-		  C2F-Evidence "scan_type=persistence"
-		  C2F-Evidence "scan_scope=startup+runkeys+tasks+services"
-		  C2F-Evidence "scan_engine=builtin-heuristics"
-		  C2F-Evidence ("scan_report_path=" + $reportPath)
-		  C2F-Evidence ("scan_total_examined=" + $totalExamined)
-		  C2F-Evidence ("scan_matches=" + $hits.Count)
-		  C2F-Evidence ("scan_status=" + $scanStatus)
-		  C2F-Evidence ("artifact_0=report|" + $reportPath + "|format=txt")
+			  C2F-Evidence "scan_type=persistence"
+			  C2F-Evidence "scan_scope=startup+runkeys+tasks+services"
+			  C2F-Evidence "scan_engine=builtin-heuristics"
+			  C2F-Evidence ("scan_report_path=" + $reportPath)
+			  C2F-Evidence ("scan_report_json_path=" + $reportJsonPath)
+			  C2F-Evidence ("scan_report_schema=c2f.scan-report.v2")
+			  C2F-Evidence ("scan_total_examined=" + $totalExamined)
+			  C2F-Evidence ("scan_matches=" + $hits.Count)
+			  C2F-Evidence ("scan_status=" + $scanStatus)
+			  C2F-Evidence ("artifact_0=report|" + $reportPath + "|format=txt")
+			  C2F-Evidence ("artifact_1=report|" + $reportJsonPath + "|format=json")
 		  for ($i = 0; $i -lt $hits.Count; $i++) {
 		    $h = $hits[$i]
 		    $safeName = ([string]$h.name -replace '\|','/' -replace '\r?\n',' ')
@@ -3507,11 +3974,12 @@ class EndpointExecutor:
 		    $safeRec = ([string]$h.recommendation -replace '\|','/' -replace '\r?\n',' ')
 		    C2F-Evidence ("scan_hit_" + $i + "=persistence|" + $safeName + "|detail=" + $safeDetail + "|recommendation=" + $safeRec)
 		  }
-		  C2F-Evidence ("scan_summary=" + ($summary -replace '\|','/' -replace '\r?\n',' '))
-		  C2F-Status "SUCCESS"
-		  Write-Output $summary
-		  Write-Output ("report=" + $reportPath)
-		  exit 0
+			  C2F-Evidence ("scan_summary=" + ($summary -replace '\|','/' -replace '\r?\n',' '))
+			  C2F-Status "SUCCESS"
+			  Write-Output $summary
+			  Write-Output ("report=" + $reportPath)
+			  Write-Output ("report_json=" + $reportJsonPath)
+			  exit 0
 		}
 		catch {
 		  $err = $_.Exception.Message
@@ -3575,11 +4043,12 @@ class EndpointExecutor:
 	  $reportDir = "C:\Click2Fix\reports"
 	  New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
 	  $isToc = (([string]$ActionId).ToLower() -eq "toc-scan")
-	  $scanPrefix = if ($isToc) { "toc-scan" } else { "ioc-scan" }
-	  $scanType = if ($isToc) { "toc" } else { "ioc" }
-	  $scanLabel = if ($isToc) { "TOC" } else { "IOC" }
-	  $reportPath = Join-Path $reportDir ($scanPrefix + "-" + $ExecId + ".txt")
-	  $scanStarted = Get-Date
+		  $scanPrefix = if ($isToc) { "toc-scan" } else { "ioc-scan" }
+		  $scanType = if ($isToc) { "toc" } else { "ioc" }
+		  $scanLabel = if ($isToc) { "TOC" } else { "IOC" }
+		  $reportPath = Join-Path $reportDir ($scanPrefix + "-" + $ExecId + ".txt")
+		  $reportJsonPath = Join-Path $reportDir ($scanPrefix + "-" + $ExecId + ".json")
+		  $scanStarted = Get-Date
 	  $patterns = @(
 	    "powershell -enc",
 	    "cmd.exe /c",
@@ -3657,17 +4126,46 @@ class EndpointExecutor:
 	  } else {
 	    $reportLines.Add("No suspicious process indicators were matched.")
 	  }
-	  $reportLines.Add("")
-	  $reportLines.Add("Summary: " + $summary)
-	  Set-Content -Path $reportPath -Value $reportLines -Encoding UTF8
-	  C2F-Evidence ("scan_type=" + $scanType)
-	  C2F-Evidence ("scan_scope=" + $IocSet)
-	  C2F-Evidence "scan_engine=builtin-patterns"
-	  C2F-Evidence ("scan_report_path=" + $reportPath)
-	  C2F-Evidence ("scan_total_examined=" + $totalExamined)
-	  C2F-Evidence ("scan_matches=" + $hits.Count)
-	  C2F-Evidence ("scan_status=" + $scanStatus)
-	  C2F-Evidence ("artifact_0=report|" + $reportPath + "|format=txt")
+		  $reportLines.Add("")
+		  $reportLines.Add("Summary: " + $summary)
+		  Set-Content -Path $reportPath -Value $reportLines -Encoding UTF8
+		  $reportObject = [ordered]@{
+		    schema_version = "c2f.scan-report.v2"
+		    generated_at = (Get-Date).ToString("o")
+		    product = "Click2Fix"
+		    execution = [ordered]@{
+		      execution_id = [string]$ExecId
+		      agent_id = [string]$AgentId
+		      action_id = [string]$ActionId
+		      started_at = $scanStarted.ToString("o")
+		      finished_at = $scanFinished.ToString("o")
+		      duration_seconds = [int]((New-TimeSpan -Start $scanStarted -End $scanFinished).TotalSeconds)
+		    }
+		    scanner = [ordered]@{
+		      engine = "builtin-patterns"
+		      scope = [string]$IocSet
+		      scan_type = [string]$scanType
+		    }
+		    summary = [ordered]@{
+		      status = [string]$scanStatus
+		      matches = [int]$hits.Count
+		      total_examined = [int]$totalExamined
+		      message = [string]$summary
+		    }
+		    findings = @($hits)
+		  }
+		  Set-Content -Path $reportJsonPath -Value ($reportObject | ConvertTo-Json -Depth 10) -Encoding UTF8
+		  C2F-Evidence ("scan_type=" + $scanType)
+		  C2F-Evidence ("scan_scope=" + $IocSet)
+		  C2F-Evidence "scan_engine=builtin-patterns"
+		  C2F-Evidence ("scan_report_path=" + $reportPath)
+		  C2F-Evidence ("scan_report_json_path=" + $reportJsonPath)
+		  C2F-Evidence ("scan_report_schema=c2f.scan-report.v2")
+		  C2F-Evidence ("scan_total_examined=" + $totalExamined)
+		  C2F-Evidence ("scan_matches=" + $hits.Count)
+		  C2F-Evidence ("scan_status=" + $scanStatus)
+		  C2F-Evidence ("artifact_0=report|" + $reportPath + "|format=txt")
+		  C2F-Evidence ("artifact_1=report|" + $reportJsonPath + "|format=json")
 	  for ($i = 0; $i -lt $hits.Count; $i++) {
 	    $h = $hits[$i]
 	    $safeDetail = [string]$h.command
@@ -3676,11 +4174,12 @@ class EndpointExecutor:
 	    $safeRecommendation = ([string]$h.recommendation -replace '\|','/' -replace '\r?\n',' ')
 	    C2F-Evidence ("scan_hit_" + $i + "=" + $scanType + "|" + [string]$h.pattern + "|process=" + [string]$h.process + "|pid=" + [string]$h.pid + "|detail=" + $safeDetail + "|recommendation=" + $safeRecommendation)
 	  }
-	  C2F-Evidence ("scan_summary=" + ($summary -replace '\|','/' -replace '\r?\n',' '))
-	  C2F-Status "SUCCESS"
-	  Write-Output $summary
-	  Write-Output ("report=" + $reportPath)
-	  exit 0
+		  C2F-Evidence ("scan_summary=" + ($summary -replace '\|','/' -replace '\r?\n',' '))
+		  C2F-Status "SUCCESS"
+		  Write-Output $summary
+		  Write-Output ("report=" + $reportPath)
+		  Write-Output ("report_json=" + $reportJsonPath)
+		  exit 0
 	}
 	catch {
 	  $err = $_.Exception.Message
@@ -3743,10 +4242,11 @@ class EndpointExecutor:
 	  C2F-Status "START"
 	  if (-not $ScanPath) { throw "yara-scan requires path argument" }
 	  if (-not (Test-Path $ScanPath)) { throw ("scan path not found: " + $ScanPath) }
-	  $reportDir = "C:\Click2Fix\reports"
-	  New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
-	  $reportPath = Join-Path $reportDir ("yara-scan-" + $ExecId + ".txt")
-	  $scanStarted = Get-Date
+		  $reportDir = "C:\Click2Fix\reports"
+		  New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
+		  $reportPath = Join-Path $reportDir ("yara-scan-" + $ExecId + ".txt")
+		  $reportJsonPath = Join-Path $reportDir ("yara-scan-" + $ExecId + ".json")
+		  $scanStarted = Get-Date
 	  $patterns = @{
 	    "SuspiciousEncodedPowerShell" = "powershell -enc"
 	    "MimikatzKeyword" = "mimikatz"
@@ -3826,28 +4326,58 @@ class EndpointExecutor:
 	  } else {
 	    $reportLines.Add("No YARA indicator matches were detected.")
 	  }
-	  $reportLines.Add("")
-	  $reportLines.Add("Summary: " + $summary)
-	  Set-Content -Path $reportPath -Value $reportLines -Encoding UTF8
-	  C2F-Evidence "scan_type=yara"
-	  C2F-Evidence ("scan_scope=" + $ScanPath)
-	  C2F-Evidence "scan_engine=builtin-patterns"
-	  C2F-Evidence ("scan_report_path=" + $reportPath)
-	  C2F-Evidence ("scan_total_examined=" + $totalExamined)
-	  C2F-Evidence ("scan_matches=" + $hits.Count)
-	  C2F-Evidence ("scan_status=" + $scanStatus)
-	  C2F-Evidence ("artifact_0=report|" + $reportPath + "|format=txt")
+		  $reportLines.Add("")
+		  $reportLines.Add("Summary: " + $summary)
+		  Set-Content -Path $reportPath -Value $reportLines -Encoding UTF8
+		  $reportObject = [ordered]@{
+		    schema_version = "c2f.scan-report.v2"
+		    generated_at = (Get-Date).ToString("o")
+		    product = "Click2Fix"
+		    execution = [ordered]@{
+		      execution_id = [string]$ExecId
+		      agent_id = [string]$AgentId
+		      action_id = [string]$ActionId
+		      started_at = $scanStarted.ToString("o")
+		      finished_at = $scanFinished.ToString("o")
+		      duration_seconds = [int]((New-TimeSpan -Start $scanStarted -End $scanFinished).TotalSeconds)
+		    }
+		    scanner = [ordered]@{
+		      engine = "builtin-patterns"
+		      scope = [string]$ScanPath
+		      scan_type = "yara"
+		    }
+		    summary = [ordered]@{
+		      status = [string]$scanStatus
+		      matches = [int]$hits.Count
+		      total_examined = [int]$totalExamined
+		      message = [string]$summary
+		    }
+		    findings = @($hits)
+		  }
+		  Set-Content -Path $reportJsonPath -Value ($reportObject | ConvertTo-Json -Depth 10) -Encoding UTF8
+		  C2F-Evidence "scan_type=yara"
+		  C2F-Evidence ("scan_scope=" + $ScanPath)
+		  C2F-Evidence "scan_engine=builtin-patterns"
+		  C2F-Evidence ("scan_report_path=" + $reportPath)
+		  C2F-Evidence ("scan_report_json_path=" + $reportJsonPath)
+		  C2F-Evidence ("scan_report_schema=c2f.scan-report.v2")
+		  C2F-Evidence ("scan_total_examined=" + $totalExamined)
+		  C2F-Evidence ("scan_matches=" + $hits.Count)
+		  C2F-Evidence ("scan_status=" + $scanStatus)
+		  C2F-Evidence ("artifact_0=report|" + $reportPath + "|format=txt")
+		  C2F-Evidence ("artifact_1=report|" + $reportJsonPath + "|format=json")
 	  for ($i = 0; $i -lt $hits.Count; $i++) {
 	    $h = $hits[$i]
 	    $safeDetail = ([string]$h.file -replace '\|','/' -replace '\r?\n',' ')
 	    $safeRecommendation = ([string]$h.recommendation -replace '\|','/' -replace '\r?\n',' ')
 	    C2F-Evidence ("scan_hit_" + $i + "=yara|" + [string]$h.rule + "|file=" + $safeDetail + "|detail=needle:" + [string]$h.needle + "|recommendation=" + $safeRecommendation)
 	  }
-	  C2F-Evidence ("scan_summary=" + ($summary -replace '\|','/' -replace '\r?\n',' '))
-	  C2F-Status "SUCCESS"
-	  Write-Output $summary
-	  Write-Output ("report=" + $reportPath)
-	  exit 0
+		  C2F-Evidence ("scan_summary=" + ($summary -replace '\|','/' -replace '\r?\n',' '))
+		  C2F-Status "SUCCESS"
+		  Write-Output $summary
+		  Write-Output ("report=" + $reportPath)
+		  Write-Output ("report_json=" + $reportJsonPath)
+		  exit 0
 	}
 	catch {
 	  $err = $_.Exception.Message
@@ -3907,10 +4437,11 @@ class EndpointExecutor:
 
 	try {
 	  C2F-Status "START"
-	  $reportDir = "C:\Click2Fix\reports"
-	  New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
-	  $reportPath = Join-Path $reportDir ("forensics-" + $ExecId + ".txt")
-	  $scanStarted = Get-Date
+		  $reportDir = "C:\Click2Fix\reports"
+		  New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
+		  $reportPath = Join-Path $reportDir ("forensics-" + $ExecId + ".txt")
+		  $reportJsonPath = Join-Path $reportDir ("forensics-" + $ExecId + ".json")
+		  $scanStarted = Get-Date
 	  $procRows = @()
 	  try {
 	    $procRows = Get-Process | Sort-Object CPU -Descending | Select-Object -First 80 Name,Id,CPU,WS,Path
@@ -3993,27 +4524,59 @@ class EndpointExecutor:
 	  foreach ($c in ($connRows | Select-Object -First 40)) {
 	    $reportLines.Add(([string]$c.LocalAddress + ":" + [string]$c.LocalPort + " -> " + [string]$c.RemoteAddress + ":" + [string]$c.RemotePort + " state=" + [string]$c.State + " pid=" + [string]$c.OwningProcess))
 	  }
-	  $reportLines.Add("")
-	  $reportLines.Add("Summary: " + $summary)
-	  Set-Content -Path $reportPath -Value $reportLines -Encoding UTF8
-	  C2F-Evidence "scan_type=forensics"
-	  C2F-Evidence "scan_engine=windows-native"
-	  C2F-Evidence ("scan_report_path=" + $reportPath)
-	  C2F-Evidence ("scan_total_examined=" + ($procRows.Count + $connRows.Count + $startup.Count))
-	  C2F-Evidence ("scan_matches=" + $suspiciousStartup.Count)
-	  C2F-Evidence ("scan_status=" + $scanStatus)
-	  C2F-Evidence ("artifact_0=report|" + $reportPath + "|format=txt")
+		  $reportLines.Add("")
+		  $reportLines.Add("Summary: " + $summary)
+		  Set-Content -Path $reportPath -Value $reportLines -Encoding UTF8
+		  $reportObject = [ordered]@{
+		    schema_version = "c2f.scan-report.v2"
+		    generated_at = (Get-Date).ToString("o")
+		    product = "Click2Fix"
+		    execution = [ordered]@{
+		      execution_id = [string]$ExecId
+		      agent_id = [string]$AgentId
+		      action_id = [string]$ActionId
+		      started_at = $scanStarted.ToString("o")
+		      finished_at = $scanFinished.ToString("o")
+		      duration_seconds = [int]((New-TimeSpan -Start $scanStarted -End $scanFinished).TotalSeconds)
+		    }
+		    scanner = [ordered]@{
+		      engine = "windows-native"
+		      scan_type = "forensics"
+		      scope = "processes+connections+startup+services"
+		    }
+		    summary = [ordered]@{
+		      status = [string]$scanStatus
+		      suspicious_startup = [int]$suspiciousStartup.Count
+		      process_count = [int]$procRows.Count
+		      connection_count = [int]$connRows.Count
+		      startup_items = [int]$startup.Count
+		      message = [string]$summary
+		    }
+		    findings = @($suspiciousStartup)
+		  }
+		  Set-Content -Path $reportJsonPath -Value ($reportObject | ConvertTo-Json -Depth 10) -Encoding UTF8
+		  C2F-Evidence "scan_type=forensics"
+		  C2F-Evidence "scan_engine=windows-native"
+		  C2F-Evidence ("scan_report_path=" + $reportPath)
+		  C2F-Evidence ("scan_report_json_path=" + $reportJsonPath)
+		  C2F-Evidence ("scan_report_schema=c2f.scan-report.v2")
+		  C2F-Evidence ("scan_total_examined=" + ($procRows.Count + $connRows.Count + $startup.Count))
+		  C2F-Evidence ("scan_matches=" + $suspiciousStartup.Count)
+		  C2F-Evidence ("scan_status=" + $scanStatus)
+		  C2F-Evidence ("artifact_0=report|" + $reportPath + "|format=txt")
+		  C2F-Evidence ("artifact_1=report|" + $reportJsonPath + "|format=json")
 	  for ($i = 0; $i -lt $suspiciousStartup.Count; $i++) {
 	    $h = $suspiciousStartup[$i]
 	    $safeDetail = ([string]$h.value -replace '\|','/' -replace '\r?\n',' ')
 	    if ($safeDetail.Length -gt 220) { $safeDetail = $safeDetail.Substring(0, 220) + "..." }
 	    C2F-Evidence ("scan_hit_" + $i + "=forensics|" + [string]$h.name + "|detail=" + $safeDetail + "|recommendation=Validate startup entry owner, disable unauthorized autorun, and quarantine referenced binaries.")
 	  }
-	  C2F-Evidence ("scan_summary=" + ($summary -replace '\|','/' -replace '\r?\n',' '))
-	  C2F-Status "SUCCESS"
-	  Write-Output $summary
-	  Write-Output ("report=" + $reportPath)
-	  exit 0
+		  C2F-Evidence ("scan_summary=" + ($summary -replace '\|','/' -replace '\r?\n',' '))
+		  C2F-Status "SUCCESS"
+		  Write-Output $summary
+		  Write-Output ("report=" + $reportPath)
+		  Write-Output ("report_json=" + $reportJsonPath)
+		  exit 0
 	}
 	catch {
 	  $err = $_.Exception.Message
@@ -4073,10 +4636,11 @@ class EndpointExecutor:
 
 	try {
 	  C2F-Status "START"
-	  $reportDir = "C:\Click2Fix\reports"
-	  New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
-	  $reportPath = Join-Path $reportDir ("memory-" + $ExecId + ".txt")
-	  $scanStarted = Get-Date
+		  $reportDir = "C:\Click2Fix\reports"
+		  New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
+		  $reportPath = Join-Path $reportDir ("memory-" + $ExecId + ".txt")
+		  $reportJsonPath = Join-Path $reportDir ("memory-" + $ExecId + ".json")
+		  $scanStarted = Get-Date
 	  $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
 	  $top = @()
 	  try {
@@ -4150,26 +4714,57 @@ class EndpointExecutor:
 	  foreach ($p in $top) {
 	    $reportLines.Add(([string]$p.Name + " PID=" + [string]$p.Id + " WS_MB=" + [string]$p.WorkingSetMB + " PM_MB=" + [string]$p.PrivateMemoryMB))
 	  }
-	  $reportLines.Add("")
-	  $reportLines.Add("Summary: " + $summary)
-	  Set-Content -Path $reportPath -Value $reportLines -Encoding UTF8
-	  C2F-Evidence "scan_type=memory"
-	  C2F-Evidence "scan_engine=windows-native"
-	  C2F-Evidence ("scan_report_path=" + $reportPath)
-	  C2F-Evidence ("scan_total_examined=" + $top.Count)
-	  C2F-Evidence ("scan_matches=" + $suspicious.Count)
-	  C2F-Evidence ("scan_status=" + $scanStatus)
-	  C2F-Evidence ("artifact_0=report|" + $reportPath + "|format=txt")
+		  $reportLines.Add("")
+		  $reportLines.Add("Summary: " + $summary)
+		  Set-Content -Path $reportPath -Value $reportLines -Encoding UTF8
+		  $reportObject = [ordered]@{
+		    schema_version = "c2f.scan-report.v2"
+		    generated_at = (Get-Date).ToString("o")
+		    product = "Click2Fix"
+		    execution = [ordered]@{
+		      execution_id = [string]$ExecId
+		      agent_id = [string]$AgentId
+		      action_id = [string]$ActionId
+		      started_at = $scanStarted.ToString("o")
+		      finished_at = $scanFinished.ToString("o")
+		      duration_seconds = [int]((New-TimeSpan -Start $scanStarted -End $scanFinished).TotalSeconds)
+		    }
+		    scanner = [ordered]@{
+		      engine = "windows-native"
+		      scan_type = "memory"
+		    }
+		    summary = [ordered]@{
+		      status = [string]$scanStatus
+		      total_memory_mb = [double]$totalMb
+		      free_memory_mb = [double]$freeMb
+		      top_processes = [int]$top.Count
+		      suspicious = [int]$suspicious.Count
+		      message = [string]$summary
+		    }
+		    findings = @($suspicious)
+		  }
+		  Set-Content -Path $reportJsonPath -Value ($reportObject | ConvertTo-Json -Depth 10) -Encoding UTF8
+		  C2F-Evidence "scan_type=memory"
+		  C2F-Evidence "scan_engine=windows-native"
+		  C2F-Evidence ("scan_report_path=" + $reportPath)
+		  C2F-Evidence ("scan_report_json_path=" + $reportJsonPath)
+		  C2F-Evidence ("scan_report_schema=c2f.scan-report.v2")
+		  C2F-Evidence ("scan_total_examined=" + $top.Count)
+		  C2F-Evidence ("scan_matches=" + $suspicious.Count)
+		  C2F-Evidence ("scan_status=" + $scanStatus)
+		  C2F-Evidence ("artifact_0=report|" + $reportPath + "|format=txt")
+		  C2F-Evidence ("artifact_1=report|" + $reportJsonPath + "|format=json")
 	  for ($i = 0; $i -lt $suspicious.Count; $i++) {
 	    $h = $suspicious[$i]
 	    $detail = ("reason=" + [string]$h.reason + ";ws_mb=" + [string]$h.working_set_mb + ";private_mb=" + [string]$h.private_mb) -replace '\|','/' -replace '\r?\n',' '
 	    C2F-Evidence ("scan_hit_" + $i + "=memory|" + [string]$h.name + "|pid=" + [string]$h.pid + "|detail=" + $detail + "|recommendation=" + [string]$h.recommendation)
 	  }
-	  C2F-Evidence ("scan_summary=" + ($summary -replace '\|','/' -replace '\r?\n',' '))
-	  C2F-Status "SUCCESS"
-	  Write-Output $summary
-	  Write-Output ("report=" + $reportPath)
-	  exit 0
+		  C2F-Evidence ("scan_summary=" + ($summary -replace '\|','/' -replace '\r?\n',' '))
+		  C2F-Status "SUCCESS"
+		  Write-Output $summary
+		  Write-Output ("report=" + $reportPath)
+		  Write-Output ("report_json=" + $reportJsonPath)
+		  exit 0
 	}
 	catch {
 	  $err = $_.Exception.Message
@@ -5673,6 +6268,72 @@ catch {
                 found.append(norm)
         return sorted(set(found))
 
+    def _discover_env_linux_agent_ids(self) -> List[str]:
+        prefix = "C2F_SSH_USERNAME_"
+        found: List[str] = []
+        for key in os.environ.keys():
+            if not key.startswith(prefix):
+                continue
+            suffix = key[len(prefix):].strip()
+            if not suffix:
+                continue
+            norm = self._normalize_agent_id(suffix)
+            if not norm:
+                continue
+            username = _resolve_env(key)
+            password = _resolve_env(f"C2F_SSH_PASSWORD_{suffix}")
+            key_file = _resolve_env(f"C2F_SSH_KEY_FILE_{suffix}")
+            if username and (password or key_file or self.linux_cfg.get("password") or self.linux_cfg.get("key_file")):
+                found.append(norm)
+        return sorted(set(found))
+
+    def _linux_credentials_for_agent_target(
+        self,
+        *,
+        agent_id: Optional[str],
+    ) -> Dict[str, str]:
+        norm = self._normalize_agent_id(agent_id or "")
+        global_username = str(self.linux_cfg.get("username") or "").strip()
+        global_password = str(self.linux_cfg.get("password") or "").strip()
+        global_key_file = str(self.linux_cfg.get("key_file") or "").strip()
+        if norm:
+            env_username = _resolve_env(f"C2F_SSH_USERNAME_{norm}")
+            env_password = _resolve_env(f"C2F_SSH_PASSWORD_{norm}")
+            env_key_file = _resolve_env(f"C2F_SSH_KEY_FILE_{norm}")
+            if env_username and (env_password or env_key_file or global_password or global_key_file):
+                return {
+                    "username": env_username,
+                    "password": env_password or global_password,
+                    "key_file": env_key_file or global_key_file,
+                }
+            if global_username and (env_password or env_key_file):
+                return {
+                    "username": global_username,
+                    "password": env_password or global_password,
+                    "key_file": env_key_file or global_key_file,
+                }
+            per_agent = self.linux_agent_credentials.get(norm) or {}
+            per_agent_username = str(per_agent.get("username") or "").strip()
+            per_agent_password = str(per_agent.get("password") or "").strip()
+            per_agent_key_file = str(per_agent.get("key_file") or "").strip()
+            if per_agent_username and (per_agent_password or per_agent_key_file or global_password or global_key_file):
+                return {
+                    "username": per_agent_username,
+                    "password": per_agent_password or global_password,
+                    "key_file": per_agent_key_file or global_key_file,
+                }
+            if global_username and (per_agent_password or per_agent_key_file):
+                return {
+                    "username": global_username,
+                    "password": per_agent_password or global_password,
+                    "key_file": per_agent_key_file or global_key_file,
+                }
+        return {
+            "username": global_username,
+            "password": global_password,
+            "key_file": global_key_file,
+        }
+
     def execute(
         self,
         action_id: str,
@@ -5937,6 +6598,51 @@ catch {
             "raw": {"id": norm, "name": name, "ip": ip, "source": "indexer"},
         }
 
+    def _resolve_target_from_history(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        norm = self._normalize_agent_id(agent_id)
+        if not norm:
+            return None
+        try:
+            from db.database import connect  # Imported lazily to avoid module-level DB dependency.
+
+            conn = connect()
+            try:
+                row = conn.execute(
+                    text(
+                        """
+                        SELECT
+                            COALESCE(NULLIF(TRIM(agent_name), ''), :agent_id) AS agent_name,
+                            NULLIF(TRIM(target_ip), '') AS target_ip,
+                            COALESCE(NULLIF(TRIM(platform), ''), 'windows') AS platform
+                        FROM execution_targets
+                        WHERE agent_id = :agent_id
+                          AND COALESCE(NULLIF(TRIM(target_ip), ''), '') <> ''
+                        ORDER BY id DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {"agent_id": norm},
+                ).fetchone()
+            finally:
+                conn.close()
+        except Exception:
+            return None
+        if not row:
+            return None
+        target_ip = str(row[1] or "").strip()
+        if not target_ip:
+            return None
+        platform = str(row[2] or "windows").strip().lower()
+        if platform not in {"windows", "linux"}:
+            platform = "windows"
+        return {
+            "agent_id": norm,
+            "agent_name": str(row[0] or norm),
+            "ip": target_ip,
+            "platform": platform,
+            "raw": {"id": norm, "name": str(row[0] or norm), "ip": target_ip, "source": "execution_history"},
+        }
+
     def _resolve_agent_target(
         self,
         agent_id: str,
@@ -5965,6 +6671,11 @@ catch {
         cached = self._target_cache.get(normalized)
         if cached and cached.get("ip"):
             return cached
+
+        history_target = self._resolve_target_from_history(normalized)
+        if history_target:
+            self._cache_target(history_target)
+            return history_target
 
         indexer_target = self._resolve_target_from_indexer(normalized)
         if indexer_target:
@@ -6196,7 +6907,12 @@ catch {
         else:
             linux_action_id = logical_action_id if logical_aid in {"package-update", "software-install-upgrade"} else action_id
             script = self._build_linux_script(linux_action_id, action_args, context=context, target=target)
-            status_code, stdout, stderr = self._run_ssh(target["ip"], script, timeout_seconds=timeout_seconds)
+            status_code, stdout, stderr = self._run_ssh(
+                target["ip"],
+                script,
+                timeout_seconds=timeout_seconds,
+                agent_id=str(target.get("agent_id") or ""),
+            )
 
         status_code, stdout, stderr = self._reconcile_semantic_success_result(
             action_id=logical_aid or aid,
@@ -6307,6 +7023,87 @@ catch {
         return str(match.group(1)).strip()
 
     @classmethod
+    def _is_scan_report_action(cls, action_id: Any) -> bool:
+        action = str(action_id or "").strip().lower()
+        return action in cls.SCAN_REPORT_ACTIONS
+
+    @classmethod
+    def _scan_report_candidates(
+        cls,
+        *,
+        action_id: Any,
+        execution_tag: Any,
+        hinted_path: Any = "",
+    ) -> List[str]:
+        candidates: List[str] = []
+        hint = str(hinted_path or "").strip()
+        if hint:
+            candidates.append(hint)
+        action = str(action_id or "").strip().lower()
+        prefix = str(cls.SCAN_REPORT_PREFIX_BY_ACTION.get(action) or "").strip()
+        exec_tag = str(execution_tag or "").strip()
+        if prefix and exec_tag:
+            candidates.append(rf"C:\Click2Fix\reports\{prefix}-{exec_tag}.txt")
+        deduped: List[str] = []
+        seen: set[str] = set()
+        for item in candidates:
+            key = str(item or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(str(item).strip())
+        return deduped
+
+    def _read_windows_scan_report_metadata(
+        self,
+        *,
+        target: Dict[str, Any],
+        report_path: str,
+        timeout_seconds: int = 30,
+    ) -> Dict[str, Any]:
+        path = str(report_path or "").strip()
+        if not path:
+            return {}
+        probe_script = (
+            "$ErrorActionPreference='SilentlyContinue';"
+            "$ProgressPreference='SilentlyContinue';"
+            f"$rp={_ps_quote(path)};"
+            "$res=@{ exists=$false; path=$rp; size_bytes=0; line_count=0; status=''; summary=''; sha256=''; "
+            "last_write_iso=''; last_write_epoch=0 };"
+            "if(Test-Path $rp){"
+            "$res.exists=$true;"
+            "try{ $it=Get-Item -Path $rp -ErrorAction Stop; if($it){ $res.size_bytes=[int64]$it.Length; "
+            "$res.last_write_iso=$it.LastWriteTimeUtc.ToString('o'); "
+            "$res.last_write_epoch=[int64]([DateTimeOffset]$it.LastWriteTimeUtc).ToUnixTimeSeconds() } }catch{};"
+            "try{ $lines=Get-Content -Path $rp -ErrorAction Stop; $res.line_count=[int]$lines.Count; "
+            "foreach($ln in $lines){ if($ln -match '^Status:\\s*(.+)$'){ $res.status=$matches[1].Trim() }; "
+            "if($ln -match '^Summary:\\s*(.+)$'){ $res.summary=$matches[1].Trim() } } }catch{};"
+            "if(-not $res.summary){ try{ $tail=Get-Content -Path $rp -Tail 5 -ErrorAction SilentlyContinue | Out-String; "
+            "if($tail){ $res.summary=($tail.Trim()) } }catch{} };"
+            "try{ $h=Get-FileHash -Path $rp -Algorithm SHA256 -ErrorAction Stop; if($h){ $res.sha256=([string]$h.Hash).ToLower() } }catch{};"
+            "};"
+            "$res | ConvertTo-Json -Depth 6 -Compress;"
+        )
+        try:
+            _, out, _ = self._run_winrm(target, probe_script, timeout_seconds=timeout_seconds)
+        except Exception:
+            return {}
+        payload = str(out or "").strip()
+        if not payload:
+            return {}
+        for line in reversed(payload.splitlines()):
+            raw = str(line or "").strip()
+            if not raw or not raw.startswith("{"):
+                continue
+            try:
+                decoded = json.loads(raw.lstrip("\ufeff"))
+            except Exception:
+                continue
+            if isinstance(decoded, dict):
+                return decoded
+        return {}
+
+    @classmethod
     def _has_semantic_success_evidence(cls, action_id: str, stdout: str) -> bool:
         action = str(action_id or "").strip().lower()
         text = str(stdout or "")
@@ -6328,36 +7125,48 @@ catch {
                 or "blocklist=" in lower
             )
 
-        semantic_scan_actions = {
-            "endpoint-healthcheck",
-            "ioc-scan",
-            "toc-scan",
-            "yara-scan",
-            "collect-forensics",
-            "collect-memory",
-            "malware-scan",
-            "threat-hunt-persistence",
-        }
-        if action not in semantic_scan_actions:
+        if action == "endpoint-healthcheck":
+            return "healthcheck ok" in lower
+
+        if action not in cls.SCAN_REPORT_ACTIONS:
             return False
 
         scan_status = str(metrics.get("scan_status") or "").strip().upper()
+        scan_outcome = str(metrics.get("scan_outcome") or "").strip().upper()
         report_path = str(metrics.get("scan_report_path") or "").strip()
+        report_json_path = str(metrics.get("scan_report_json_path") or "").strip()
+        report_pdf_path = str(metrics.get("scan_report_pdf_path") or "").strip()
+        artifact_0 = str(metrics.get("artifact_0") or "").strip()
+        artifact_1 = str(metrics.get("artifact_1") or "").strip()
+        artifact_2 = str(metrics.get("artifact_2") or "").strip()
         summary = str(metrics.get("scan_summary") or "").strip()
-        if report_path and (scan_status in {"CLEAN", "MATCH", "SUCCESS"} or bool(summary)):
-            return True
-
-        return any(
+        has_report_artifact = any(
+            bool(item)
+            for item in (
+                report_path,
+                report_json_path,
+                report_pdf_path,
+            )
+        ) or any(
+            str(item).lower().startswith("report|")
+            for item in (
+                artifact_0,
+                artifact_1,
+                artifact_2,
+            )
+        )
+        has_scan_summary = bool(summary) or any(
             marker in lower
             for marker in (
-                "healthcheck ok",
                 " scan complete: status=",
                 "forensics collection complete:",
                 "memory collection complete:",
                 "persistence hunt complete:",
-                "report=",
             )
         )
+        scan_state_ok = scan_status in cls.SCAN_TERMINAL_STATES
+        scan_outcome_ok = scan_outcome in {"SUCCESS", "SUCCESS_WITH_WARNINGS", "CLEAN", "MATCH"}
+        return bool(has_report_artifact and (scan_state_ok or scan_outcome_ok or has_scan_summary))
 
     @staticmethod
     def _has_explicit_error_evidence(stdout: str, stderr: str) -> bool:
@@ -6396,9 +7205,12 @@ catch {
                 line = raw.strip()
                 if not line:
                     continue
-                if line.startswith("C2F_LOG "):
-                    line = line[len("C2F_LOG ") :].strip()
-                match = re.search(r"\bstatus=(START|SUCCESS|FAILED|PARTIAL)\b", line, flags=re.IGNORECASE)
+                # Only trust explicit C2F_LOG lines for terminal status signals.
+                if not line.startswith("C2F_LOG "):
+                    continue
+                line = line[len("C2F_LOG ") :].strip()
+                # Reject ambiguous status tokens such as status=SUCCESS/FAILED.
+                match = re.search(r"\bstatus=(START|SUCCESS|FAILED|PARTIAL)\b(?!/)", line, flags=re.IGNORECASE)
                 if not match:
                     continue
                 latest = str(match.group(1) or "").strip().upper()
@@ -6461,6 +7273,73 @@ catch {
         out = str(stdout or "")
         err = str(stderr or "")
         blob = f"{out}\n{err}".lower()
+        metrics = EndpointExecutor._extract_c2f_evidence_metrics(out)
+        outcome = str(metrics.get("outcome") or "").strip().upper()
+
+        def metric_int(name: str, default: int = -1) -> int:
+            return _to_int(metrics.get(name), default)
+
+        failed_candidates = [
+            metric_int("updates_failed", -1),
+            metric_int("updates_failed_estimate", -1),
+        ]
+        failed_values = [value for value in failed_candidates if value >= 0]
+        failed_count = max(failed_values) if failed_values else 0
+        unresolved_count = max(
+            metric_int("updates_unresolved", -1),
+            metric_int("updates_remaining_non_target", -1),
+        )
+        if unresolved_count < 0:
+            unresolved_count = 0
+        remaining_count = metric_int("updates_remaining", -1)
+        update_actions = {
+            "package-update",
+            "software-install-upgrade",
+            "patch-windows",
+            "windows-os-update",
+            "fleet-software-update",
+            "patch-linux",
+        }
+        if action in update_actions:
+            clean_outcome = outcome in {"SUCCESS", "NO_CHANGE", "CLEAN", "WAITING_REBOOT"}
+            if clean_outcome and failed_count == 0 and unresolved_count == 0:
+                if remaining_count in {-1, 0}:
+                    return True
+                # WAITING_REBOOT can legitimately report remaining installables before reboot.
+                if outcome == "WAITING_REBOOT":
+                    return True
+
+        if action in {"package-update", "software-install-upgrade"}:
+            # Targeted package update can surface as failed when post-verify confirms
+            # no version change, but there was no available target version to apply.
+            # This must be checked before generic "verification failed" hard markers.
+            no_change = "message=post_verify_no_version_change" in blob
+            explicit_no_change = any(
+                marker in blob
+                for marker in (
+                    "message=no_applicable_update",
+                    "reason=no_applicable_update",
+                    "reason=already_target_state",
+                    "reason=version_already_installed",
+                    "post_verify_fresh_install_present_no_version",
+                    "post_verify_present_after_unknown_before",
+                )
+            )
+            no_available_before = bool(
+                re.search(
+                    r"available_before=\s*(?:$|\r|\n)",
+                    blob,
+                    flags=re.IGNORECASE | re.MULTILINE,
+                )
+            )
+            no_unresolved = unresolved_count == 0 or "updates_unresolved=0" in blob
+            no_failed = failed_count == 0
+            no_remaining = remaining_count in {-1, 0}
+            if no_unresolved and no_failed and (
+                (no_change and no_available_before and no_remaining)
+                or (explicit_no_change and (no_remaining or "updates_remaining=0" in blob))
+            ):
+                return True
         hard_error_markers = (
             "parsererror",
             "expectedvalueexpression",
@@ -6517,6 +7396,105 @@ catch {
 
         return False
 
+    @classmethod
+    def _has_update_evidence(cls, stdout: str, stderr: str = "") -> bool:
+        metrics = cls._extract_c2f_evidence_metrics(stdout)
+        if any(
+            key in metrics
+            for key in (
+                "outcome",
+                "updates_applicable",
+                "updates_installable",
+                "updates_installed",
+                "updates_failed",
+                "updates_remaining",
+                "updates_unresolved",
+            )
+        ):
+            return True
+        blob = f"{stdout}\n{stderr}".lower()
+        return any(
+            marker in blob
+            for marker in (
+                "package update complete:",
+                "windows update install complete:",
+                "updates_applicable=",
+                "updates_failed=",
+                "updates_unresolved=",
+                " evidence=outcome=",
+            )
+        )
+
+    @classmethod
+    def _is_clean_update_outcome(cls, action_id: str, stdout: str, stderr: str) -> bool:
+        action = str(action_id or "").strip().lower()
+        update_actions = {
+            "package-update",
+            "software-install-upgrade",
+            "patch-windows",
+            "windows-os-update",
+            "fleet-software-update",
+            "patch-linux",
+        }
+        if action not in update_actions and not (action == "custom-os-command" and cls._has_update_evidence(stdout, stderr)):
+            return False
+
+        metrics = cls._extract_c2f_evidence_metrics(stdout)
+        blob = f"{stdout}\n{stderr}".lower()
+
+        def metric_int(name: str, default: int = -1) -> int:
+            if name in metrics:
+                return _to_int(metrics.get(name), default)
+            match = re.search(rf"\b{name}=([-+]?\d+)\b", blob, flags=re.IGNORECASE)
+            if not match:
+                return default
+            return _to_int(match.group(1), default)
+
+        outcome = str(metrics.get("outcome") or "").strip().upper()
+        if not outcome:
+            match = re.search(r"\boutcome=([A-Z_]+)\b", blob.upper())
+            if match:
+                outcome = str(match.group(1) or "").strip().upper()
+
+        failed_candidates = [
+            metric_int("updates_failed", -1),
+            metric_int("updates_failed_estimate", -1),
+        ]
+        failed_values = [value for value in failed_candidates if value >= 0]
+        failed_count = max(failed_values) if failed_values else 0
+
+        unresolved_count = max(
+            metric_int("updates_unresolved", -1),
+            metric_int("updates_remaining_non_target", -1),
+        )
+        if unresolved_count < 0:
+            unresolved_count = 0
+
+        remaining_count = metric_int("updates_remaining", -1)
+        has_no_change_reason = any(
+            marker in blob
+            for marker in (
+                "reason=already_target_state",
+                "reason=version_already_installed",
+                "message=no_applicable_update",
+                "reason=no_applicable_update",
+                "message=post_verify_no_version_change",
+                "post_verify_fresh_install_present_no_version",
+                "post_verify_present_after_unknown_before",
+            )
+        )
+
+        clean_outcome = outcome in {"SUCCESS", "NO_CHANGE", "CLEAN", "WAITING_REBOOT"}
+        if clean_outcome and failed_count == 0 and unresolved_count == 0:
+            if remaining_count in {-1, 0}:
+                return True
+            if outcome == "WAITING_REBOOT":
+                return True
+            if has_no_change_reason:
+                return True
+
+        return False
+
     def _reconcile_semantic_success_result(
         self,
         *,
@@ -6534,6 +7512,18 @@ catch {
         action = str(action_id or "").strip().lower()
         if code == 0:
             return code, out_text, err_text
+        if self._is_clean_update_outcome(action, out_text, err_text):
+            marker = (
+                "C2F_LOG reconciliation=semantic_success_override "
+                + "action="
+                + action
+                + " prior_status="
+                + str(code)
+                + " reason=clean_update_outcome"
+            )
+            if marker not in out_text:
+                out_text = (out_text + ("\n" if out_text else "") + marker).strip()
+            return 0, out_text, ""
         if self._is_idempotent_nonfatal_failure(action, out_text, err_text):
             marker = (
                 "C2F_LOG reconciliation=semantic_success_override "
@@ -7018,6 +8008,9 @@ catch {
             except Exception:
                 out = ""
             lines = [ln.strip() for ln in str(out or "").splitlines() if ln.strip()]
+            hinted_report = _latest_evidence(lines, "scan_report_path")
+            if hinted_report:
+                latest_report_hint = hinted_report
             for ln in reversed(lines):
                 if " status=SUCCESS" in ln:
                     msg = ""
@@ -7314,6 +8307,9 @@ catch {
         inconclusive_result_since: Optional[float] = None
         terminal_flush_since: Optional[float] = None
         last_heartbeat_emit = 0.0
+        script_action = str(script_action_id or "").strip().lower()
+        action_for_recovery = script_action or requested_action
+        latest_report_hint = ""
 
         poll_log_script = (
             "$ErrorActionPreference='SilentlyContinue';"
@@ -7372,6 +8368,88 @@ catch {
                     continue
                 return payload
             return ""
+
+        def _append_stream_lines(lines: List[str]) -> None:
+            if not lines:
+                return
+            fresh = [ln for ln in lines if ln and ln not in sent]
+            if not fresh:
+                return
+            for ln in fresh:
+                sent.add(ln)
+                sent_order.append(ln)
+            self._emit_target_log(target, context, fresh)
+
+        def _recover_scan_report(reason: str, summary_hint: str = "") -> Optional[Dict[str, Any]]:
+            nonlocal latest_report_hint
+            if not self._is_scan_report_action(action_for_recovery):
+                return None
+            report_candidates = self._scan_report_candidates(
+                action_id=action_for_recovery,
+                execution_tag=exec_tag,
+                hinted_path=latest_report_hint,
+            )
+            for candidate in report_candidates:
+                meta = self._read_windows_scan_report_metadata(
+                    target=target,
+                    report_path=candidate,
+                    timeout_seconds=30,
+                )
+                if not isinstance(meta, dict) or not self._parse_bool_metric(meta.get("exists"), False):
+                    continue
+                last_write_epoch = _to_int(meta.get("last_write_epoch"), 0)
+                if last_write_epoch > 0 and float(last_write_epoch) < (start_ts - 120):
+                    # Ignore stale reports from previous executions.
+                    continue
+                report_path = str(meta.get("path") or candidate).strip()
+                report_status = str(meta.get("status") or "").strip().upper()
+                report_summary = str(meta.get("summary") or "").strip()
+                report_sha256 = str(meta.get("sha256") or "").strip().lower()
+                report_size = max(0, _to_int(meta.get("size_bytes"), 0))
+                report_lines = max(0, _to_int(meta.get("line_count"), 0))
+                if not report_summary:
+                    report_summary = (
+                        summary_hint
+                        or f"{action_for_recovery} completed (report metadata recovered: {reason})"
+                    )
+                if report_status in {"FAILED", "ERROR"}:
+                    return {
+                        "ok": False,
+                        "summary": report_summary,
+                        "error": report_summary,
+                    }
+                if report_status and report_status not in self.SCAN_TERMINAL_STATES and report_lines < 3:
+                    continue
+                now_iso = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+                synthetic_lines = [
+                    f"{now_iso} exec={exec_tag} agent={agent_id} action={action_id} user=SYSTEM evidence=scan_report_path={report_path}",
+                    f"{now_iso} exec={exec_tag} agent={agent_id} action={action_id} user=SYSTEM evidence=scan_report_size_bytes={report_size}",
+                ]
+                if report_sha256:
+                    synthetic_lines.append(
+                        f"{now_iso} exec={exec_tag} agent={agent_id} action={action_id} user=SYSTEM evidence=scan_report_sha256={report_sha256}"
+                    )
+                if report_status:
+                    synthetic_lines.append(
+                        f"{now_iso} exec={exec_tag} agent={agent_id} action={action_id} user=SYSTEM evidence=scan_status={report_status}"
+                    )
+                synthetic_lines.append(
+                    f"{now_iso} exec={exec_tag} agent={agent_id} action={action_id} user=SYSTEM evidence=artifact_0=report|{report_path}|format=txt"
+                )
+                summary_clean = report_summary.replace("\r", " ").replace("\n", " ").replace("|", "/")
+                synthetic_lines.append(
+                    f"{now_iso} exec={exec_tag} agent={agent_id} action={action_id} user=SYSTEM evidence=scan_summary={summary_clean}"
+                )
+                synthetic_lines.append(
+                    f"{now_iso} exec={exec_tag} agent={agent_id} action={action_id} user=SYSTEM status=SUCCESS message=report_recovered_without_terminal_status"
+                )
+                _append_stream_lines(synthetic_lines)
+                latest_report_hint = report_path
+                return {
+                    "ok": True,
+                    "summary": report_summary,
+                }
+            return None
 
         def _task_state() -> Dict[str, Any]:
             try:
@@ -7464,11 +8542,7 @@ catch {
                     break
 
             new_lines = [ln for ln in lines if ln not in sent]
-            if new_lines:
-                for ln in new_lines:
-                    sent.add(ln)
-                    sent_order.append(ln)
-                self._emit_target_log(target, context, new_lines)
+            _append_stream_lines(new_lines)
 
             if terminal_status is not None:
                 terminal_flush_since = None
@@ -7517,6 +8591,17 @@ catch {
                 or _latest_evidence(lines, "outcome")
             )
             if latest_err:
+                err_low = str(latest_err or "").lower()
+                if (
+                    "without explicit terminal status log" in err_low
+                    or "without terminal status evidence" in err_low
+                ):
+                    recovered = _recover_scan_report(
+                        reason="error_marker_without_terminal_status",
+                        summary_hint=latest_summary or latest_err,
+                    )
+                    if recovered is not None:
+                        return recovered
                 return {
                     "ok": False,
                     "summary": latest_err,
@@ -7574,6 +8659,40 @@ catch {
                     else:
                         terminal_flush_since = None
                     inconclusive_result_since = None
+                    recovered = _recover_scan_report(
+                        reason="task_result_zero_without_terminal_status",
+                        summary_hint=latest_summary,
+                    )
+                    if recovered is not None:
+                        return recovered
+                    if self._is_scan_report_action(action_for_recovery):
+                        evidence_blob = "\n".join(sent_order[-200:])
+                        evidence_metrics = self._extract_c2f_evidence_metrics(evidence_blob)
+                        report_marker_present = any(
+                            bool(str(evidence_metrics.get(key) or "").strip())
+                            for key in (
+                                "scan_report_path",
+                                "scan_report_json_path",
+                                "scan_report_pdf_path",
+                                "artifact_0",
+                                "artifact_1",
+                                "artifact_2",
+                            )
+                        )
+                        scan_status_value = str(evidence_metrics.get("scan_status") or "").strip().upper()
+                        summary_value = str(evidence_metrics.get("scan_summary") or "").strip()
+                        if not report_marker_present or (
+                            scan_status_value not in self.SCAN_TERMINAL_STATES and not summary_value
+                        ):
+                            strict_scan_msg = (
+                                latest_summary
+                                or f"{action_id} completed with task_result=0 but missing terminal status and report evidence"
+                            )
+                            return {
+                                "ok": False,
+                                "summary": strict_scan_msg,
+                                "error": strict_scan_msg,
+                            }
                     return {
                         "ok": True,
                         "summary": latest_summary
@@ -7622,6 +8741,13 @@ catch {
                 else:
                     terminal_flush_since = None
 
+                recovered = _recover_scan_report(
+                    reason="nonzero_task_result_without_terminal_status",
+                    summary_hint=latest_summary,
+                )
+                if recovered is not None:
+                    return recovered
+
                 task_result = last_task_result_hex or str(last_task_result_code)
                 detail_suffix = f"; last_run={last_task_run_time}" if last_task_run_time else ""
                 task_failure_msg = (
@@ -7637,6 +8763,12 @@ catch {
                 latest_summary
                 or f"{action_id} finished without terminal status evidence (status=SUCCESS/FAILED)"
             )
+            recovered = _recover_scan_report(
+                reason="missing_terminal_status_marker",
+                summary_hint=missing_status_msg,
+            )
+            if recovered is not None:
+                return recovered
             return {
                 "ok": False,
                 "summary": missing_status_msg,
@@ -7674,6 +8806,11 @@ catch {
             result_obj = result_obj or poll_once()
         except Exception:
             pass
+
+        if result_obj is None:
+            recovered = _recover_scan_report(reason="orchestration_timeout", summary_hint="")
+            if recovered is not None:
+                result_obj = recovered
 
         if result_obj is None:
             timeout_msg = f"Timed out waiting for {action_id} result after {int(timeout_seconds or 0)}s"
@@ -7751,6 +8888,24 @@ catch {
                     stderr = (stderr + " | direct_fallback_failed: " + extra).strip(" |")
             except Exception as exc:
                 stderr = (stderr + " | direct_fallback_failed: " + str(exc)).strip(" |")
+        if (not ok) and action_key in self.SCAN_REPORT_ACTIONS:
+            # Scan/report actions should prefer deterministic report output.
+            # If scheduled-task signaling is noisy, retry once through direct WinRM path.
+            try:
+                rc2, out2, err2 = _run_direct_script(override_run_as_system=False)
+                rc2, out2, err2 = self._reconcile_semantic_success_result(
+                    action_id=action_key,
+                    status_code=rc2,
+                    stdout=out2,
+                    stderr=err2,
+                )
+                if rc2 == 0:
+                    return 0, out2, ""
+                extra = (err2 or out2 or "").strip()
+                if extra:
+                    stderr = (stderr + " | scan_direct_fallback_failed: " + extra).strip(" |")
+            except Exception as exc:
+                stderr = (stderr + " | scan_direct_fallback_failed: " + str(exc)).strip(" |")
         return (0 if ok else 1), stdout, stderr
 
     def _run_winrm(self, target: Dict[str, Any], script: str, *, timeout_seconds: Optional[int] = None):
@@ -7859,10 +9014,18 @@ catch {
             raise HTTPException(status_code=502, detail=detail)
         raise HTTPException(status_code=502, detail=f"WinRM execution failed for agent {agent_id} ({ip})")
 
-    def _run_ssh(self, ip: str, script: str, *, timeout_seconds: Optional[int] = None):
+    def _run_ssh(
+        self,
+        ip: str,
+        script: str,
+        *,
+        timeout_seconds: Optional[int] = None,
+        agent_id: Optional[str] = None,
+    ):
         if not self.linux_cfg["enabled"]:
             raise HTTPException(status_code=400, detail="Linux endpoint connector is disabled")
-        if not self.linux_cfg["username"]:
+        creds = self._linux_credentials_for_agent_target(agent_id=agent_id)
+        if not creds.get("username"):
             raise HTTPException(status_code=400, detail="Linux endpoint connector username is missing")
 
         try:
@@ -7877,9 +9040,9 @@ catch {
             client.connect(
                 hostname=ip,
                 port=self.linux_cfg["port"],
-                username=self.linux_cfg["username"],
-                password=self.linux_cfg["password"] or None,
-                key_filename=self.linux_cfg["key_file"] or None,
+                username=creds.get("username"),
+                password=creds.get("password") or None,
+                key_filename=creds.get("key_file") or None,
                 timeout=timeout,
             )
             stdin, stdout, stderr = client.exec_command(script, timeout=timeout)
@@ -8359,11 +9522,12 @@ catch {
             "logfile='/var/tmp/click2fix_executions.log'; "
             f"exec_id={safe_exec}; agent_id={safe_agent}; action_id={safe_action}; "
             "user=$(id -un); ts=$(date -Iseconds); "
-            "echo \"$ts exec=$exec_id agent=$agent_id action=$action_id user=$user status=START\" | sudo tee -a \"$logfile\" >/dev/null; "
-            "c2f_evidence(){ msg=\"$*\"; ts=$(date -Iseconds); echo \"$ts exec=$exec_id agent=$agent_id action=$action_id user=$user evidence=$msg\" | sudo tee -a \"$logfile\" >/dev/null; }; "
+            "c2f_log_append(){ line=\"$1\"; if command -v sudo >/dev/null 2>&1; then printf '%s\\n' \"$line\" | sudo tee -a \"$logfile\" >/dev/null; else printf '%s\\n' \"$line\" | tee -a \"$logfile\" >/dev/null; fi; }; "
+            "c2f_log_append \"$ts exec=$exec_id agent=$agent_id action=$action_id user=$user status=START\"; "
+            "c2f_evidence(){ msg=\"$*\"; ts=$(date -Iseconds); c2f_log_append \"$ts exec=$exec_id agent=$agent_id action=$action_id user=$user evidence=$msg\"; }; "
             f"{inner}; "
             "ts2=$(date -Iseconds); "
-            "echo \"$ts2 exec=$exec_id agent=$agent_id action=$action_id user=$user status=SUCCESS\" | sudo tee -a \"$logfile\" >/dev/null; "
+            "c2f_log_append \"$ts2 exec=$exec_id agent=$agent_id action=$action_id user=$user status=SUCCESS\"; "
             "grep \"exec=$exec_id agent=$agent_id action=$action_id \" \"$logfile\" | tail -n 50 | sed 's/^/C2F_LOG /'"
         )
 
@@ -8556,15 +9720,26 @@ catch {
             verify_kb = _sh_quote(args[1] if len(args) > 1 else "")
             verify_min_build = _sh_quote(args[2] if len(args) > 2 else "")
             verify_stdout_contains = _sh_quote(args[3] if len(args) > 3 else "")
+            run_as_system = _sh_quote(args[4] if len(args) > 4 else "false")
             inner = (
-                f"cmd={cmd}; verify_kb={verify_kb}; verify_min_build={verify_min_build}; verify_contains={verify_stdout_contains}; "
+                f"cmd={cmd}; verify_kb={verify_kb}; verify_min_build={verify_min_build}; verify_contains={verify_stdout_contains}; run_as_system_raw={run_as_system}; "
                 "if [ -z \"$(printf '%s' \"$cmd\" | tr -d '[:space:]')\" ]; then echo 'custom-os-command requires command argument' >&2; exit 1; fi; "
                 "if [ -n \"$(printf '%s' \"$verify_kb\" | tr -d '[:space:]')\" ] || [ -n \"$(printf '%s' \"$verify_min_build\" | tr -d '[:space:]')\" ]; then "
                 "echo 'custom-os-command verification fields verify_kb/verify_min_build are supported only on Windows endpoints' >&2; exit 1; "
                 "fi; "
+                "run_as_system=false; "
+                "if printf '%s' \"$run_as_system_raw\" | tr '[:upper:]' '[:lower:]' | grep -Eq '^(1|true|yes|on)$'; then run_as_system=true; fi; "
                 "safe_cmd=$(printf '%s' \"$cmd\" | tr '|' '/' | cut -c1-220); "
                 "c2f_evidence \"custom_command=$safe_cmd\"; "
-                "set +e; out=$(bash -lc \"$cmd\" 2>&1); rc=$?; set -e; "
+                "c2f_evidence \"run_as_system=$run_as_system\"; "
+                "set +e; "
+                "if [ \"$run_as_system\" = \"true\" ]; then "
+                "if [ \"$(id -u)\" = \"0\" ]; then out=$(bash -lc \"$cmd\" 2>&1); rc=$?; "
+                "elif command -v sudo >/dev/null 2>&1; then out=$(sudo -n bash -lc \"$cmd\" 2>&1); rc=$?; "
+                "else out='custom-os-command requires sudo or root when run_as_system=true'; rc=1; fi; "
+                "else out=$(bash -lc \"$cmd\" 2>&1); rc=$?; "
+                "fi; "
+                "set -e; "
                 "printf '%s\\n' \"$out\"; "
                 "if [ \"$rc\" -ne 0 ]; then echo \"custom-os-command failed rc=$rc\" >&2; exit \"$rc\"; fi; "
                 "if [ -n \"$(printf '%s' \"$verify_contains\" | tr -d '[:space:]')\" ]; then "

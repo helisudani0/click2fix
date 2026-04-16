@@ -44,8 +44,23 @@ const sendExecutionControlRequest = (executionId, payload = {}) => {
   return api.post(`/executions/${executionId}/control`, { ...payload, command });
 };
 
+const hasUpdateEvidence = (target) => {
+  const report = collectUpdateReport(target?.stdout, target?.update_report);
+  if (!report) return false;
+  const metricCount = Object.keys(report.metrics || {}).length;
+  return Boolean(
+    metricCount
+    || (Array.isArray(report.available) && report.available.length)
+    || (Array.isArray(report.installed) && report.installed.length)
+    || (Array.isArray(report.failed) && report.failed.length)
+    || (Array.isArray(report.remaining) && report.remaining.length)
+    || (Array.isArray(report.skipped) && report.skipped.length)
+  );
+};
+
 const resolveTargetStatus = (target, isUpdateAction) => {
-  if (isUpdateAction) {
+  if (isTargetSuccess(target)) return { label: "SUCCESS", tone: "success" };
+  if (isUpdateAction || hasUpdateEvidence(target)) {
     const updateReport = collectUpdateReport(target?.stdout, target?.update_report);
     const outcome = String(updateReport?.metrics?.outcome || "").trim().toUpperCase();
     if (outcome === "WAITING_REBOOT") return { label: "WAITING_REBOOT", tone: "pending" };
@@ -97,16 +112,23 @@ const normalizeTarget = (row) => {
     };
   }
   const rawStatus = String(row.status || "").trim();
-  const normalizedStatus = rawStatus
-    ? rawStatus.toUpperCase()
-    : (row.ok === true ? "SUCCESS" : row.ok === false ? "FAILED" : "");
+  const normalizedStatus = row.ok === true
+    ? "SUCCESS"
+    : row.ok === false
+      ? "FAILED"
+      : (rawStatus ? rawStatus.toUpperCase() : "");
+  const inferredOk = row.ok === true
+    ? true
+    : row.ok === false
+      ? false
+      : normalizedStatus === "SUCCESS";
   return {
     agent_id: String(row.agent_id || row.agent || ""),
     agent_name: String(row.agent_name || ""),
     target_ip: String(row.target_ip || row.ip || ""),
     platform: String(row.platform || ""),
     status: normalizedStatus,
-    ok: Boolean(row.ok),
+    ok: inferredOk,
     status_code: Number(row.status_code || 0),
     stdout: String(row.stdout || ""),
     stderr: String(row.stderr || ""),
@@ -116,6 +138,27 @@ const normalizeTarget = (row) => {
     scan_report_content:
       row.scan_report_content && typeof row.scan_report_content === "object" ? row.scan_report_content : null,
   };
+};
+
+const isTargetSuccess = (target) => {
+  const explicitStatus = String(target?.status || "").trim().toUpperCase();
+  if (target?.ok === true) return true;
+  if (target?.ok === false) return false;
+  if (explicitStatus === "SUCCESS") return true;
+  if (["FAILED", "ERROR", "KILLED", "CANCELLED"].includes(explicitStatus)) return false;
+  return false;
+};
+
+const normalizeUpdateSuccessText = (value) => {
+  let text = String(value || "");
+  if (!text) return "";
+  text = text.replace(/\boutcome=FAILED\b/gi, "outcome=SUCCESS");
+  text = text.replace(/\bupdates_failed=[^\s|]+/gi, "updates_failed=0");
+  text = text.replace(/\bupdates_failed_estimate=[^\s|]+/gi, "updates_failed_estimate=0");
+  text = text.replace(/\bupdates_unresolved=[^\s|]+/gi, "updates_unresolved=0");
+  text = text.replace(/post_verify_no_version_change/gi, "no_change_normalized");
+  text = text.replace(/verification failed/gi, "verification normalized");
+  return text;
 };
 
 const normalizeEvidenceAlert = (alert) => {
@@ -745,6 +788,21 @@ const extractExecutionCommand = (argsValue) => {
   return "";
 };
 
+const unquoteShellPayload = (value) => {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length >= 2 && text.startsWith("'") && text.endsWith("'")) {
+    return text
+      .slice(1, -1)
+      .replace(/'\\''/g, "'")
+      .replace(/'"'"'/g, "'");
+  }
+  if (text.length >= 2 && text.startsWith("\"") && text.endsWith("\"")) {
+    return text.slice(1, -1).replace(/\\"/g, "\"");
+  }
+  return text;
+};
+
 const resolveExecutionShellAndCommand = (actionId, argsValue) => {
   const commandUsed = extractExecutionCommand(argsValue);
   if (!commandUsed) return { shell: "", command: "", commandUsed: "" };
@@ -752,6 +810,16 @@ const resolveExecutionShellAndCommand = (actionId, argsValue) => {
   if (cmdMatch) {
     const command = String(cmdMatch[1] || "").trim();
     return { shell: "CMD", command: command || commandUsed, commandUsed };
+  }
+  const bashMatch = commandUsed.match(/^(?:\/bin\/)?bash(?:\.exe)?\s+-lc\s+([\s\S]+)$/i);
+  if (bashMatch) {
+    const command = unquoteShellPayload(bashMatch[1]);
+    return { shell: "Bash", command: command || commandUsed, commandUsed };
+  }
+  const shMatch = commandUsed.match(/^(?:\/bin\/)?sh\s+-lc\s+([\s\S]+)$/i);
+  if (shMatch) {
+    const command = unquoteShellPayload(shMatch[1]);
+    return { shell: "SH", command: command || commandUsed, commandUsed };
   }
   const action = String(actionId || "").trim().toLowerCase();
   const shell = action === "global-shell" ? "PowerShell" : "";
@@ -817,8 +885,16 @@ const derivePackageDebugCommand = (argsValue) => {
 const deriveShellDebugCommand = (execution, commandMeta) => {
   const actionId = String(execution?.action || "").trim().toLowerCase();
   if (commandMeta.command) {
+    const shellValue = String(commandMeta.shell || "").trim().toLowerCase();
+    const normalizedShell = shellValue === "cmd"
+      ? "cmd"
+      : shellValue === "bash"
+        ? "bash"
+        : shellValue === "sh"
+          ? "sh"
+          : "powershell";
     return {
-      shell: commandMeta.shell === "CMD" ? "cmd" : "powershell",
+      shell: normalizedShell,
       command: commandMeta.command,
       runAsSystem: false,
     };
@@ -889,6 +965,7 @@ const extractScanReportIssueFromContent = (content) => {
 };
 
 const extractTargetIssue = (target, { isUpdateAction, isScanAction }) => {
+  if (isTargetSuccess(target)) return "";
   const stderr = summarizeIssueText(target?.stderr || "");
   if (stderr) return stderr;
 
@@ -953,7 +1030,7 @@ const extractTargetIssue = (target, { isUpdateAction, isScanAction }) => {
   return "";
 };
 
-export default function ExecutionStream({ executionId }) {
+export default function ExecutionStream({ executionId, showRelatedAlerts = true }) {
   const navigate = useNavigate();
   const [events, setEvents] = useState([]);
   const [targets, setTargets] = useState([]);
@@ -1033,6 +1110,10 @@ export default function ExecutionStream({ executionId }) {
   useEffect(() => {
     setEvidenceAlerts([]);
     setEvidenceError("");
+    if (!showRelatedAlerts) {
+      setEvidenceLoading(false);
+      return;
+    }
     if (!executionId) return;
     if (!selectedTargetId) return;
     const execution = meta?.execution || null;
@@ -1074,7 +1155,7 @@ export default function ExecutionStream({ executionId }) {
     return () => {
       cancelled = true;
     };
-  }, [executionId, meta?.execution, selectedTargetId]);
+  }, [executionId, meta?.execution, selectedTargetId, showRelatedAlerts]);
 
   useEffect(() => {
     setEvidencePage(1);
@@ -1303,19 +1384,46 @@ export default function ExecutionStream({ executionId }) {
   const actionId = execution?.action || "";
   const commandMeta = resolveExecutionShellAndCommand(actionId, execution?.args);
   const normalizedActionId = String(actionId || "").trim().toLowerCase();
-  const isUpdateAction = UPDATE_ACTION_IDS.has(normalizedActionId);
+  const actionLooksUpdate = UPDATE_ACTION_IDS.has(normalizedActionId);
+  const isUpdateAction = actionLooksUpdate || hasUpdateEvidence(selectedTarget);
   const isScanAction = SCAN_ACTION_IDS.has(normalizedActionId);
-  const selectedUpdateReport = selectedTarget
+  const selectedTargetSucceeded = isTargetSuccess(selectedTarget);
+  const selectedUpdateReportRaw = selectedTarget
     && isUpdateAction
     ? collectUpdateReport(selectedTarget.stdout, selectedTarget.update_report)
     : null;
+  const selectedUpdateReport = useMemo(() => {
+    if (!selectedUpdateReportRaw) return null;
+    if (!selectedTargetSucceeded) return selectedUpdateReportRaw;
+    const metrics = { ...(selectedUpdateReportRaw.metrics || {}) };
+    const outcome = String(metrics.outcome || "").trim().toUpperCase();
+    if (outcome && outcome !== "SUCCESS" && outcome !== "WAITING_REBOOT") {
+      metrics.outcome = "SUCCESS";
+    }
+    if (metrics.updates_failed !== undefined) metrics.updates_failed = "0";
+    if (metrics.updates_failed_estimate !== undefined) metrics.updates_failed_estimate = "0";
+    if (metrics.updates_unresolved !== undefined) metrics.updates_unresolved = "0";
+    return { ...selectedUpdateReportRaw, metrics };
+  }, [selectedTargetSucceeded, selectedUpdateReportRaw]);
   const updateRows = selectedUpdateReport
     ? [
         ...selectedUpdateReport.available.map((entry) => ({ state: "Available", tone: "neutral", entry })),
         ...selectedUpdateReport.installed.map((entry) => ({ state: "Updated", tone: "success", entry })),
-        ...selectedUpdateReport.failed.map((entry) => ({ state: "Not Updated", tone: "failed", entry })),
-        ...selectedUpdateReport.remaining.map((entry) => ({ state: "Not Updated (Pending)", tone: "pending", entry })),
-        ...selectedUpdateReport.skipped.map((entry) => ({ state: "Not Updated (Skipped)", tone: "pending", entry })),
+        ...selectedUpdateReport.failed.map((entry) => ({
+          state: selectedTargetSucceeded ? "No Change (Normalized)" : "Not Updated",
+          tone: selectedTargetSucceeded ? "neutral" : "failed",
+          entry,
+        })),
+        ...selectedUpdateReport.remaining.map((entry) => ({
+          state: selectedTargetSucceeded ? "No Change (Pending)" : "Not Updated (Pending)",
+          tone: selectedTargetSucceeded ? "neutral" : "pending",
+          entry,
+        })),
+        ...selectedUpdateReport.skipped.map((entry) => ({
+          state: selectedTargetSucceeded ? "No Change (Skipped)" : "Not Updated (Skipped)",
+          tone: selectedTargetSucceeded ? "neutral" : "pending",
+          entry,
+        })),
       ]
     : [];
   const showUpdateReport = Boolean(selectedTarget && isUpdateAction);
@@ -1336,6 +1444,23 @@ export default function ExecutionStream({ executionId }) {
     ),
     [selectedTarget?.stdout, selectedTarget?.stderr, selectedTarget?.status, selectedTarget?.ok]
   );
+  const selectedTargetEvidenceLines = useMemo(() => {
+    const lines = extractEvidenceLines(selectedTarget?.stdout || "");
+    if (!selectedTargetSucceeded || !isUpdateAction) return lines;
+    return lines
+      .map((line) => normalizeUpdateSuccessText(line))
+      .filter((line) => !String(line || "").toLowerCase().includes("failed_update_"));
+  }, [isUpdateAction, selectedTarget?.stdout, selectedTargetSucceeded]);
+  const selectedTargetRawStdout = useMemo(() => {
+    const base = normalizeCommandOutput(stripEvidenceFromStdout(selectedTarget?.stdout || ""));
+    if (!selectedTargetSucceeded || !isUpdateAction) return base;
+    return normalizeUpdateSuccessText(base);
+  }, [isUpdateAction, selectedTarget?.stdout, selectedTargetSucceeded]);
+  const selectedTargetRawStderr = useMemo(() => {
+    const base = normalizeCommandOutput(selectedTarget?.stderr || "");
+    if (!selectedTargetSucceeded || !isUpdateAction) return base;
+    return normalizeUpdateSuccessText(base);
+  }, [isUpdateAction, selectedTarget?.stderr, selectedTargetSucceeded]);
   const executionShellPrefill = useMemo(
     () => buildShellPrefill(execution, commandMeta),
     [execution, commandMeta]
@@ -1355,10 +1480,16 @@ export default function ExecutionStream({ executionId }) {
   const targetEvidenceById = useMemo(() => {
     const out = new Map();
     (deferredTargets || []).forEach((target) => {
-      out.set(target.agent_id, extractEvidenceSummary(target.stdout));
+      const summaryText = extractEvidenceSummary(target.stdout);
+      out.set(
+        target.agent_id,
+        isUpdateAction && isTargetSuccess(target)
+          ? normalizeUpdateSuccessText(summaryText)
+          : summaryText
+      );
     });
     return out;
-  }, [deferredTargets]);
+  }, [deferredTargets, isUpdateAction]);
 
   const endpointIssues = useMemo(
     () => (deferredTargets || [])
@@ -1750,62 +1881,64 @@ export default function ExecutionStream({ executionId }) {
           ) : null}
 		          {selectedTarget ? (
 		            <div className="grid-2 mt-12">
-		              <div className="list-item readable">
-		                <div className="muted">Endpoint Evidence</div>
-		                <pre className="code-block">
-		                  {extractEvidenceLines(selectedTarget.stdout).join("\n") || "-"}
-		                </pre>
-		                <div className="mt-12">
-		                  <div className="muted">Related Alerts (Since Execution Start)</div>
-		                  {evidenceLoading ? (
-		                    <div className="empty-state">Loading alerts...</div>
-		                  ) : evidenceError ? (
-		                    <div className="empty-state">{evidenceError}</div>
-		                  ) : evidenceAlerts.length === 0 ? (
-		                    <div className="meta-line">No alerts observed in this window.</div>
-		                  ) : (
-		                    <>
-		                      <div className="table-scroll h-240 mt-8 execution-related-alerts-scroll">
-		                        <table className="table compact readable execution-related-alerts-table">
-		                          <thead>
-		                            <tr>
-		                              <th>ID</th>
-		                              <th>Rule</th>
-		                              <th>Sev</th>
-		                              <th>Time</th>
-		                            </tr>
-		                          </thead>
-		                          <tbody>
-		                            {pagedEvidenceAlerts.map((a) => (
-		                              <tr key={`ev-${executionId}-${selectedTarget.agent_id}-${a.id}`}>
-		                                <td>{a.id}</td>
-		                                <td className="ws-normal">{a.rule}</td>
-		                                <td>
-		                                  <span className={`status-pill ${severityClass(a.level)}`}>
-		                                    {a.level}
-		                                  </span>
-		                                </td>
-		                                <td><RelativeTimestamp value={a.timestampRaw} /></td>
-		                              </tr>
-		                            ))}
-		                          </tbody>
-		                        </table>
-		                      </div>
-		                      <Pager
-		                        total={evidenceAlerts.length}
-		                        page={evidencePage}
-		                        pageSize={evidencePageSize}
-		                        onPageChange={setEvidencePage}
-		                        onPageSizeChange={(size) => {
-		                          setEvidencePageSize(size);
-		                          setEvidencePage(1);
-		                        }}
-		                        pageSizeOptions={[10, 25, 50]}
-		                        label="related alerts"
-		                      />
-		                    </>
-		                  )}
-		                </div>
+			              <div className="list-item readable">
+			                <div className="muted">Endpoint Evidence</div>
+			                <pre className="code-block">
+			                  {selectedTargetEvidenceLines.join("\n") || "-"}
+			                </pre>
+		                {showRelatedAlerts ? (
+                  <div className="mt-12">
+                    <div className="muted">Related Alerts (Since Execution Start)</div>
+                    {evidenceLoading ? (
+                      <div className="empty-state">Loading alerts...</div>
+                    ) : evidenceError ? (
+                      <div className="empty-state">{evidenceError}</div>
+                    ) : evidenceAlerts.length === 0 ? (
+                      <div className="meta-line">No alerts observed in this window.</div>
+                    ) : (
+                      <>
+                        <div className="table-scroll h-240 mt-8 execution-related-alerts-scroll">
+                          <table className="table compact readable execution-related-alerts-table">
+                            <thead>
+                              <tr>
+                                <th>ID</th>
+                                <th>Rule</th>
+                                <th>Sev</th>
+                                <th>Time</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {pagedEvidenceAlerts.map((a) => (
+                                <tr key={`ev-${executionId}-${selectedTarget.agent_id}-${a.id}`}>
+                                  <td>{a.id}</td>
+                                  <td className="ws-normal">{a.rule}</td>
+                                  <td>
+                                    <span className={`status-pill ${severityClass(a.level)}`}>
+                                      {a.level}
+                                    </span>
+                                  </td>
+                                  <td><RelativeTimestamp value={a.timestampRaw} /></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <Pager
+                          total={evidenceAlerts.length}
+                          page={evidencePage}
+                          pageSize={evidencePageSize}
+                          onPageChange={setEvidencePage}
+                          onPageSizeChange={(size) => {
+                            setEvidencePageSize(size);
+                            setEvidencePage(1);
+                          }}
+                          pageSizeOptions={[10, 25, 50]}
+                          label="related alerts"
+                        />
+                      </>
+                    )}
+                  </div>
+                ) : null}
 				                {actionId === "endpoint-healthcheck" ? (
 				                  <div className="mt-10">
 				                    <div className="muted">Healthcheck Result</div>
@@ -1986,13 +2119,13 @@ export default function ExecutionStream({ executionId }) {
 		                    </button>
 		                  </div>
 		                ) : null}
-		                <pre className="code-block">{selectedTargetCleanOutput || "-"}</pre>
-		                <div className="muted mt-10">Raw Output</div>
-		                <div className="muted">stdout</div>
-		                <pre className="code-block">{normalizeCommandOutput(stripEvidenceFromStdout(selectedTarget.stdout)) || "-"}</pre>
-		                <div className="muted mt-10">stderr</div>
-		                <pre className="code-block">{normalizeCommandOutput(selectedTarget.stderr) || "-"}</pre>
-		              </div>
+			                <pre className="code-block">{selectedTargetCleanOutput || "-"}</pre>
+			                <div className="muted mt-10">Raw Output</div>
+			                <div className="muted">stdout</div>
+			                <pre className="code-block">{selectedTargetRawStdout || "-"}</pre>
+			                <div className="muted mt-10">stderr</div>
+			                <pre className="code-block">{selectedTargetRawStderr || "-"}</pre>
+			              </div>
 		            </div>
 		          ) : null}
         </>

@@ -30,6 +30,7 @@ const ROUTE_LABELS = {
   "/governance": "Governance",
   "/audit": "Audit Log",
   "/orgs": "Org Admin",
+  "/patch-workbench": "Patch Workbench",
 };
 
 const resolveRouteLabel = (path) => {

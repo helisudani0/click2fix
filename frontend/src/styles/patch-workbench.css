@@ -1,0 +1,295 @@
+.patch-workbench-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+body.patch-min-ui {
+  --bg-0: #f4f8fc;
+  --bg-1: #edf4fb;
+  --panel: #ffffff;
+  --panel-soft: #f7fbff;
+  --panel-strong: #eef5fd;
+  --card: #ffffff;
+  --border: rgba(0, 78, 134, 0.16);
+  --text: #12314f;
+  --muted: #607b96;
+  --accent: #0077c8;
+  --accent-2: #00a3d9;
+  --accent-3: #f0a43b;
+  --danger: #cf3f3f;
+  --success: #178f58;
+  --warning: #c98717;
+  --elevation-1: 0 10px 22px rgba(7, 52, 93, 0.08);
+  --elevation-2: 0 18px 36px rgba(7, 52, 93, 0.12);
+  --compat-divider-84: rgba(0, 58, 102, 0.12);
+  --compat-divider-78: rgba(0, 58, 102, 0.14);
+  --compat-panel-accent: rgba(0, 119, 200, 0.08);
+  --compat-drawer-border: rgba(0, 119, 200, 0.22);
+  --compat-focus-ring: #0077c8;
+  --compat-inset-border: rgba(0, 58, 102, 0.12);
+  --compat-inset-bg: rgba(0, 119, 200, 0.03);
+  --input-bg: #ffffff;
+  --input-border: rgba(0, 78, 134, 0.22);
+  --input-text: #12314f;
+  --input-placeholder: rgba(88, 115, 140, 0.62);
+  --input-focus-border: rgba(0, 119, 200, 0.56);
+  --input-focus-ring: rgba(0, 119, 200, 0.14);
+  color-scheme: light;
+  background: var(--bg-0);
+  color: var(--text);
+}
+
+body.patch-min-ui::before {
+  background:
+    radial-gradient(1080px 680px at -8% -20%, rgba(0, 163, 217, 0.12), transparent 58%),
+    radial-gradient(920px 620px at 110% -14%, rgba(0, 119, 200, 0.1), transparent 58%),
+    linear-gradient(180deg, #f9fcff, #f1f7fd 58%, #ebf3fb);
+}
+
+body.patch-min-ui::after {
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(0, 78, 134, 0.03) 0,
+      rgba(0, 78, 134, 0.03) 1px,
+      transparent 1px,
+      transparent 220px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      rgba(0, 78, 134, 0.025) 0,
+      rgba(0, 78, 134, 0.025) 1px,
+      transparent 1px,
+      transparent 220px
+    );
+}
+
+body.patch-min-ui .login-page {
+  background:
+    radial-gradient(circle at top, rgba(0, 163, 217, 0.16), transparent 34%),
+    linear-gradient(180deg, #f7fbff 0%, #eef5fd 52%, #e8f1fa 100%);
+}
+
+body.patch-min-ui .login-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(245, 250, 255, 0.99));
+  border: 1px solid rgba(0, 78, 134, 0.2);
+  box-shadow: 0 18px 36px rgba(7, 52, 93, 0.14);
+  color: var(--text);
+}
+
+body.patch-min-ui .login-card h2,
+body.patch-min-ui .login-card .brand-title {
+  color: #12314f;
+}
+
+body.patch-min-ui .login-card .brand-subtitle,
+body.patch-min-ui .login-card .brand-version,
+body.patch-min-ui .login-card .muted,
+body.patch-min-ui .login-form label,
+body.patch-min-ui .login-hint {
+  color: #5f7b96;
+}
+
+body.patch-min-ui .login-card .brand-badge {
+  border-color: rgba(0, 119, 200, 0.22);
+  background: rgba(0, 119, 200, 0.1);
+  color: #0e3c68;
+}
+
+body.patch-min-ui .login-card .input {
+  background: #ffffff;
+  border-color: rgba(0, 78, 134, 0.22);
+  color: #12314f;
+}
+
+body.patch-min-ui .login-card .input::placeholder {
+  color: rgba(88, 115, 140, 0.6);
+}
+
+body.patch-min-ui .login-card .input:focus {
+  border-color: rgba(0, 119, 200, 0.56);
+  box-shadow: 0 0 0 2px rgba(0, 119, 200, 0.14);
+}
+
+body.patch-min-ui .login-card .btn.secondary {
+  background: rgba(0, 119, 200, 0.08);
+  color: #124877;
+  border-color: rgba(0, 119, 200, 0.2);
+}
+
+body.patch-min-ui .login-card .empty-state {
+  background: rgba(207, 63, 63, 0.1);
+  border-color: rgba(207, 63, 63, 0.28);
+  color: #8f2f2f;
+}
+
+.patch-workbench-stat-grid .stat-card {
+  min-height: 92px;
+}
+
+.patch-workbench-stat-text {
+  font-size: 1.05rem;
+}
+
+.patch-workbench-scope-card .list-item,
+.patch-workbench-vuln-card,
+.patch-workbench-live-card,
+.patch-workbench-history-card {
+  background: linear-gradient(165deg, rgba(18, 28, 42, 0.96), rgba(11, 20, 33, 0.96));
+}
+
+.patch-workbench-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.patch-workbench-side-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.patch-workbench-agent-picker {
+  min-width: 220px;
+}
+
+.patch-workbench-selected-agents {
+  max-height: 180px;
+  overflow: auto;
+}
+
+.patch-workbench-vuln-scroll {
+  max-height: 55vh;
+}
+
+.patch-workbench-selection-list {
+  max-height: 240px;
+  overflow: auto;
+}
+
+.patch-workbench-history-scroll {
+  max-height: 42vh;
+}
+
+.patch-workbench-check-col {
+  width: 44px;
+}
+
+.patch-workbench-command-cell {
+  max-width: 420px;
+}
+
+.patch-workbench-page .table tbody tr.selected {
+  outline: 1px solid rgba(56, 189, 248, 0.52);
+  background: rgba(15, 35, 58, 0.72);
+}
+
+.patch-workbench-page .list-item.split > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.patch-min-ui .patch-workbench-page .card,
+body.patch-min-ui .patch-workbench-page .patch-workbench-scope-card .list-item,
+body.patch-min-ui .patch-workbench-page .patch-workbench-vuln-card,
+body.patch-min-ui .patch-workbench-page .patch-workbench-live-card,
+body.patch-min-ui .patch-workbench-page .patch-workbench-history-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(246, 251, 255, 0.99));
+  border-color: rgba(0, 78, 134, 0.16);
+  box-shadow: 0 8px 18px rgba(7, 52, 93, 0.08);
+}
+
+body.patch-min-ui .patch-workbench-page .table,
+body.patch-min-ui .patch-workbench-page table {
+  background: #ffffff;
+  border-color: rgba(0, 78, 134, 0.16);
+}
+
+body.patch-min-ui .patch-workbench-page .table thead,
+body.patch-min-ui .patch-workbench-page table thead {
+  background: #eef5fd;
+  color: #3f5e7d;
+}
+
+body.patch-min-ui .patch-workbench-page .table-scroll {
+  background: #f9fcff;
+  border-color: rgba(0, 78, 134, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.96);
+}
+
+body.patch-min-ui .patch-workbench-page .table-scroll thead th {
+  background: #eef5fd;
+}
+
+body.patch-min-ui .patch-workbench-page table tbody tr:hover,
+body.patch-min-ui .patch-workbench-page .table tbody tr:hover {
+  background: rgba(0, 119, 200, 0.06);
+}
+
+body.patch-min-ui .patch-workbench-page table tbody tr.selected,
+body.patch-min-ui .patch-workbench-page .table tbody tr.selected {
+  background: rgba(0, 119, 200, 0.12);
+}
+
+body.patch-min-ui .patch-workbench-page .table tbody tr.selected {
+  outline-color: rgba(0, 119, 200, 0.44);
+}
+
+body.patch-min-ui .patch-workbench-page .btn {
+  background: linear-gradient(135deg, #0077c8, #00a3d9);
+  border-color: rgba(0, 95, 158, 0.4);
+  color: #ffffff;
+}
+
+body.patch-min-ui .patch-workbench-page .btn.secondary {
+  background: #f1f7fd;
+  color: #12314f;
+  border-color: rgba(0, 78, 134, 0.2);
+}
+
+body.patch-min-ui .patch-workbench-page .btn.secondary:hover {
+  background: #e8f2fb;
+}
+
+body.patch-min-ui .patch-workbench-page .status-pill.success {
+  background: rgba(23, 143, 88, 0.12);
+  color: #0f7348;
+  border-color: rgba(23, 143, 88, 0.26);
+}
+
+body.patch-min-ui .patch-workbench-page .status-pill.failed {
+  background: rgba(207, 63, 63, 0.1);
+  color: #9b3232;
+  border-color: rgba(207, 63, 63, 0.24);
+}
+
+body.patch-min-ui .patch-workbench-page .status-pill.pending {
+  background: rgba(201, 135, 23, 0.12);
+  color: #8b5f14;
+  border-color: rgba(201, 135, 23, 0.24);
+}
+
+body.patch-min-ui .patch-workbench-page .status-pill.neutral {
+  background: rgba(0, 78, 134, 0.08);
+  color: #3c5d7e;
+  border-color: rgba(0, 78, 134, 0.2);
+}
+
+body.patch-min-ui .empty-state {
+  background: #f2f8ff;
+  border-color: rgba(0, 78, 134, 0.22);
+  color: #4e6d8d;
+}
+
+@media (max-width: 1280px) {
+  .patch-workbench-main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .patch-workbench-vuln-scroll {
+    max-height: 44vh;
+  }
+}

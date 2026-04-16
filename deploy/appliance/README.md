@@ -29,24 +29,42 @@ Current `v1.1.4` appliance scope:
 - published Click2Fix images: backend + frontend only (redis/nginx are public images)
 - `agent-manager`, `event-indexer`, and other v2 bounded services are not part of the current appliance release
 
+Separate install tracks:
+
+- Main appliance: `install.sh` / `install.ps1` using `docker-compose.appliance.yml` and `.env.appliance`.
+- Patch Workbench appliance: `install-patch-workbench.sh` / `install-patch-workbench.ps1` using `docker-compose.patch-workbench.yml` and `.env.patch-workbench`.
+- Main installer no longer prompts for edition. Patch Workbench is enabled only through the dedicated patch-workbench compose/install files.
+
 ## Files
 
 - `docker-compose.appliance.yml`
   - Image-based runtime (no source code mounts, no local dev workflow).
+- `docker-compose.patch-workbench.yml`
+  - Dedicated compose stack for the minimal Patch Workbench package (forces patch-workbench backend/frontend mode).
 - `.env.appliance.template`
   - Customer config template with placeholders.
+- `.env.patch-workbench.template`
+  - Separate customer config template used by patch-workbench install path.
 - `install.sh`
   - Interactive first-boot setup and launch script.
 - `install.ps1`
   - Interactive first-boot setup and launch script for Windows hosts.
+- `install-patch-workbench.sh`
+  - Interactive first-boot setup for Patch Workbench package on Linux hosts.
+- `install-patch-workbench.ps1`
+  - Interactive first-boot setup for Patch Workbench package on Windows hosts.
 - `setup.sh` / `setup.cmd`
   - One-click launcher wrappers for installers.
 - `manage.sh` / `manage.cmd` / `manage.ps1`
   - Control Center (start/stop/restart/status/logs/upgrade/show access URLs).
+- `manage-patch-workbench.sh` / `manage-patch-workbench.ps1`
+  - Control Center for the dedicated Patch Workbench stack.
 - `upgrade.sh`
   - Pull and apply new image tags.
 - `upgrade.ps1`
   - Pull and apply new image tags on Windows hosts.
+- `upgrade-patch-workbench.sh` / `upgrade-patch-workbench.ps1`
+  - Upgrade scripts for the dedicated Patch Workbench stack.
 - `build-local-images.sh` / `build-local-images.ps1`
   - Build local backend/frontend images from this repo.
 - `export-images.sh` / `export-images.ps1`
@@ -87,6 +105,33 @@ Windows host:
 ```powershell
 cd C:\click2fix\deploy\appliance
 powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+Patch Workbench install (Linux):
+
+```bash
+cd /opt/click2fix/deploy/appliance
+chmod +x install-patch-workbench.sh
+./install-patch-workbench.sh
+```
+
+Patch Workbench install (Windows):
+
+```powershell
+cd C:\click2fix\deploy\appliance
+powershell -ExecutionPolicy Bypass -File .\install-patch-workbench.ps1
+```
+
+Patch Workbench management/upgrade:
+
+```bash
+./manage-patch-workbench.sh
+./upgrade-patch-workbench.sh
+```
+
+```powershell
+.\manage-patch-workbench.ps1
+.\upgrade-patch-workbench.ps1
 ```
 
 One-click Windows launcher:

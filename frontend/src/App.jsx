@@ -1,5 +1,5 @@
 import { Suspense, useEffect } from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import AppLayout from "./components/AppLayout";
 import RequireAuth from "./components/RequireAuth";
 import {
@@ -19,6 +19,7 @@ import {
   Incidents,
   Login,
   OrgAdmin,
+  PatchWorkbench,
   Playbooks,
   Scheduler,
   ScaFleet,
@@ -27,15 +28,26 @@ import {
 } from "./routes/lazyRoutes";
 import "./index-base.css";
 import "./styles/console-overhaul-v1.css";
+import "./styles/patch-workbench.css";
+
+const MIN_PATCH_UI_MODE = ["1", "true", "yes", "on"].includes(
+  String(import.meta.env.VITE_MIN_PATCH_UI || "false").trim().toLowerCase()
+);
 
 export default function App() {
   useEffect(() => {
     if (typeof document === "undefined") return undefined;
+    if (MIN_PATCH_UI_MODE) {
+      document.body.classList.remove("console-redesign-v4");
+      document.body.classList.add("patch-min-ui");
+      return () => document.body.classList.remove("patch-min-ui");
+    }
     document.body.classList.add("console-redesign-v4");
     return () => document.body.classList.remove("console-redesign-v4");
   }, []);
 
   useEffect(() => {
+    if (MIN_PATCH_UI_MODE) return undefined;
     if (typeof window === "undefined") return undefined;
     const connection = navigator?.connection;
     const saveData = Boolean(connection?.saveData);
@@ -69,6 +81,21 @@ export default function App() {
     };
   }, []);
 
+  if (MIN_PATCH_UI_MODE) {
+    return (
+      <Suspense fallback={<div className="empty-state">Loading patch workspace...</div>}>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route element={<RequireAuth />}>
+            <Route path="/" element={<PatchWorkbench />} />
+            <Route path="/patch-workbench" element={<PatchWorkbench />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </Suspense>
+    );
+  }
+
   return (
     <Suspense fallback={<div className="empty-state">Loading workspace...</div>}>
       <Routes>
@@ -95,6 +122,7 @@ export default function App() {
             <Route path="/audit" element={<Audit />} />
             <Route path="/changes" element={<Changes />} />
             <Route path="/orgs" element={<OrgAdmin />} />
+            <Route path="/patch-workbench" element={<PatchWorkbench />} />
           </Route>
         </Route>
       </Routes>

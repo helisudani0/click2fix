@@ -33,6 +33,7 @@ const loadAnalytics = memoizedLoader(() => import("../pages/Analytics"));
 const loadAudit = memoizedLoader(() => import("../pages/Audit"));
 const loadChanges = memoizedLoader(() => import("../pages/Changes"));
 const loadGlobalShell = memoizedLoader(() => import("../pages/GlobalShell"));
+const loadPatchWorkbench = memoizedLoader(() => import("../pages/PatchWorkbench"));
 const loadLogin = memoizedLoader(() => import("../pages/Login"));
 
 export const Dashboard = lazyWithPreload(loadDashboard);
@@ -54,6 +55,7 @@ export const Analytics = lazyWithPreload(loadAnalytics);
 export const Audit = lazyWithPreload(loadAudit);
 export const Changes = lazyWithPreload(loadChanges);
 export const GlobalShell = lazyWithPreload(loadGlobalShell);
+export const PatchWorkbench = lazyWithPreload(loadPatchWorkbench);
 export const Login = lazyWithPreload(loadLogin);
 
 const ROUTE_LOADERS = new Map([
@@ -76,6 +78,7 @@ const ROUTE_LOADERS = new Map([
   ["/changes", loadChanges],
   ["/orgs", loadOrgAdmin],
   ["/global-shell", loadGlobalShell],
+  ["/patch-workbench", loadPatchWorkbench],
   ["/login", loadLogin],
 ]);
 
@@ -97,6 +100,7 @@ const BACKGROUND_PRELOAD_ROUTES = [
   "/audit",
   "/changes",
   "/orgs",
+  "/patch-workbench",
 ];
 
 const normalizeRoutePath = (path) => {
@@ -134,4 +138,3 @@ export const preloadRoutesInBackground = () => {
   );
   return backgroundWarmupPromise;
 };
-

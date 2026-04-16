@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -101,6 +102,34 @@ _ENABLE_V1_SOAR_DEPRECATION_HEADERS = _parse_bool(os.getenv("C2F_ENABLE_V1_SOAR_
 _V1_SOAR_SUNSET = str(
     os.getenv("C2F_V1_SOAR_SUNSET", "Wed, 30 Sep 2026 00:00:00 GMT")
 ).strip()
+_PATCH_WORKBENCH_MODE = _parse_bool(os.getenv("C2F_PATCH_WORKBENCH_MODE"), False)
+
+_PATCH_WORKBENCH_PUBLIC_GET_PATHS = {
+    "/docs",
+    "/docs/oauth2-redirect",
+    "/openapi.json",
+    "/redoc",
+    "/ops",
+    "/ops/c2f-logo.svg",
+}
+_PATCH_WORKBENCH_ALLOWED_HTTP = {
+    ("GET", "/api/agents"),
+    ("GET", "/api/agents/groups"),
+    ("GET", "/api/auth/me"),
+    ("GET", "/api/auth/oidc/callback"),
+    ("GET", "/api/auth/oidc/login"),
+    ("GET", "/api/auth/session/reset"),
+    ("GET", "/api/executions"),
+    ("GET", "/api/executions/health"),
+    ("GET", "/api/system/version"),
+    ("GET", "/api/vulnerabilities"),
+    ("POST", "/api/actions/global-shell"),
+    ("POST", "/api/actions/global-shell/assist"),
+    ("POST", "/api/auth/login"),
+    ("POST", "/api/auth/logout"),
+}
+_PATCH_WORKBENCH_EXECUTION_DETAIL_RE = re.compile(r"^/api/executions/\d+$")
+_PATCH_WORKBENCH_EXECUTION_ACTION_RE = re.compile(r"^/api/executions/\d+/(control|retry-failed)$")
 
 ## if _CUTOVER_TEST_MODE:
 ##     # Cutover test mode intentionally disables v1 SOAR APIs and fallback signaling.
@@ -129,6 +158,31 @@ _RATE_RULES = [
 ]
 
 
+def _normalize_request_path(path: str) -> str:
+    value = str(path or "").strip() or "/"
+    if not value.startswith("/"):
+        value = f"/{value}"
+    if len(value) > 1 and value.endswith("/"):
+        value = value[:-1]
+    return value
+
+
+def _patch_workbench_http_allowed(method: str, path: str) -> bool:
+    request_method = str(method or "").strip().upper()
+    request_path = _normalize_request_path(path)
+    if request_method == "OPTIONS":
+        return True
+    if request_method == "GET" and request_path in _PATCH_WORKBENCH_PUBLIC_GET_PATHS:
+        return True
+    if (request_method, request_path) in _PATCH_WORKBENCH_ALLOWED_HTTP:
+        return True
+    if request_method == "GET" and _PATCH_WORKBENCH_EXECUTION_DETAIL_RE.match(request_path):
+        return True
+    if request_method == "POST" and _PATCH_WORKBENCH_EXECUTION_ACTION_RE.match(request_path):
+        return True
+    return False
+
+
 @app.on_event("startup")
 async def _register_ws_loop():
     # WS publish from threadpool workers must be scheduled on the app loop.
@@ -138,11 +192,12 @@ async def _register_ws_loop():
         await init_redis(running_loop)
     except Exception as exc:
         logger.warning("Redis WS bus init failed: %s", exc)
-    try:
-        # Shared alert stream processor backs /ws/alerts with one poller.
-        await ws.start_alert_stream_processor(running_loop)
-    except Exception as exc:
-        logger.exception("Alert stream startup failed: %s", exc)
+    if not _PATCH_WORKBENCH_MODE:
+        try:
+            # Shared alert stream processor backs /ws/alerts with one poller.
+            await ws.start_alert_stream_processor(running_loop)
+        except Exception as exc:
+            logger.exception("Alert stream startup failed: %s", exc)
     try:
         # Ensure schema/tables exist on fresh appliance installs.
         init_db()
@@ -178,20 +233,25 @@ async def _register_ws_loop():
             logger.info("Startup execution reconciliation: disabled (user-controlled execution lifetime)")
     except Exception as exc:
         logger.exception("Startup execution reconciliation failed: %s", exc)
-    start_scheduler()
+    if _PATCH_WORKBENCH_MODE:
+        logger.info("Patch Workbench mode enabled: scheduler startup skipped.")
+    else:
+        start_scheduler()
 
 
 @app.on_event("shutdown")
 async def _shutdown_background_services():
-    try:
-        await ws.stop_alert_stream_processor()
-    except Exception as exc:
-        logger.exception("Alert stream shutdown failed: %s", exc)
+    if not _PATCH_WORKBENCH_MODE:
+        try:
+            await ws.stop_alert_stream_processor()
+        except Exception as exc:
+            logger.exception("Alert stream shutdown failed: %s", exc)
     try:
         await close_redis()
     except Exception as exc:
         logger.exception("Redis WS bus shutdown failed: %s", exc)
-    stop_scheduler()
+    if not _PATCH_WORKBENCH_MODE:
+        stop_scheduler()
 
 
 @app.middleware("http")
@@ -207,6 +267,17 @@ async def add_server_time_headers(request: Request, call_next):
             if _ENABLE_V2_SOAR:
                 response.headers["Link"] = '</api/v2>; rel="successor-version"'
     return response
+
+
+if _PATCH_WORKBENCH_MODE:
+    @app.middleware("http")
+    async def enforce_patch_workbench_surface(request: Request, call_next):
+        if _patch_workbench_http_allowed(request.method, getattr(request.url, "path", "")):
+            return await call_next(request)
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "Endpoint not available in patch-workbench mode."},
+        )
 
 
 _REQUEST_SIZE_OVERRIDES = {
@@ -257,31 +328,41 @@ app.add_middleware(
 app.add_middleware(SecurityHeadersMiddleware, include_hsts=_INCLUDE_HSTS)
 
 # Register routers
-app.include_router(actions.router, prefix="/api", tags=["Actions"])
-app.include_router(auth.router, prefix="/api", tags=["Auth"])
-app.include_router(agents.router, prefix="/api/agents", tags=["Agents"])
-app.include_router(alerts.router, prefix="/api/alerts", tags=["Alerts"])
-app.include_router(audit.router, prefix="/api", tags=["Audit"])
-app.include_router(cases.router, prefix="/api", tags=["Cases"])
-app.include_router(changes.router, prefix="/api", tags=["Changes"])
-app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])
-app.include_router(remediation.router, prefix="/api/remediate", tags=["Remediation"])
-app.include_router(scheduler.router, prefix="/api", tags=["Scheduler"])
-app.include_router(system.router, prefix="/api", tags=["System"])
-app.include_router(vulnerabilities.router, prefix="/api", tags=["Vulnerabilities"])
-app.include_router(ioc.router, prefix="/api", tags=["IOC"])
-app.include_router(analytics.router, prefix="/api", tags=["Analytics"])
-app.include_router(incidents.router, prefix="/api", tags=["Incidents"])
-app.include_router(governance.router, prefix="/api", tags=["Governance"])
-app.include_router(integration.router, prefix="/api", tags=["Integration"])
-app.include_router(forensics.router, prefix="/api", tags=["Forensics"])
-app.include_router(orgs.router, prefix="/api", tags=["Orgs"])
-if _ENABLE_V1_SOAR:
-    app.include_router(approvals.router, prefix="/api", tags=["Approvals"])
+if _PATCH_WORKBENCH_MODE:
+    app.include_router(actions.router, prefix="/api", tags=["Actions"])
+    app.include_router(auth.router, prefix="/api", tags=["Auth"])
+    app.include_router(agents.router, prefix="/api/agents", tags=["Agents"])
+    app.include_router(system.router, prefix="/api", tags=["System"])
+    app.include_router(vulnerabilities.router, prefix="/api", tags=["Vulnerabilities"])
     app.include_router(executions.router, prefix="/api", tags=["Executions"])
-    app.include_router(playbooks.router, prefix="/api/playbooks", tags=["Playbooks"])
-## if _ENABLE_V2_SOAR and v2_router is not None:
-##     app.include_router(v2_router, prefix="/api/v2")
-app.include_router(ops.router)
-app.include_router(ws.router)
-app.include_router(ws_exec.router)
+    app.include_router(ops.router)
+    app.include_router(ws_exec.router)
+else:
+    app.include_router(actions.router, prefix="/api", tags=["Actions"])
+    app.include_router(auth.router, prefix="/api", tags=["Auth"])
+    app.include_router(agents.router, prefix="/api/agents", tags=["Agents"])
+    app.include_router(alerts.router, prefix="/api/alerts", tags=["Alerts"])
+    app.include_router(audit.router, prefix="/api", tags=["Audit"])
+    app.include_router(cases.router, prefix="/api", tags=["Cases"])
+    app.include_router(changes.router, prefix="/api", tags=["Changes"])
+    app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])
+    app.include_router(remediation.router, prefix="/api/remediate", tags=["Remediation"])
+    app.include_router(scheduler.router, prefix="/api", tags=["Scheduler"])
+    app.include_router(system.router, prefix="/api", tags=["System"])
+    app.include_router(vulnerabilities.router, prefix="/api", tags=["Vulnerabilities"])
+    app.include_router(ioc.router, prefix="/api", tags=["IOC"])
+    app.include_router(analytics.router, prefix="/api", tags=["Analytics"])
+    app.include_router(incidents.router, prefix="/api", tags=["Incidents"])
+    app.include_router(governance.router, prefix="/api", tags=["Governance"])
+    app.include_router(integration.router, prefix="/api", tags=["Integration"])
+    app.include_router(forensics.router, prefix="/api", tags=["Forensics"])
+    app.include_router(orgs.router, prefix="/api", tags=["Orgs"])
+    if _ENABLE_V1_SOAR:
+        app.include_router(approvals.router, prefix="/api", tags=["Approvals"])
+        app.include_router(executions.router, prefix="/api", tags=["Executions"])
+        app.include_router(playbooks.router, prefix="/api/playbooks", tags=["Playbooks"])
+    ## if _ENABLE_V2_SOAR and v2_router is not None:
+    ##     app.include_router(v2_router, prefix="/api/v2")
+    app.include_router(ops.router)
+    app.include_router(ws.router)
+    app.include_router(ws_exec.router)

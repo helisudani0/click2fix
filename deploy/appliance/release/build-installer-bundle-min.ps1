@@ -189,6 +189,13 @@ foreach ($file in $applianceFiles) {
     -UseGitSource $useGitSource
 }
 
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+Get-ChildItem -Path $bundleDir -Filter "*.sh" -File | ForEach-Object {
+  $raw = [System.IO.File]::ReadAllText($_.FullName)
+  $normalized = $raw -replace "`r`n", "`n" -replace "`r", "`n"
+  [System.IO.File]::WriteAllText($_.FullName, $normalized, $utf8NoBom)
+}
+
 $envFile = Join-Path $bundleDir ".env.patch-workbench.template"
 if (-not (Test-Path -LiteralPath $envFile)) {
   throw "Expected env template missing after export: $envFile"

@@ -99,6 +99,26 @@ function Get-ComposeBaseArguments {
   return @("compose", "-p", $script:composeProjectName, "--env-file", $script:composeEnvPath, "-f", $script:composeFilePath)
 }
 
+function Get-ServiceContainerId {
+  param(
+    [string]$ProjectName,
+    [string]$ServiceName,
+    [switch]$IncludeAll
+  )
+  $args = @("ps")
+  if ($IncludeAll) { $args += "-a" }
+  $args += @(
+    "--filter", "label=com.docker.compose.project=$ProjectName",
+    "--filter", "label=com.docker.compose.service=$ServiceName",
+    "--format", "{{.ID}}"
+  )
+  $containerIds = & docker @args 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $containerIds) { return "" }
+  $first = $containerIds | Select-Object -First 1
+  if ([string]::IsNullOrWhiteSpace($first)) { return "" }
+  return $first.Trim()
+}
+
 function Get-ServicePorts {
   param(
     [string]$ProjectName,
@@ -220,9 +240,17 @@ function Remove-ProjectContainers {
     }
 
     foreach ($containerId in $containerIds) {
-      & docker rm -f $containerId 1>$null 2>$null | Out-Null
+      try {
+        & docker rm -f $containerId 1>$null 2>$null | Out-Null
+      } catch {
+        # Docker Desktop can transiently return "No such container" for stale metadata.
+      }
     }
-    & docker network rm "$ProjectName`_default" 1>$null 2>$null | Out-Null
+    try {
+      & docker network rm "$ProjectName`_default" 1>$null 2>$null | Out-Null
+    } catch {
+      # Ignore absent network during cleanup.
+    }
   } finally {
     $ErrorActionPreference = $previousErrorAction
     if ($nativePreferenceFound) {

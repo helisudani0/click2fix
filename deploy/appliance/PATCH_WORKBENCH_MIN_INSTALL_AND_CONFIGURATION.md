@@ -150,6 +150,8 @@ sha256sum -c click2fix-patch-workbench-installer-${VERSION}.sha256
 mkdir -p /opt/click2fix-patch-workbench
 unzip -o click2fix-patch-workbench-installer-${VERSION}.zip -d /opt/click2fix-patch-workbench
 cd /opt/click2fix-patch-workbench
+sed -i 's/\r$//' ./*.sh
+chmod +x ./*.sh
 cp .env.patch-workbench.template .env.patch-workbench
 ./install-patch-workbench.sh
 ```
@@ -172,6 +174,7 @@ git clone https://github.com/helisudani0/click2fix.git
 cd click2fix
 git checkout patch-workbench-min
 cd deploy/appliance
+chmod +x ./*.sh
 cp .env.patch-workbench.template .env.patch-workbench
 ./install-patch-workbench.sh
 ```
@@ -247,11 +250,11 @@ docker compose --env-file .env.patch-workbench -f docker-compose.patch-workbench
 
 Check UI:
 
-- `http://<host>:5173`
+- `http://<host>:<C2F_FRONTEND_PORT>`
 
 Check API docs:
 
-- `http://<host>:8000/docs`
+- `http://<host>:<C2F_BACKEND_PORT>/docs`
 
 Quick Linux connector validation:
 
@@ -277,7 +280,41 @@ Windows:
 .\upgrade-patch-workbench.ps1
 ```
 
-## 11) Security And Hardening
+## 11) Troubleshooting (Linux-Focused)
+
+### `401` and/or `404` on login
+
+1. Use the URL printed by Control Center option `8`:
+   - `./manage-patch-workbench.sh` -> `8) Show access URLs`
+2. Verify stack status:
+   - `docker compose --env-file .env.patch-workbench -f docker-compose.patch-workbench.yml ps`
+3. Verify backend auth endpoint from host:
+   - `curl -i http://127.0.0.1:${C2F_BACKEND_PORT:-8000}/api/auth/me`
+4. Re-bootstrap admin if needed:
+   - `docker compose --env-file .env.patch-workbench -f docker-compose.patch-workbench.yml exec -T -w /app backend python -m tools.bootstrap_admin --username <admin-user> --password <admin-pass> --role admin --force-reset`
+
+### `.sh` files fail (`bad interpreter`, `^M`, permission denied)
+
+```bash
+sed -i 's/\r$//' ./*.sh
+chmod +x ./*.sh
+```
+
+### Control Center option `6` (tail backend logs)
+
+```bash
+./manage-patch-workbench.sh
+```
+
+Then select `6) Tail backend logs`.
+
+### Slow UI loading
+
+1. Confirm frontend can proxy to backend via `/api` and both are healthy.
+2. Check backend container logs for repeated auth/session or connector timeout errors.
+3. Validate Wazuh and Indexer reachability from host (firewall, DNS, TLS).
+
+## 12) Security And Hardening
 
 - Rotate all default secrets before production use.
 - Restrict inbound DB/API ports with firewall rules.
@@ -285,4 +322,3 @@ Windows:
 - Prefer per-agent credentials for mixed endpoint fleets.
 - Keep `.env.patch-workbench` file permission-restricted.
 - Do not embed passwords in shell commands.
-

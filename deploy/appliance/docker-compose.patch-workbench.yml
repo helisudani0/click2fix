@@ -107,6 +107,7 @@ services:
     environment:
       CHOKIDAR_USEPOLLING: "true"
       VITE_DEV_PROXY_TARGET: http://c2f-lb:8000
+      VITE_API_BASE: ${VITE_API_BASE:-/api}
       VITE_MIN_PATCH_UI: "true"
       VITE_APP_VERSION: ${C2F_IMAGE_TAG:-latest}
       VITE_C2F_AI_FEATURES_ENABLED: ${C2F_AI_FEATURES_ENABLED:-false}

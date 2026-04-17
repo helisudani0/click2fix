@@ -125,6 +125,11 @@ for file in "${APPLIANCE_FILES[@]}"; do
   export_source_file "${APPLIANCE_DIR}/${file}" "deploy/appliance/${file}" "${BUNDLE_DIR}/${file}"
 done
 
+while IFS= read -r -d '' shell_file; do
+  sed -i 's/\r$//' "${shell_file}"
+  chmod +x "${shell_file}"
+done < <(find "${BUNDLE_DIR}" -maxdepth 1 -type f -name '*.sh' -print0)
+
 ENV_FILE="${BUNDLE_DIR}/.env.patch-workbench.template"
 sed -i "s|^C2F_BACKEND_IMAGE=.*|C2F_BACKEND_IMAGE=${BACKEND_IMAGE}|" "${ENV_FILE}"
 sed -i "s|^C2F_FRONTEND_IMAGE=.*|C2F_FRONTEND_IMAGE=${FRONTEND_IMAGE}|" "${ENV_FILE}"

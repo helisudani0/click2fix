@@ -1,12 +1,22 @@
-﻿import axios from "axios";
+import axios from "axios";
 import { syncServerClock } from "../utils/time";
 
+const resolveRuntimeApiBase = () => {
+  const explicit = String(import.meta.env.VITE_API_BASE || "").trim();
+  if (explicit) return explicit;
+  // Keep API calls same-origin by default so the frontend proxy/LB path
+  // continues to work even when backend host port is remapped.
+  return "/api";
+};
+
+const runtimeApiBase = resolveRuntimeApiBase();
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || "/api",
+  baseURL: runtimeApiBase,
   withCredentials: true
 });
 const sessionApi = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || "/api",
+  baseURL: runtimeApiBase,
   withCredentials: true
 });
 let sessionResetPromise = null;

@@ -99,6 +99,26 @@ function Get-ComposeBaseArguments {
   return @("compose", "-p", $script:composeProjectName, "--env-file", $script:composeEnvPath, "-f", $script:composeFilePath)
 }
 
+function Get-ServiceContainerId {
+  param(
+    [string]$ProjectName,
+    [string]$ServiceName,
+    [switch]$IncludeAll
+  )
+  $args = @("ps")
+  if ($IncludeAll) { $args += "-a" }
+  $args += @(
+    "--filter", "label=com.docker.compose.project=$ProjectName",
+    "--filter", "label=com.docker.compose.service=$ServiceName",
+    "--format", "{{.ID}}"
+  )
+  $containerIds = & docker @args 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $containerIds) { return "" }
+  $first = $containerIds | Select-Object -First 1
+  if ([string]::IsNullOrWhiteSpace($first)) { return "" }
+  return $first.Trim()
+}
+
 function Get-ServicePorts {
   param(
     [string]$ProjectName,

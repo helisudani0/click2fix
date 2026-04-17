@@ -75,6 +75,14 @@ compose_cmd() {
   docker compose -p "${COMPOSE_PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" "$@"
 }
 
+service_container_id() {
+  local service="$1"
+  docker ps -a \
+    --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+    --filter "label=com.docker.compose.service=${service}" \
+    --format '{{.ID}}' 2>/dev/null | head -n 1 || true
+}
+
 service_ports() {
   local service
   for service in "$@"; do
@@ -166,7 +174,7 @@ prepare_compose_project_for_up() {
 show_project_containers() {
   docker ps -a \
     --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
-    --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Label "com.docker.compose.service"}}'
+    --format 'table {{.ID}}\t{{.Names}}\t{{.Status}}'
 }
 
 port_in_use() {

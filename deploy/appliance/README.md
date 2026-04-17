@@ -15,6 +15,100 @@ The intended current flows:
 1. Customer runs the Docker-based appliance scaffold directly from release assets or the raw bootstrap path.
 2. Or, maintainer builds a VM/OVA from the same appliance files and uses the existing first-boot wizard inside the VM.
 
+## Patch Workbench Min (Linux-First Quick Start)
+
+This is the recommended flow when the customer only needs:
+
+- Agent selection (fleet/group/multi/single)
+- Vulnerabilities from Wazuh indexer
+- Global shell execution
+- Live execution status and execution history
+
+### Linux (Ubuntu) from ZIP
+
+```bash
+VERSION=min-v1.1.12
+OWNER=helisudani0
+REPO=click2fix
+
+mkdir -p /opt/click2fix-patch-workbench
+cd /opt/click2fix-patch-workbench
+
+curl -fL -o click2fix-patch-workbench-installer-${VERSION}.zip \
+  https://github.com/${OWNER}/${REPO}/releases/download/${VERSION}/click2fix-patch-workbench-installer-${VERSION}.zip
+curl -fL -o click2fix-patch-workbench-installer-${VERSION}.sha256 \
+  https://github.com/${OWNER}/${REPO}/releases/download/${VERSION}/click2fix-patch-workbench-installer-${VERSION}.sha256
+sha256sum -c click2fix-patch-workbench-installer-${VERSION}.sha256
+
+unzip -o click2fix-patch-workbench-installer-${VERSION}.zip -d .
+sed -i 's/\r$//' ./*.sh
+chmod +x ./*.sh
+
+cp .env.patch-workbench.template .env.patch-workbench
+./install-patch-workbench.sh
+```
+
+### Linux (Ubuntu) bootstrap command
+
+```bash
+VERSION=min-v1.1.12
+curl -fsSL "https://raw.githubusercontent.com/helisudani0/click2fix/${VERSION}/deploy/appliance/bootstrap-patch-workbench.sh" -o ./bootstrap-patch-workbench.sh
+chmod +x ./bootstrap-patch-workbench.sh
+OWNER=helisudani0 REPO=click2fix VERSION=${VERSION} INSTALL_DIR=/opt/click2fix-patch-workbench PULL_IMAGES=true ./bootstrap-patch-workbench.sh
+```
+
+### Linux operations
+
+```bash
+cd /opt/click2fix-patch-workbench
+./manage-patch-workbench.sh
+./upgrade-patch-workbench.sh
+```
+
+### Windows quick start
+
+```powershell
+$Version = "min-v1.1.12"
+$Owner = "helisudani0"
+$Repo = "click2fix"
+$Base = "https://github.com/$Owner/$Repo/releases/download/$Version"
+
+Invoke-WebRequest "$Base/click2fix-patch-workbench-installer-$Version.zip" -OutFile ".\click2fix-patch-workbench-installer-$Version.zip"
+Expand-Archive ".\click2fix-patch-workbench-installer-$Version.zip" -DestinationPath "C:\Click2Fix-PatchWorkbench" -Force
+Set-Location "C:\Click2Fix-PatchWorkbench"
+Copy-Item .env.patch-workbench.template .env.patch-workbench -Force
+powershell -ExecutionPolicy Bypass -File .\install-patch-workbench.ps1
+```
+
+### Required Linux connector env (global + per-agent)
+
+```env
+C2F_LINUX_CONNECTOR_ENABLED=true
+C2F_SSH_USERNAME=ubuntu
+C2F_SSH_PASSWORD=<global-password>
+
+# optional per-agent override (agent id is 3-digit, for example 004)
+C2F_SSH_USERNAME_004=turabit
+C2F_SSH_PASSWORD_004=<agent-password>
+```
+
+### Common Ubuntu troubleshooting
+
+1. UI login shows `401`/`404`:
+   - Run `./manage-patch-workbench.sh` -> option `8` and use the printed UI URL.
+   - Confirm frontend and backend are up: `docker compose --env-file .env.patch-workbench -f docker-compose.patch-workbench.yml ps`.
+2. Shell scripts fail with `^M` or `bad interpreter`:
+   - Run `sed -i 's/\r$//' ./*.sh` and `chmod +x ./*.sh`.
+3. Control Center option `6` logs:
+   - Use `./manage-patch-workbench.sh` -> option `6` (backend tail now resolves container by compose labels).
+4. Login fails after changing admin in `.env.patch-workbench`:
+   - Re-run installer option `1` or run:
+     - `docker compose --env-file .env.patch-workbench -f docker-compose.patch-workbench.yml exec -T -w /app backend python -m tools.bootstrap_admin --username <user> --password <pass> --role admin --force-reset`
+
+For complete zero-to-production setup details (ports, Wazuh, WinRM, SSH, offline mode, validation), use:
+
+- `deploy/appliance/PATCH_WORKBENCH_MIN_INSTALL_AND_CONFIGURATION.md`
+
 ## Direct Customer Download (GitHub Releases)
 
 Once a release tag is published (for example `v1.2.0`), customers can download directly from:

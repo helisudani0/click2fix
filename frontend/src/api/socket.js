@@ -20,8 +20,14 @@ const toWsBase = (value) => {
   return normalized;
 };
 
+const runtimeApiBase = () => {
+  const explicitApiBase = String(import.meta.env.VITE_API_BASE || "").trim();
+  if (explicitApiBase) return explicitApiBase;
+  return "/api";
+};
+
 const baseFromApi = () => {
-  const apiBase = String(import.meta.env.VITE_API_BASE || "").trim();
+  const apiBase = runtimeApiBase();
   if (!apiBase || typeof window === "undefined") {
     return "";
   }

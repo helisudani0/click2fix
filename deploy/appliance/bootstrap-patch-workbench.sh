@@ -3,7 +3,7 @@ set -euo pipefail
 
 OWNER="${OWNER:-helisudani0}"
 REPO="${REPO:-click2fix}"
-VERSION="${VERSION:-min-v1.1.4}"
+VERSION="${VERSION:-min-v1.1.12}"
 INSTALL_DIR="${INSTALL_DIR:-${PWD}/click2fix-patch-workbench}"
 PULL_IMAGES="${PULL_IMAGES:-false}"
 LAUNCH_SETUP="${LAUNCH_SETUP:-false}"
@@ -39,6 +39,14 @@ require_cmd() {
   if ! command -v "${cmd}" >/dev/null 2>&1; then
     echo "ERROR: required command not found: ${cmd}" >&2
     exit 1
+  fi
+}
+
+strip_crlf_if_needed() {
+  local file="$1"
+  [[ -f "${file}" ]] || return 0
+  if [[ "${file}" == *.sh ]]; then
+    sed -i 's/\r$//' "${file}"
   fi
 }
 
@@ -83,6 +91,7 @@ FILES=(
   "install-patch-workbench.sh"
   "manage-patch-workbench.sh"
   "upgrade-patch-workbench.sh"
+  "PATCH_WORKBENCH_MIN_INSTALL_AND_CONFIGURATION.md"
   "README.md"
 )
 
@@ -90,7 +99,9 @@ BASE_URL="https://raw.githubusercontent.com/${OWNER}/${REPO}/${VERSION}/deploy/a
 
 for file in "${FILES[@]}"; do
   echo "Downloading ${file} ..."
-  curl -fsSL "${BASE_URL}/${file}" -o "${INSTALL_DIR}/${file}"
+  destination="${INSTALL_DIR}/${file}"
+  curl -fsSL "${BASE_URL}/${file}" -o "${destination}"
+  strip_crlf_if_needed "${destination}"
 done
 
 TEMPLATE_FILE="${INSTALL_DIR}/.env.patch-workbench.template"

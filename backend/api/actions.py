@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import shlex
 import threading
 from typing import Any
 
@@ -43,8 +44,14 @@ _FLEET_TARGETS = {"all", "*", "fleet", "all-active"}
 _CONNECTED_STATUSES = {"active", "connected", "online"}
 _GLOBAL_SHELL_MAX_COMMAND_CHARS = 20000
 _GLOBAL_SHELL_MAX_ASSIST_ATTEMPTS = 8
+_GLOBAL_SHELL_SUPPORTED_SHELLS = {"powershell", "cmd", "bash", "sh"}
+_GLOBAL_SHELL_LINUX_SHELLS = {"bash", "sh"}
 _AI_REMEDIATION_CONFIG_KEY = "ai_remediation"
 _PROVIDER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_LINUX_INLINE_PASSWORD_PATTERNS = [
+    re.compile(r"\bsudo\s+-S\b", re.IGNORECASE),
+    re.compile(r"\b(?:echo|printf)\b[\s\S]{0,220}\|\s*sudo\b", re.IGNORECASE),
+]
 
 
 def _ps_single_quoted(value: str) -> str:
@@ -67,6 +74,41 @@ def _wrap_cmd_for_powershell(raw_command: str) -> str:
         # Avoid double-wrapping analyst-provided cmd invocations.
         return raw
     return f"$c={_ps_single_quoted(raw)}; cmd.exe /d /s /c $c"
+
+
+def _wrap_linux_shell_command(raw_command: str, *, shell: str) -> str:
+    raw = str(raw_command or "").strip()
+    if not raw:
+        return ""
+    normalized = raw.lower()
+    if shell == "bash":
+        if normalized.startswith("bash ") or normalized.startswith("/bin/bash "):
+            return raw
+        return f"bash -lc {shlex.quote(raw)}"
+    if shell == "sh":
+        if normalized.startswith("sh ") or normalized.startswith("/bin/sh "):
+            return raw
+        return f"sh -lc {shlex.quote(raw)}"
+    return raw
+
+
+def _prepare_global_shell_command(raw_command: str, shell: str) -> str:
+    normalized_shell = str(shell or "").strip().lower()
+    if normalized_shell == "cmd":
+        return _wrap_cmd_for_powershell(raw_command)
+    if normalized_shell in _GLOBAL_SHELL_LINUX_SHELLS:
+        return _wrap_linux_shell_command(raw_command, shell=normalized_shell)
+    return str(raw_command or "").strip()
+
+
+def _contains_inline_linux_password(raw_command: str) -> bool:
+    command = str(raw_command or "")
+    if not command:
+        return False
+    for pattern in _LINUX_INLINE_PASSWORD_PATTERNS:
+        if pattern.search(command):
+            return True
+    return False
 
 
 
@@ -843,9 +885,7 @@ def _run_global_shell_async_job(
                 )
                 break
             used_commands.append(current_raw_command)
-            command_to_run = current_raw_command
-            if str(shell or "").strip().lower() == "cmd":
-                command_to_run = _wrap_cmd_for_powershell(current_raw_command)
+            command_to_run = _prepare_global_shell_command(current_raw_command, shell)
             dispatch, _ = _build_global_shell_dispatch(
                 command_to_run=command_to_run,
                 run_as_system=current_run_as_system,
@@ -1473,8 +1513,8 @@ async def global_shell_assist(request: Request, user=Depends(require_role("analy
         body = {}
 
     shell = str(body.get("shell") or "powershell").strip().lower()
-    if shell not in {"powershell", "cmd"}:
-        raise HTTPException(status_code=400, detail="shell must be 'powershell' or 'cmd'")
+    if shell not in _GLOBAL_SHELL_SUPPORTED_SHELLS:
+        raise HTTPException(status_code=400, detail="shell must be one of: powershell, cmd, bash, sh")
     prompt = str(body.get("prompt") or body.get("assistant_prompt") or "").strip()
     scoped_agent_ids = _normalize_agent_id_list(body.get("agent_ids") or body.get("agents"))
     single_agent = _normalize_agent_identifier(body.get("agent_id") or "")
@@ -1526,9 +1566,11 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         body = {}
 
     shell = str(body.get("shell") or "powershell").strip().lower()
-    if shell not in {"powershell", "cmd"}:
+    if shell not in _GLOBAL_SHELL_SUPPORTED_SHELLS:
         logger.warning("global-shell rejected: invalid shell=%s", shell)
-        raise HTTPException(status_code=400, detail="shell must be 'powershell' or 'cmd'")
+        raise HTTPException(status_code=400, detail="shell must be one of: powershell, cmd, bash, sh")
+    shell_target_platform = "linux" if shell in _GLOBAL_SHELL_LINUX_SHELLS else "windows"
+    shell_target_label = "Linux" if shell_target_platform == "linux" else "Windows"
     async_raw = body.get("async")
     async_mode = True if async_raw is None else _to_bool(async_raw, True)
 
@@ -1583,7 +1625,11 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
     agents = [item for item in _extract_items(agents_data) if isinstance(item, dict)]
     connected_total = 0
     connected_windows = 0
+    connected_linux = 0
     skipped_non_windows = 0
+    skipped_non_linux = 0
+    skipped_non_target_platform = 0
+    connected_target_platform = 0
     excluded_count = 0
     selected_ids = []
     seen = set()
@@ -1611,10 +1657,19 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         connected_total += 1
 
         platform = _agent_platform(agent)
-        if platform != "windows":
-            skipped_non_windows += 1
+        if platform == "windows":
+            connected_windows += 1
+        elif platform == "linux":
+            connected_linux += 1
+
+        if platform != shell_target_platform:
+            skipped_non_target_platform += 1
+            if platform != "windows":
+                skipped_non_windows += 1
+            if platform != "linux":
+                skipped_non_linux += 1
             continue
-        connected_windows += 1
+        connected_target_platform += 1
 
         if agent_id in exclude_set:
             excluded_count += 1
@@ -1625,13 +1680,13 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         selected_ids.append(agent_id)
 
     if not selected_ids:
-        detail = "No connected Windows agents available after filtering"
+        detail = f"No connected {shell_target_label} agents available after filtering"
         if target_mode == "agent":
-            detail = "Requested agent is not connected as a Windows endpoint or was excluded"
+            detail = f"Requested agent is not connected as a {shell_target_label} endpoint or was excluded"
         elif target_mode == "multi":
-            detail = "No requested agents are connected Windows endpoints after exclusions"
+            detail = f"No requested agents are connected {shell_target_label} endpoints after exclusions"
         elif target_mode == "group":
-            detail = f"No connected Windows agents found in group '{target_group}' after exclusions"
+            detail = f"No connected {shell_target_label} agents found in group '{target_group}' after exclusions"
         raise HTTPException(
             status_code=404,
             detail=detail,
@@ -1701,6 +1756,15 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
             status_code=400,
             detail=f"command exceeds {_GLOBAL_SHELL_MAX_COMMAND_CHARS} characters",
         )
+    if shell in _GLOBAL_SHELL_LINUX_SHELLS and _contains_inline_linux_password(raw_command):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Do not include sudo password text in Linux commands. "
+                "Use password-free command text, enable run_as_system, and configure per-agent "
+                "C2F_SSH_USERNAME_* / C2F_SSH_PASSWORD_* connector credentials."
+            ),
+        )
 
     try:
         initial_safety = enforce_command_safety(
@@ -1724,9 +1788,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
         )
         raise
 
-    command_to_run = raw_command
-    if shell == "cmd":
-        command_to_run = _wrap_cmd_for_powershell(raw_command)
+    command_to_run = _prepare_global_shell_command(raw_command, shell)
 
     effective_run_as_system = bool(run_as_system)
     execution_action_id = "global-shell"
@@ -1925,12 +1987,17 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
 
         summary = {
             "target_mode": target_mode,
+            "shell_target_platform": shell_target_platform,
             "requested_agents": len(requested_set) if requested_set else None,
             "connected_agents_seen": connected_total,
             "connected_windows_seen": connected_windows,
+            "connected_linux_seen": connected_linux,
+            "connected_target_platform_seen": connected_target_platform,
             "targeted_agents": len(selected_ids),
             "excluded_agents": excluded_count,
             "skipped_non_windows": skipped_non_windows,
+            "skipped_non_linux": skipped_non_linux,
+            "skipped_non_target_platform": skipped_non_target_platform,
             "success": 0,
             "failed": 0,
         }
@@ -1944,7 +2011,9 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
                 f"shell={shell}; targeted={summary['targeted_agents']}; "
                 f"target_mode={target_mode}; "
                 f"connected_seen={summary['connected_agents_seen']}; "
-                f"skipped_non_windows={summary['skipped_non_windows']}; "
+                f"shell_target_platform={shell_target_platform}; "
+                f"connected_target_platform={summary['connected_target_platform_seen']}; "
+                f"skipped_non_target_platform={summary['skipped_non_target_platform']}; "
                 f"run_as_system={'yes' if effective_run_as_system else 'no'}; "
                 f"assistant_used={'yes' if assistant_meta['used'] else 'no'}; "
                 f"auto_remediate={'yes' if auto_remediate else 'no'}; "
@@ -2035,9 +2104,7 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
             break
 
         used_commands.append(current_raw_command)
-        current_command_used = (
-            current_raw_command if shell == "powershell" else _wrap_cmd_for_powershell(current_raw_command)
-        )
+        current_command_used = _prepare_global_shell_command(current_raw_command, shell)
         attempt_dispatch, _ = _build_global_shell_dispatch(
             command_to_run=current_command_used,
             run_as_system=current_run_as_system,
@@ -2133,12 +2200,17 @@ async def run_global_shell(request: Request, user=Depends(require_role("admin"))
 
     summary = {
         "target_mode": target_mode,
+        "shell_target_platform": shell_target_platform,
         "requested_agents": len(requested_set) if requested_set else None,
         "connected_agents_seen": connected_total,
         "connected_windows_seen": connected_windows,
+        "connected_linux_seen": connected_linux,
+        "connected_target_platform_seen": connected_target_platform,
         "targeted_agents": len(selected_ids),
         "excluded_agents": excluded_count,
         "skipped_non_windows": skipped_non_windows,
+        "skipped_non_linux": skipped_non_linux,
+        "skipped_non_target_platform": skipped_non_target_platform,
         "success": int(last_result.get("success") or 0) if isinstance(last_result, dict) else 0,
         "failed": int(last_result.get("failed") or 0) if isinstance(last_result, dict) else len(selected_ids),
     }

@@ -3,9 +3,15 @@ const ANSI_ESCAPE_RE =
   /[\u001B\u009B](?:\][^\u0007\u001B]*(?:\u0007|\u001B\\)|[[][()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-PR-TZcf-nq-uy=><~])/g;
 const SPINNER_LINE_RE = /^[\s\-\\|/^v><._]+$/;
 const PROGRESS_BAR_RE = /^[\s\u2580-\u259F]+(?:\d{1,3}%|[\d.,]+\s*(KB|MB|GB)\s*\/\s*[\d.,]+\s*(KB|MB|GB))?$/i;
+const INLINE_SUDO_PASSWORD_RE = /(\b(?:echo|printf)\b\s+)([^|\r\n]+)(\s*\|\s*sudo\s+-S\b)/gi;
+const SUDO_PASSWORD_ASSIGNMENT_RE = /(\bsudo_password=)[^\s;]+/gi;
+
+export const redactSensitiveCommandText = (value) => String(value || "")
+  .replace(INLINE_SUDO_PASSWORD_RE, (_match, prefix, _secret, suffix) => `${prefix}[C2F_PASSWORD_REDACTED]${suffix}`)
+  .replace(SUDO_PASSWORD_ASSIGNMENT_RE, "$1[C2F_PASSWORD_REDACTED]");
 
 export const normalizeOutputText = (value) =>
-  String(value || "")
+  redactSensitiveCommandText(String(value || ""))
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .replace(ANSI_ESCAPE_RE, "")
@@ -91,10 +97,11 @@ const explainError = (stderr, stdout) => {
 export const buildHumanReadableOutput = (stdout, stderr, options = {}) => {
   const cleanStdout = extractReadableOutput(stdout);
   const cleanStderr = extractReadableOutput(stderr);
-  const detail = cleanStderr || cleanStdout;
+  const normalizedStatus = String(options?.status || "").trim().toUpperCase();
+  const targetOk = options?.ok;
+  const isSuccess = normalizedStatus === "SUCCESS" || targetOk === true;
+  const detail = isSuccess ? (cleanStdout || cleanStderr) : (cleanStderr || cleanStdout);
   if (!detail) {
-    const normalizedStatus = String(options?.status || "").trim().toUpperCase();
-    const targetOk = options?.ok;
     if (normalizedStatus === "SUCCESS") {
       return "Command completed successfully with no output. If this was a filter/query command, no matching results were returned.";
     }
@@ -109,6 +116,7 @@ export const buildHumanReadableOutput = (stdout, stderr, options = {}) => {
     }
     return "";
   }
+  if (isSuccess) return detail;
   const explanation = explainError(stderr, stdout);
   if (!explanation) return detail;
   return `${explanation}\n\nDetails:\n${detail}`;

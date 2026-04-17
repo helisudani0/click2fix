@@ -10,6 +10,7 @@ import {
   runGlobalShell,
 } from "../api/wazuh";
 import { formatApiError } from "../utils/httpErrors";
+import { redactSensitiveCommandText } from "../utils/output";
 
 const CONNECTED_STATUSES = new Set(["active", "connected", "online"]);
 const SHELL_PLATFORM_MAP = {
@@ -18,7 +19,16 @@ const SHELL_PLATFORM_MAP = {
   bash: "linux",
   sh: "linux",
 };
-const VULN_FETCH_LIMIT = 2500;
+const LIVE_EXECUTION_STATUSES = new Set([
+  "QUEUED",
+  "RUNNING",
+  "PENDING",
+  "PENDING_VERIFICATION",
+  "PAUSED",
+  "IN_PROGRESS",
+  "DISPATCHED",
+]);
+const VULN_FETCH_LIMIT = 800;
 const VULN_SEVERITY_ORDER = {
   critical: 0,
   high: 1,
@@ -108,6 +118,15 @@ const severityTone = (severity) => {
   return "neutral";
 };
 
+const isExecutionLive = (status) => LIVE_EXECUTION_STATUSES.has(String(status || "").trim().toUpperCase());
+
+const hasInlineLinuxPassword = (value) => {
+  const text = String(value || "");
+  if (!text) return false;
+  if (/\bsudo\s+-S\b/i.test(text)) return true;
+  return /\b(?:echo|printf)\b[\s\S]{0,200}\|\s*sudo\b/i.test(text);
+};
+
 const parseJsonMaybe = (value) => {
   if (value === null || value === undefined) return null;
   if (typeof value !== "string") return value;
@@ -154,7 +173,7 @@ const unquoteShellPayload = (value) => {
 };
 
 const resolveShellAndCommand = (argsValue) => {
-  const commandUsed = extractCommandFromArgs(argsValue);
+  const commandUsed = redactSensitiveCommandText(extractCommandFromArgs(argsValue));
   if (!commandUsed) return { shell: "-", command: "" };
   const cmdMatch = commandUsed.match(/^cmd(?:\.exe)?\s+\/c\s+([\s\S]+)$/i);
   if (cmdMatch) return { shell: "CMD", command: String(cmdMatch[1] || "").trim() || commandUsed };
@@ -246,7 +265,7 @@ export default function PatchWorkbench() {
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [agentsError, setAgentsError] = useState("");
 
-  const [targetMode, setTargetMode] = useState("fleet");
+  const [targetMode, setTargetMode] = useState("agent");
   const [targetValue, setTargetValue] = useState("");
   const [targetAgentIds, setTargetAgentIds] = useState([]);
   const [multiPickAgentId, setMultiPickAgentId] = useState("");
@@ -283,6 +302,7 @@ export default function PatchWorkbench() {
   const [historyPage, setHistoryPage] = useState(1);
   const [historyPageSize, setHistoryPageSize] = useState(15);
   const [activeExecutionId, setActiveExecutionId] = useState(null);
+  const [activeExecutionMode, setActiveExecutionMode] = useState("auto");
 
   const loadAgents = useCallback(async (force = false) => {
     setAgentsLoading(true);
@@ -331,15 +351,11 @@ export default function PatchWorkbench() {
     setHistoryLoading(true);
     try {
       const response = await getExecutions(
-        { limit: 120, q: "global-shell", include_latest_output: true },
+        { limit: 60, q: "global-shell", include_latest_output: false },
         { force }
       );
       const rows = normalizeHistoryRows(response?.data);
       setHistory(rows);
-      setActiveExecutionId((current) => {
-        if (current && rows.some((row) => Number(row.id) === Number(current))) return current;
-        return rows[0]?.id || null;
-      });
     } catch {
       setHistory([]);
     } finally {
@@ -426,6 +442,13 @@ export default function PatchWorkbench() {
     return {};
   }, [normalizedGroupValue, normalizedTargetValue, selectedAgentSet, targetMode]);
 
+  useEffect(() => {
+    if (targetMode !== "agent") return;
+    if (normalizedTargetValue && connectedAgents.some((agent) => agent.id === normalizedTargetValue)) return;
+    const firstConnected = connectedAgents[0]?.id || "";
+    setTargetValue(firstConnected);
+  }, [connectedAgents, normalizedTargetValue, targetMode]);
+
   const scopeLabel = useMemo(() => {
     if (targetMode === "agent") return normalizedTargetValue || "No agent selected";
     if (targetMode === "multi") return `${selectedAgentSet.size} agent(s) selected`;
@@ -450,9 +473,12 @@ export default function PatchWorkbench() {
     setVulnerabilityLoading(true);
     setVulnerabilityError("");
     try {
+      const fetchLimit = targetMode === "fleet" ? 250 : VULN_FETCH_LIMIT;
       const response = await getVulnerabilities({
         ...(scopeParams || {}),
-        limit: VULN_FETCH_LIMIT,
+        limit: fetchLimit,
+        compact: true,
+        include_remediation: false,
       });
       const payload = response?.data || {};
       const rows = Array.isArray(payload?.items) ? payload.items : [];
@@ -481,7 +507,7 @@ export default function PatchWorkbench() {
     } finally {
       setVulnerabilityLoading(false);
     }
-  }, [scopeParams]);
+  }, [scopeParams, targetMode]);
 
   useEffect(() => {
     void loadVulnerabilities();
@@ -491,7 +517,7 @@ export default function PatchWorkbench() {
     const timer = window.setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       void loadHistory(true);
-    }, 10000);
+    }, 20000);
     return () => window.clearInterval(timer);
   }, [loadHistory]);
 
@@ -563,6 +589,26 @@ export default function PatchWorkbench() {
     () => history.find((row) => Number(row.id) === Number(activeExecutionId)) || null,
     [activeExecutionId, history]
   );
+  const activeHistoryRowIsLive = isExecutionLive(activeHistoryRow?.status);
+
+  useEffect(() => {
+    if (activeExecutionMode === "manual") {
+      if (!activeExecutionId) return;
+      const exists = history.some((row) => Number(row.id) === Number(activeExecutionId));
+      if (exists) return;
+      setActiveExecutionId(null);
+      setActiveExecutionMode("auto");
+      return;
+    }
+
+    const currentLive = history.some(
+      (row) => Number(row.id) === Number(activeExecutionId) && isExecutionLive(row.status)
+    );
+    if (currentLive) return;
+
+    const latestLiveRow = history.find((row) => isExecutionLive(row.status));
+    setActiveExecutionId(latestLiveRow ? latestLiveRow.id : null);
+  }, [activeExecutionId, activeExecutionMode, history]);
 
   const toggleVulnerabilitySelection = useCallback((key) => {
     setSelectedVulnKeys((current) => (
@@ -587,6 +633,12 @@ export default function PatchWorkbench() {
     const rawCommand = String(command || "").trim();
     if (!rawCommand) {
       setRunStatus("Command is required.");
+      return;
+    }
+    if (shellTargetPlatform === "linux" && hasInlineLinuxPassword(rawCommand)) {
+      setRunStatus(
+        "Do not include sudo password text in commands. Use password-free command text, enable Run as admin, and keep per-agent C2F_SSH credentials in env."
+      );
       return;
     }
     if (scopeParams === null) {
@@ -627,7 +679,10 @@ export default function PatchWorkbench() {
       const response = await runGlobalShell(payload);
       const data = response?.data || {};
       const executionId = Number(data?.execution_id || 0) || null;
-      if (executionId) setActiveExecutionId(executionId);
+      if (executionId) {
+        setActiveExecutionMode("auto");
+        setActiveExecutionId(executionId);
+      }
       setRunStatus(
         `Queued run${executionId ? ` #${executionId}` : ""} for ${Number(data?.summary?.targeted_agents || 0)} connected ${shellTargetLabel} agent(s).`
       );
@@ -652,6 +707,7 @@ export default function PatchWorkbench() {
     selectedVulnerabilityRows,
     shell,
     shellTargetLabel,
+    shellTargetPlatform,
     targetMode,
   ]);
 
@@ -979,9 +1035,15 @@ export default function PatchWorkbench() {
                   ? "Example: Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -AutoReboot"
                   : shell === "cmd"
                     ? "Example: winget upgrade --all"
-                    : "Example: sudo apt-get update && sudo apt-get upgrade -y"
+                    : "Example: apt-get update && apt-get upgrade -y"
               }
             />
+            {shellTargetPlatform === "linux" ? (
+              <div className="meta-line mt-8">
+                Linux tip: do not type password in command text. Enable "Run as admin" and use per-agent env credentials
+                (`C2F_SSH_USERNAME_*` and `C2F_SSH_PASSWORD_*`).
+              </div>
+            ) : null}
           </div>
 
           <div className="list-item readable">
@@ -1009,8 +1071,10 @@ export default function PatchWorkbench() {
             <h3>4) Live Execution Status</h3>
             <p className="muted">
               {activeHistoryRow
-                ? `Viewing run #${activeHistoryRow.id} (${activeHistoryRow.status || "-"})`
-                : "Run a command or pick one from history to inspect live status and target output."}
+                ? activeExecutionMode === "manual" || !activeHistoryRowIsLive
+                  ? `History run #${activeHistoryRow.id} (${activeHistoryRow.status || "-"})`
+                  : `Live run #${activeHistoryRow.id} (${activeHistoryRow.status || "-"})`
+                : "No live run right now. Start a command, or click a history row to inspect full evidence."}
             </p>
           </div>
         </div>
@@ -1061,7 +1125,10 @@ export default function PatchWorkbench() {
                       <tr
                         key={`history-${row.id}`}
                         className={`clickable ${Number(activeExecutionId) === Number(row.id) ? "selected" : ""}`}
-                        onClick={() => setActiveExecutionId(row.id)}
+                        onClick={() => {
+                          setActiveExecutionMode("manual");
+                          setActiveExecutionId(row.id);
+                        }}
                       >
                         <td>{row.id}</td>
                         <td>

@@ -6,7 +6,7 @@ import { getAlerts, retryFailedExecution } from "../api/wazuh";
 import RelativeTimestamp from "./RelativeTimestamp";
 import Pager from "./Pager";
 import { nowUtcIso, parseWazuhTimestamp } from "../utils/time";
-import { buildHumanReadableOutput, normalizeOutputText } from "../utils/output";
+import { buildHumanReadableOutput, normalizeOutputText, redactSensitiveCommandText } from "../utils/output";
 
 const UPDATE_ACTION_IDS = new Set([
   "patch-windows",
@@ -804,7 +804,7 @@ const unquoteShellPayload = (value) => {
 };
 
 const resolveExecutionShellAndCommand = (actionId, argsValue) => {
-  const commandUsed = extractExecutionCommand(argsValue);
+  const commandUsed = redactSensitiveCommandText(extractExecutionCommand(argsValue));
   if (!commandUsed) return { shell: "", command: "", commandUsed: "" };
   const cmdMatch = commandUsed.match(/^cmd(?:\.exe)?\s+\/c\s+([\s\S]+)$/i);
   if (cmdMatch) {
@@ -826,7 +826,7 @@ const resolveExecutionShellAndCommand = (actionId, argsValue) => {
   return { shell, command: commandUsed, commandUsed };
 };
 
-const normalizeCommandOutput = (value) => normalizeOutputText(value);
+const normalizeCommandOutput = (value) => normalizeOutputText(redactSensitiveCommandText(value));
 
 const quoteShellArg = (value) => {
   const text = String(value ?? "").trim();

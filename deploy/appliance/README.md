@@ -6,6 +6,10 @@ For environments that cannot execute PowerShell scripts, use the CMD-only operat
 
 - `deploy/appliance/CMD_INSTALL_AND_MANAGE.md`
 
+For the full zero-to-production Patch Workbench min package guide (Linux + Windows install, ports, Wazuh, WinRM, SSH, env setup), use:
+
+- `deploy/appliance/PATCH_WORKBENCH_MIN_INSTALL_AND_CONFIGURATION.md`
+
 The intended current flows:
 
 1. Customer runs the Docker-based appliance scaffold directly from release assets or the raw bootstrap path.
@@ -190,13 +194,13 @@ OWNER=helisudani0 REPO=click2fix VERSION=${VERSION} INSTALL_DIR=/opt/click2fix P
 Patch Workbench bootstrap (min release tags):
 
 ```powershell
-$version = "min-v1.1.4"
+$version = "min-v1.1.12"
 Invoke-WebRequest "https://raw.githubusercontent.com/helisudani0/click2fix/$version/deploy/appliance/bootstrap-patch-workbench.ps1" -OutFile .\bootstrap-patch-workbench.ps1
 powershell -ExecutionPolicy Bypass -File .\bootstrap-patch-workbench.ps1 -Owner helisudani0 -Repo click2fix -Version $version -InstallDir C:\Click2Fix-PatchWorkbench -PullImages
 ```
 
 ```bash
-VERSION=min-v1.1.4
+VERSION=min-v1.1.12
 curl -fsSL "https://raw.githubusercontent.com/helisudani0/click2fix/${VERSION}/deploy/appliance/bootstrap-patch-workbench.sh" -o ./bootstrap-patch-workbench.sh
 chmod +x ./bootstrap-patch-workbench.sh
 OWNER=helisudani0 REPO=click2fix VERSION=${VERSION} INSTALL_DIR=/opt/click2fix-patch-workbench PULL_IMAGES=true ./bootstrap-patch-workbench.sh

@@ -9522,7 +9522,7 @@ catch {
             "logfile='/var/tmp/click2fix_executions.log'; "
             f"exec_id={safe_exec}; agent_id={safe_agent}; action_id={safe_action}; "
             "user=$(id -un); ts=$(date -Iseconds); "
-            "c2f_log_append(){ line=\"$1\"; if command -v sudo >/dev/null 2>&1; then printf '%s\\n' \"$line\" | sudo tee -a \"$logfile\" >/dev/null; else printf '%s\\n' \"$line\" | tee -a \"$logfile\" >/dev/null; fi; }; "
+            "c2f_log_append(){ line=\"$1\"; if printf '%s\\n' \"$line\" | tee -a \"$logfile\" >/dev/null 2>&1; then return 0; fi; if command -v sudo >/dev/null 2>&1; then printf '%s\\n' \"$line\" | sudo -n tee -a \"$logfile\" >/dev/null 2>&1 || true; fi; }; "
             "c2f_log_append \"$ts exec=$exec_id agent=$agent_id action=$action_id user=$user status=START\"; "
             "c2f_evidence(){ msg=\"$*\"; ts=$(date -Iseconds); c2f_log_append \"$ts exec=$exec_id agent=$agent_id action=$action_id user=$user evidence=$msg\"; }; "
             f"{inner}; "
@@ -9721,8 +9721,12 @@ catch {
             verify_min_build = _sh_quote(args[2] if len(args) > 2 else "")
             verify_stdout_contains = _sh_quote(args[3] if len(args) > 3 else "")
             run_as_system = _sh_quote(args[4] if len(args) > 4 else "false")
+            linux_creds = self._linux_credentials_for_agent_target(
+                agent_id=str((target or {}).get("agent_id") or ""),
+            )
+            sudo_password = _sh_quote(linux_creds.get("password") or "")
             inner = (
-                f"cmd={cmd}; verify_kb={verify_kb}; verify_min_build={verify_min_build}; verify_contains={verify_stdout_contains}; run_as_system_raw={run_as_system}; "
+                f"cmd={cmd}; verify_kb={verify_kb}; verify_min_build={verify_min_build}; verify_contains={verify_stdout_contains}; run_as_system_raw={run_as_system}; sudo_password={sudo_password}; "
                 "if [ -z \"$(printf '%s' \"$cmd\" | tr -d '[:space:]')\" ]; then echo 'custom-os-command requires command argument' >&2; exit 1; fi; "
                 "if [ -n \"$(printf '%s' \"$verify_kb\" | tr -d '[:space:]')\" ] || [ -n \"$(printf '%s' \"$verify_min_build\" | tr -d '[:space:]')\" ]; then "
                 "echo 'custom-os-command verification fields verify_kb/verify_min_build are supported only on Windows endpoints' >&2; exit 1; "
@@ -9735,7 +9739,10 @@ catch {
                 "set +e; "
                 "if [ \"$run_as_system\" = \"true\" ]; then "
                 "if [ \"$(id -u)\" = \"0\" ]; then out=$(bash -lc \"$cmd\" 2>&1); rc=$?; "
-                "elif command -v sudo >/dev/null 2>&1; then out=$(sudo -n bash -lc \"$cmd\" 2>&1); rc=$?; "
+                "elif command -v sudo >/dev/null 2>&1; then "
+                "if sudo -n true >/dev/null 2>&1; then out=$(sudo -n bash -lc \"$cmd\" 2>&1); rc=$?; "
+                "elif [ -n \"$sudo_password\" ]; then out=$(printf '%s\\n' \"$sudo_password\" | sudo -S -p '' bash -lc \"$cmd\" 2>&1); rc=$?; "
+                "else out='custom-os-command requires sudo privileges. Configure endpoint sudo or connector password.'; rc=1; fi; "
                 "else out='custom-os-command requires sudo or root when run_as_system=true'; rc=1; fi; "
                 "else out=$(bash -lc \"$cmd\" 2>&1); rc=$?; "
                 "fi; "

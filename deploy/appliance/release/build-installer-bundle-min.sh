@@ -110,6 +110,7 @@ APPLIANCE_FILES=(
   "install-patch-workbench.sh"
   "manage-patch-workbench.ps1"
   "manage-patch-workbench.sh"
+  "PATCH_WORKBENCH_MIN_INSTALL_AND_CONFIGURATION.md"
   "preflight.ps1"
   "README.md"
   "upgrade-patch-workbench.ps1"

@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
-import Actions from "./Actions";
+import { useCallback, useState } from "react";
+import ActionsMin from "./ActionsMin";
 import PlaybooksMin from "./PlaybooksMin";
-import Scheduler from "./Scheduler";
+import SchedulerMin from "./SchedulerMin";
 import PatchWorkbenchShellMin from "./PatchWorkbenchShellMin";
 
 const WORKBENCH_MODES = [
@@ -21,10 +21,10 @@ const MODE_SUMMARY = {
 export default function PatchWorkbenchMin() {
   const [mode, setMode] = useState("shell");
 
-  const modePane = useMemo(() => {
-    if (mode === "actions") return <Actions />;
-    if (mode === "playbooks") return <PlaybooksMin />;
-    if (mode === "scheduler") return <Scheduler embedded />;
+  const renderModePane = useCallback((props = {}) => {
+    if (mode === "actions") return <ActionsMin {...props} />;
+    if (mode === "playbooks") return <PlaybooksMin {...props} />;
+    if (mode === "scheduler") return <SchedulerMin {...props} />;
     return null;
   }, [mode]);
 
@@ -34,7 +34,7 @@ export default function PatchWorkbenchMin() {
       modeOptions={WORKBENCH_MODES}
       modeSummary={MODE_SUMMARY}
       onModeChange={setMode}
-      modePane={modePane}
+      renderModePane={renderModePane}
     />
   );
 }

@@ -241,7 +241,7 @@ const normalizeHistoryRows = (rows) => {
         command: commandMeta.command,
       };
     })
-    .filter((row) => row.id > 0 && String(row.action || "").toLowerCase().includes("global-shell"))
+    .filter((row) => row.id > 0)
     .sort((left, right) => right.id - left.id);
 };
 
@@ -271,13 +271,14 @@ export default function PatchWorkbenchShellMin({
   modeSummary = {},
   onModeChange,
   modePane = null,
+  renderModePane = null,
 }) {
   const [agents, setAgents] = useState([]);
   const [groups, setGroups] = useState([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [agentsError, setAgentsError] = useState("");
 
-  const [targetMode, setTargetMode] = useState("agent");
+  const [targetMode, setTargetMode] = useState("fleet");
   const [targetValue, setTargetValue] = useState("");
   const [targetAgentIds, setTargetAgentIds] = useState([]);
   const [multiPickAgentId, setMultiPickAgentId] = useState("");
@@ -363,7 +364,7 @@ export default function PatchWorkbenchShellMin({
     setHistoryLoading(true);
     try {
       const response = await getExecutions(
-        { limit: 60, q: "global-shell", include_latest_output: false },
+        { limit: 120, include_latest_output: false },
         { force }
       );
       const rows = normalizeHistoryRows(response?.data);
@@ -438,6 +439,12 @@ export default function PatchWorkbenchShellMin({
         (agent.groups || []).some((group) => String(group || "").trim().toLowerCase() === key)
       );
     }
+    if (targetMode === "os_windows") {
+      return connectedAgents.filter((agent) => agent.platform === "windows");
+    }
+    if (targetMode === "os_linux") {
+      return connectedAgents.filter((agent) => agent.platform === "linux");
+    }
     return connectedAgents;
   }, [connectedAgents, normalizedGroupValue, normalizedTargetValue, selectedAgentSet, targetMode]);
 
@@ -451,8 +458,20 @@ export default function PatchWorkbenchShellMin({
     if (targetMode === "group") {
       return normalizedGroupValue ? { group: normalizedGroupValue } : null;
     }
+    if (targetMode === "os_windows") {
+      const ids = connectedAgents
+        .filter((agent) => agent.platform === "windows")
+        .map((agent) => agent.id);
+      return ids.length ? { agent_ids: ids.join(",") } : null;
+    }
+    if (targetMode === "os_linux") {
+      const ids = connectedAgents
+        .filter((agent) => agent.platform === "linux")
+        .map((agent) => agent.id);
+      return ids.length ? { agent_ids: ids.join(",") } : null;
+    }
     return {};
-  }, [normalizedGroupValue, normalizedTargetValue, selectedAgentSet, targetMode]);
+  }, [connectedAgents, normalizedGroupValue, normalizedTargetValue, selectedAgentSet, targetMode]);
 
   useEffect(() => {
     if (targetMode !== "agent") return;
@@ -465,8 +484,10 @@ export default function PatchWorkbenchShellMin({
     if (targetMode === "agent") return normalizedTargetValue || "No agent selected";
     if (targetMode === "multi") return `${selectedAgentSet.size} agent(s) selected`;
     if (targetMode === "group") return normalizedGroupValue ? `Group: ${normalizedGroupValue}` : "No group selected";
+    if (targetMode === "os_windows") return `Windows agents (${scopedConnectedAgents.length})`;
+    if (targetMode === "os_linux") return `Linux agents (${scopedConnectedAgents.length})`;
     return "Fleet";
-  }, [normalizedGroupValue, normalizedTargetValue, selectedAgentSet.size, targetMode]);
+  }, [normalizedGroupValue, normalizedTargetValue, scopedConnectedAgents.length, selectedAgentSet.size, targetMode]);
 
   const shellTargetPlatform = SHELL_PLATFORM_MAP[shell] || "windows";
   const shellTargetLabel = shellTargetPlatform === "linux" ? "Linux" : "Windows";
@@ -475,6 +496,22 @@ export default function PatchWorkbenchShellMin({
     if (raw === "actions" || raw === "playbooks" || raw === "scheduler") return raw;
     return "shell";
   })();
+
+  const handleModuleExecutionCreated = useCallback((executionId) => {
+    const id = Number(executionId || 0);
+    if (!id) return;
+    setActiveExecutionMode("auto");
+    setActiveExecutionId(id);
+    setHistoryOpen(true);
+    void loadHistory(true);
+  }, [loadHistory]);
+
+  const modePaneNode = useMemo(() => {
+    if (typeof renderModePane === "function") {
+      return renderModePane({ onExecutionCreated: handleModuleExecutionCreated });
+    }
+    return modePane;
+  }, [handleModuleExecutionCreated, modePane, renderModePane]);
 
   const eligibleScopedAgents = useMemo(
     () => scopedConnectedAgents.filter((agent) => agent.platform === shellTargetPlatform),
@@ -684,13 +721,18 @@ export default function PatchWorkbenchShellMin({
         payload.vulnerability_context = buildVulnerabilityContext(selectedVulnerabilityRows, {
           target_mode: targetMode,
           target_value: targetMode === "agent" ? normalizedTargetValue : normalizedGroupValue,
-          target_agent_ids: targetMode === "multi" ? Array.from(selectedAgentSet) : undefined,
+          target_agent_ids: (targetMode === "multi" || targetMode === "os_windows" || targetMode === "os_linux")
+            ? scopedConnectedAgents.map((agent) => agent.id)
+            : undefined,
         });
       }
 
       if (targetMode === "agent") payload.agent_id = normalizedTargetValue;
       else if (targetMode === "group") payload.group = normalizedGroupValue;
       else if (targetMode === "multi") payload.agent_ids = Array.from(selectedAgentSet);
+      else if (targetMode === "os_windows" || targetMode === "os_linux") {
+        payload.agent_ids = scopedConnectedAgents.map((agent) => agent.id);
+      }
       else payload.agent_id = "all";
 
       const response = await runGlobalShell(payload);
@@ -721,6 +763,7 @@ export default function PatchWorkbenchShellMin({
     runAsSystem,
     scopeParams,
     selectedAgentSet,
+    scopedConnectedAgents,
     selectedVulnerabilityRows,
     shell,
     shellTargetLabel,
@@ -793,6 +836,8 @@ export default function PatchWorkbenchShellMin({
                 <option value="group">Group</option>
                 <option value="multi">Multiple agents</option>
                 <option value="agent">Single agent</option>
+                <option value="os_windows">Windows agents</option>
+                <option value="os_linux">Linux agents</option>
               </select>
             </div>
 
@@ -1015,8 +1060,8 @@ export default function PatchWorkbenchShellMin({
       <div className="card patch-workbench-switcher-card">
         <div className="card-header">
           <div>
-            <h3>3) Workspace Switcher</h3>
-            <p className="muted">Use a single workspace switcher for shell, actions, playbooks, and scheduling.</p>
+            <h3>Workspace Mode</h3>
+            <p className="muted">Choose which module is loaded in section 4.</p>
           </div>
         </div>
         <div className="page-actions">
@@ -1039,183 +1084,183 @@ export default function PatchWorkbenchShellMin({
         </div>
       </div>
 
-      {normalizedMode !== "shell" ? (
-        <div className="patch-workbench-mode-pane">
-          {modePane}
+      {normalizedMode === "shell" ? (
+        <div className="card patch-workbench-command-card">
+          <div className="card-header">
+            <div>
+              <h3>4) Command Runner</h3>
+              <p className="muted">Choose shell, enter command, and run against selected scope.</p>
+            </div>
+          </div>
+          <div className="list">
+            <div className="list-item readable">
+              <div className="muted">Shell</div>
+              <div className="page-actions mt-8">
+                <select className="input" value={shell} onChange={(event) => setShell(event.target.value)}>
+                  <option value="powershell">PowerShell</option>
+                  <option value="cmd">CMD</option>
+                  <option value="bash">Bash</option>
+                  <option value="sh">SH</option>
+                </select>
+              </div>
+              <label className="mt-10 inline-check">
+                <input type="checkbox" checked={runAsSystem} onChange={(event) => setRunAsSystem(Boolean(event.target.checked))} />
+                <span className="muted">Run as admin ({shellTargetPlatform === "windows" ? "SYSTEM" : "sudo/root"})</span>
+              </label>
+              <label className="mt-10 inline-check">
+                <input type="checkbox" checked={allowDestructive} onChange={(event) => setAllowDestructive(Boolean(event.target.checked))} />
+                <span className="muted">Allow destructive commands</span>
+              </label>
+            </div>
+
+            <div className="list-item readable">
+              <div className="muted">Command</div>
+              <textarea
+                className="input mt-8 mono"
+                rows={8}
+                value={command}
+                onChange={(event) => setCommand(event.target.value)}
+                placeholder={
+                  shell === "powershell"
+                    ? "Example: Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -AutoReboot"
+                    : shell === "cmd"
+                      ? "Example: winget upgrade --all"
+                      : "Example: apt-get update && apt-get upgrade -y"
+                }
+              />
+              {shellTargetPlatform === "linux" ? (
+                <div className="meta-line mt-8">
+                  Linux tip: do not type password in command text. Enable "Run as admin" and use per-agent env credentials
+                  (`C2F_SSH_USERNAME_*` and `C2F_SSH_PASSWORD_*`).
+                </div>
+              ) : null}
+            </div>
+
+            <div className="list-item readable">
+              <div className="muted">Justification (optional)</div>
+              <input
+                className="input mt-8"
+                value={justification}
+                onChange={(event) => setJustification(event.target.value)}
+                placeholder="Reason for this patch command"
+              />
+            </div>
+
+            <div className="page-actions">
+              <button className="btn" type="button" onClick={runPatchCommand} disabled={submitting}>
+                {submitting ? "Queueing..." : "Run Patch Command"}
+              </button>
+            </div>
+            {runStatus ? <div className="empty-state patch-workbench-run-status">{runStatus}</div> : null}
+          </div>
         </div>
       ) : (
-        <>
-          <div className="card patch-workbench-command-card">
-            <div className="card-header">
-              <div>
-                <h3>4) Command Runner</h3>
-                <p className="muted">Choose shell, enter command, and run against selected scope.</p>
-              </div>
-            </div>
-            <div className="list">
-              <div className="list-item readable">
-                <div className="muted">Shell</div>
-                <div className="page-actions mt-8">
-                  <select className="input" value={shell} onChange={(event) => setShell(event.target.value)}>
-                    <option value="powershell">PowerShell</option>
-                    <option value="cmd">CMD</option>
-                    <option value="bash">Bash</option>
-                    <option value="sh">SH</option>
-                  </select>
-                </div>
-                <label className="mt-10 inline-check">
-                  <input type="checkbox" checked={runAsSystem} onChange={(event) => setRunAsSystem(Boolean(event.target.checked))} />
-                  <span className="muted">Run as admin ({shellTargetPlatform === "windows" ? "SYSTEM" : "sudo/root"})</span>
-                </label>
-                <label className="mt-10 inline-check">
-                  <input type="checkbox" checked={allowDestructive} onChange={(event) => setAllowDestructive(Boolean(event.target.checked))} />
-                  <span className="muted">Allow destructive commands</span>
-                </label>
-              </div>
-
-              <div className="list-item readable">
-                <div className="muted">Command</div>
-                <textarea
-                  className="input mt-8 mono"
-                  rows={8}
-                  value={command}
-                  onChange={(event) => setCommand(event.target.value)}
-                  placeholder={
-                    shell === "powershell"
-                      ? "Example: Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -AutoReboot"
-                      : shell === "cmd"
-                        ? "Example: winget upgrade --all"
-                        : "Example: apt-get update && apt-get upgrade -y"
-                  }
-                />
-                {shellTargetPlatform === "linux" ? (
-                  <div className="meta-line mt-8">
-                    Linux tip: do not type password in command text. Enable "Run as admin" and use per-agent env credentials
-                    (`C2F_SSH_USERNAME_*` and `C2F_SSH_PASSWORD_*`).
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="list-item readable">
-                <div className="muted">Justification (optional)</div>
-                <input
-                  className="input mt-8"
-                  value={justification}
-                  onChange={(event) => setJustification(event.target.value)}
-                  placeholder="Reason for this patch command"
-                />
-              </div>
-
-              <div className="page-actions">
-                <button className="btn" type="button" onClick={runPatchCommand} disabled={submitting}>
-                  {submitting ? "Queueing..." : "Run Patch Command"}
-                </button>
-              </div>
-              {runStatus ? <div className="empty-state patch-workbench-run-status">{runStatus}</div> : null}
-            </div>
-          </div>
-
-          <div className="card patch-workbench-live-card">
-            <div className="card-header">
-              <div>
-                <h3>5) Live Execution Status</h3>
-                <p className="muted">
-                  {activeHistoryRow
-                    ? activeExecutionMode === "manual" || !activeHistoryRowIsLive
-                      ? `History run #${activeHistoryRow.id} (${activeHistoryRow.status || "-"})`
-                      : `Live run #${activeHistoryRow.id} (${activeHistoryRow.status || "-"})`
-                    : "No live run right now. Start a command, or click a history row to inspect full evidence."}
-                </p>
-              </div>
-            </div>
-            {!activeExecutionId ? (
-              <div className="empty-state">No execution selected yet.</div>
-            ) : (
-              <ExecutionStream executionId={activeExecutionId} showRelatedAlerts={false} />
-            )}
-          </div>
-
-          <div className="card patch-workbench-history-card">
-            <div className="card-header">
-              <div>
-                <h3>6) Execution History</h3>
-                <p className="muted">Open when needed. Click any row to inspect in live status section above.</p>
-              </div>
-              <div className="page-actions">
-                <button className="btn secondary" type="button" onClick={() => setHistoryOpen((current) => !current)}>
-                  {historyOpen ? "Hide History" : "Show History"}
-                </button>
-              </div>
-            </div>
-
-            {historyOpen ? (
-              <>
-                <div className="table-scroll patch-workbench-history-scroll">
-                  <table className="table compact readable">
-                    <thead>
-                      <tr>
-                        <th>ID</th>
-                        <th>Status</th>
-                        <th>Target</th>
-                        <th>Shell</th>
-                        <th>Command</th>
-                        <th>Started</th>
-                        <th>Finished</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pagedHistory.length === 0 ? (
-                        <tr>
-                          <td colSpan="7" className="text-center">
-                            {historyLoading ? "Loading history..." : "No global-shell executions found."}
-                          </td>
-                        </tr>
-                      ) : (
-                        pagedHistory.map((row) => (
-                          <tr
-                            key={`history-${row.id}`}
-                            className={`clickable ${Number(activeExecutionId) === Number(row.id) ? "selected" : ""}`}
-                            onClick={() => {
-                              setActiveExecutionMode("manual");
-                              setActiveExecutionId(row.id);
-                            }}
-                          >
-                            <td>{row.id}</td>
-                            <td>
-                              <span className={`status-pill ${statusTone(row.status)}`}>{row.status || "-"}</span>
-                            </td>
-                            <td>{row.target || "-"}</td>
-                            <td>{row.shell || "-"}</td>
-                            <td className="ws-normal patch-workbench-command-cell" title={row.command || "-"}>
-                              {row.command || "-"}
-                            </td>
-                            <td><RelativeTimestamp value={row.startedAt} /></td>
-                            <td><RelativeTimestamp value={row.finishedAt} /></td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                <Pager
-                  total={history.length}
-                  page={historyPage}
-                  pageSize={historyPageSize}
-                  onPageChange={setHistoryPage}
-                  onPageSizeChange={(size) => {
-                    setHistoryPageSize(size);
-                    setHistoryPage(1);
-                  }}
-                  pageSizeOptions={[10, 15, 25, 50]}
-                  label="execution rows"
-                />
-              </>
-            ) : (
-              <div className="empty-state">History is collapsed.</div>
-            )}
-          </div>
-        </>
+        <div className="patch-workbench-mode-pane">
+          {modePaneNode}
+        </div>
       )}
+
+      <div className="card patch-workbench-live-card">
+        <div className="card-header">
+          <div>
+            <h3>5) Live Execution Status</h3>
+            <p className="muted">
+              {activeHistoryRow
+                ? activeExecutionMode === "manual" || !activeHistoryRowIsLive
+                  ? `History run #${activeHistoryRow.id} (${activeHistoryRow.action || "-"}) - ${activeHistoryRow.status || "-"}`
+                  : `Live run #${activeHistoryRow.id} (${activeHistoryRow.action || "-"}) - ${activeHistoryRow.status || "-"}`
+                : "No live run right now. Start a command, or click a history row to inspect full evidence."}
+            </p>
+          </div>
+        </div>
+        {!activeExecutionId ? (
+          <div className="empty-state">No execution selected yet.</div>
+        ) : (
+          <ExecutionStream executionId={activeExecutionId} showRelatedAlerts={false} />
+        )}
+      </div>
+
+      <div className="card patch-workbench-history-card">
+        <div className="card-header">
+          <div>
+            <h3>6) Execution History</h3>
+            <p className="muted">Open when needed. Click any row to inspect in live status section above.</p>
+          </div>
+          <div className="page-actions">
+            <button className="btn secondary" type="button" onClick={() => setHistoryOpen((current) => !current)}>
+              {historyOpen ? "Hide History" : "Show History"}
+            </button>
+          </div>
+        </div>
+
+        {historyOpen ? (
+          <>
+            <div className="table-scroll patch-workbench-history-scroll">
+              <table className="table compact readable">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                    <th>Target</th>
+                    <th>Shell</th>
+                    <th>Command</th>
+                    <th>Started</th>
+                    <th>Finished</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagedHistory.length === 0 ? (
+                    <tr>
+                      <td colSpan="8" className="text-center">
+                        {historyLoading ? "Loading history..." : "No executions found yet."}
+                      </td>
+                    </tr>
+                  ) : (
+                    pagedHistory.map((row) => (
+                      <tr
+                        key={`history-${row.id}`}
+                        className={`clickable ${Number(activeExecutionId) === Number(row.id) ? "selected" : ""}`}
+                        onClick={() => {
+                          setActiveExecutionMode("manual");
+                          setActiveExecutionId(row.id);
+                        }}
+                      >
+                        <td>{row.id}</td>
+                        <td>
+                          <span className={`status-pill ${statusTone(row.status)}`}>{row.status || "-"}</span>
+                        </td>
+                        <td>{row.action || "-"}</td>
+                        <td>{row.target || "-"}</td>
+                        <td>{row.shell || "-"}</td>
+                        <td className="ws-normal patch-workbench-command-cell" title={row.command || "-"}>
+                          {row.command || "-"}
+                        </td>
+                        <td><RelativeTimestamp value={row.startedAt} /></td>
+                        <td><RelativeTimestamp value={row.finishedAt} /></td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <Pager
+              total={history.length}
+              page={historyPage}
+              pageSize={historyPageSize}
+              onPageChange={setHistoryPage}
+              onPageSizeChange={(size) => {
+                setHistoryPageSize(size);
+                setHistoryPage(1);
+              }}
+              pageSizeOptions={[10, 15, 25, 50]}
+              label="execution rows"
+            />
+          </>
+        ) : (
+          <div className="empty-state">History is collapsed.</div>
+        )}
+      </div>
     </div>
   );
 }

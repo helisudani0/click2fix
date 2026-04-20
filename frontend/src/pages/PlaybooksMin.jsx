@@ -1,20 +1,36 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import {
   executePlaybook,
-  generatePlaybook,
   getActions,
-  getAgents,
   getAgentGroups,
+  getAgents,
   getPlaybook,
   getPlaybooks,
-  getSystemAiConfig,
   requestApproval,
   savePlaybook,
   seedDefaultPlaybooks,
 } from "../api/wazuh";
 import PlaybookEditor from "../components/PlaybookEditor";
 import { formatApiError } from "../utils/httpErrors";
+
+const CONNECTED_STATUSES = new Set(["active", "connected", "online"]);
+const PLAYBOOK_GLOBAL_SHELL_ACTION = {
+  id: "global-shell",
+  label: "Global Shell",
+  description: "Execute a reviewed shell command on selected endpoints.",
+  category: "response",
+  risk: "critical",
+  inputs: [
+    { name: "command", label: "Command", required: true, placeholder: "Get-Service WazuhSvc" },
+    { name: "verify_kb", label: "Verify KB", placeholder: "KB5075912" },
+    { name: "verify_min_build", label: "Verify Min Build", placeholder: "19045.6937" },
+    { name: "verify_stdout_contains", label: "Verify stdout contains", placeholder: "Running" },
+    { name: "run_as_system", label: "Run as SYSTEM", placeholder: "false" },
+  ],
+  capabilities: {
+    validation: [{ field: "run_as_system", default: "false" }],
+  },
+};
 
 const normalizeAgents = (data) => {
   if (Array.isArray(data)) return data;
@@ -48,24 +64,6 @@ const toDisplay = (value, fallback = "-") => {
   return String(value);
 };
 
-const PLAYBOOK_GLOBAL_SHELL_ACTION = {
-  id: "global-shell",
-  label: "Global Shell",
-  description: "Execute a reviewed shell command on selected endpoints.",
-  category: "response",
-  risk: "critical",
-  inputs: [
-    { name: "command", label: "Command", required: true, placeholder: "Get-Service WazuhSvc" },
-    { name: "verify_kb", label: "Verify KB", placeholder: "KB5075912" },
-    { name: "verify_min_build", label: "Verify Min Build", placeholder: "19045.6937" },
-    { name: "verify_stdout_contains", label: "Verify stdout contains", placeholder: "Running" },
-    { name: "run_as_system", label: "Run as SYSTEM", placeholder: "false" },
-  ],
-  capabilities: {
-    validation: [{ field: "run_as_system", default: "false" }],
-  },
-};
-
 const normalizeStepActionId = (value) => {
   const raw = String(value || "").trim();
   if (!raw) return "";
@@ -73,51 +71,54 @@ const normalizeStepActionId = (value) => {
   return raw;
 };
 
-function normalizeLegacyTask(task = {}, index = 0) {
-  const type = task.type || "";
-  if (type === "process_kill") {
-    return {
-      id: `legacy_process_kill_${index + 1}`,
-      action: "kill-process",
-      args: { pid: String(task.pid || "1234") },
-      reason: "Legacy process kill task",
-    };
+const agentPlatform = (agent) => {
+  const node = agent?.os;
+  const osName = typeof node === "object" && node
+    ? String(node.name || node.platform || node.full || "")
+    : String(agent?.os_name || agent?.os || agent?.platform || "");
+  const lowered = osName.toLowerCase();
+  if (lowered.includes("windows")) return "windows";
+  if (
+    lowered.includes("linux")
+    || lowered.includes("ubuntu")
+    || lowered.includes("debian")
+    || lowered.includes("centos")
+    || lowered.includes("fedora")
+    || lowered.includes("suse")
+  ) {
+    return "linux";
   }
-  if (type === "file_delete") {
-    return {
-      id: `legacy_file_delete_${index + 1}`,
-      action: "quarantine-file",
-      args: { path: String(task.path || "C:\\Temp\\suspect.exe") },
-      reason: "Legacy file delete task",
-    };
-  }
-  if (type === "patch_install") {
-    return {
-      id: `legacy_patch_install_${index + 1}`,
-      action: "patch-linux",
-      args: {},
-      reason: "Legacy patch install task",
-    };
-  }
-  return {
-    id: `legacy_task_${index + 1}`,
-    action: "ioc-scan",
-    args: { ioc_set: "baseline-global" },
-    reason: "Converted legacy task",
-  };
-}
+  return "unknown";
+};
+
+const mergePlaybookActions = (items = []) => {
+  const merged = new Map();
+  [...items, PLAYBOOK_GLOBAL_SHELL_ACTION].forEach((item) => {
+    const id = String(item?.id || "").trim();
+    if (!id) return;
+    merged.set(id, item);
+  });
+  return Array.from(merged.values()).sort((left, right) =>
+    String(left?.label || left?.id || "").localeCompare(String(right?.label || right?.id || ""))
+  );
+};
+
+const parseExcludeIds = (value) =>
+  new Set(
+    String(value || "")
+      .split(",")
+      .map((item) => formatAgentId(item))
+      .filter(Boolean)
+  );
 
 function normalizePlaybook(payload) {
   if (!payload || typeof payload !== "object") return null;
-  const steps = Array.isArray(payload.steps)
-    ? payload.steps
-    : Array.isArray(payload.tasks)
-      ? payload.tasks.map((task, idx) => normalizeLegacyTask(task, idx))
-      : [];
+  const steps = Array.isArray(payload.steps) ? payload.steps : [];
   return {
     ...payload,
     name: payload.name || "manual-playbook",
     description: payload.description || "Custom response workflow",
+    source: payload.source && typeof payload.source === "object" ? payload.source : { mode: "manual" },
     steps: steps.map((step, idx) => ({
       id: step.id || `step_${idx + 1}`,
       action: normalizeStepActionId(step.action || step.command) || "endpoint-healthcheck",
@@ -142,29 +143,7 @@ const blankPlaybook = () =>
     ],
   });
 
-const mergePlaybookActions = (items = []) => {
-  const merged = new Map();
-  [...items, PLAYBOOK_GLOBAL_SHELL_ACTION].forEach((item) => {
-    const id = String(item?.id || "").trim();
-    if (!id) return;
-    merged.set(id, item);
-  });
-  return Array.from(merged.values()).sort((left, right) =>
-    String(left?.label || left?.id || "").localeCompare(String(right?.label || right?.id || ""))
-  );
-};
-
-const parseExcludeIds = (value) =>
-  new Set(
-    String(value || "")
-      .split(",")
-      .map((item) => formatAgentId(item))
-      .filter(Boolean)
-  );
-
-export default function PlaybooksMin() {
-  const minWorkbench = true;
-  const navigate = useNavigate();
+export default function PlaybooksMin({ onExecutionCreated }) {
   const [playbooks, setPlaybooks] = useState([]);
   const [actions, setActions] = useState([]);
   const [agents, setAgents] = useState([]);
@@ -173,25 +152,18 @@ export default function PlaybooksMin() {
   const [selectedPlaybookName, setSelectedPlaybookName] = useState("");
   const [editorOpened, setEditorOpened] = useState(false);
 
-  const [alertId, setAlertId] = useState("");
-  const [caseId, setCaseId] = useState("");
-  const [useAiGeneration, setUseAiGeneration] = useState(true);
-  const [aiPrompt, setAiPrompt] = useState("");
-  const [aiGoalPrompt, setAiGoalPrompt] = useState("");
   const [playbookSearch, setPlaybookSearch] = useState("");
-  const [targetType, setTargetType] = useState("agent");
+  const [playbookPick, setPlaybookPick] = useState("");
+  const [targetType, setTargetType] = useState("fleet");
   const [targetValue, setTargetValue] = useState("");
   const [targetAgentIds, setTargetAgentIds] = useState([]);
   const [targetSearch, setTargetSearch] = useState("");
+  const [multiPickAgentId, setMultiPickAgentId] = useState("");
   const [excludeAgents, setExcludeAgents] = useState("");
   const [justification, setJustification] = useState("");
   const [dryRun, setDryRun] = useState(false);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
-  const [aiEnabled, setAiEnabled] = useState(false);
-  const [aiDisabledReason, setAiDisabledReason] = useState(
-    "AI is disabled. Enable it in Org Admin / Platform AI Configuration."
-  );
   const builderRef = useRef(null);
 
   const openBuilder = useCallback(() => {
@@ -205,15 +177,17 @@ export default function PlaybooksMin() {
     setLoading(true);
     try {
       await seedDefaultPlaybooks({ force: false }).catch(() => null);
-      const [playbookRes, actionRes, agentRes, groupRes, aiCfgRes] = await Promise.all([
+      const [playbookRes, actionRes, agentRes, groupRes] = await Promise.all([
         getPlaybooks(),
         getActions().catch(() => ({ data: [] })),
-        getAgents(undefined, { limit: 5000 }).catch(() => ({ data: [] })),
+        getAgents(undefined, { limit: 5000, compact: true, status: "active,connected,online" }).catch(() => ({ data: [] })),
         getAgentGroups().catch(() => ({ data: [] })),
-        getSystemAiConfig().catch(() => ({ data: { ai_config: { enabled: false } } })),
       ]);
-      setPlaybooks(Array.isArray(playbookRes?.data) ? playbookRes.data : []);
+      const playbookList = Array.isArray(playbookRes?.data) ? playbookRes.data : [];
+      setPlaybooks(playbookList);
+      if (!playbookPick && playbookList.length) setPlaybookPick(playbookList[0]);
       setActions(mergePlaybookActions(Array.isArray(actionRes?.data) ? actionRes.data : []));
+
       const normalizedAgents = normalizeAgents(agentRes?.data).map((row) => ({
         id: formatAgentId(row.id || row.agent_id),
         name: String(row.name || row.hostname || row.id || row.agent_id || "-"),
@@ -227,33 +201,25 @@ export default function PlaybooksMin() {
               .map((group) => String(group || "").trim())
               .filter(Boolean),
         status: String(row.status || "unknown"),
+        platform: agentPlatform(row),
       }));
       setAgents(normalizedAgents.filter((agent) => agent.id));
+
       setGroups(
         (Array.isArray(groupRes?.data) ? groupRes.data : [])
           .map((group) => String(group.name || group.id || group).trim())
           .filter(Boolean)
       );
-      const aiConfig = aiCfgRes?.data?.ai_config || {};
-      const enabled = Boolean(aiConfig?.enabled);
-      setAiEnabled(enabled);
-      setAiDisabledReason(
-        enabled
-          ? ""
-          : "AI is disabled. Enable it in Org Admin / Platform AI Configuration."
-      );
-      if (!enabled) {
-        setUseAiGeneration(false);
-      }
+      setStatus("");
     } catch (err) {
       setStatus(formatApiError(err, "Failed to refresh playbook catalogs."));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [playbookPick]);
 
   useEffect(() => {
-    refresh();
+    void refresh();
   }, [refresh]);
 
   useEffect(() => {
@@ -266,6 +232,10 @@ export default function PlaybooksMin() {
     return playbooks.filter((name) => name.toLowerCase().includes(query));
   }, [playbookSearch, playbooks]);
 
+  const connectedAgents = useMemo(
+    () => agents.filter((agent) => CONNECTED_STATUSES.has(String(agent.status || "").toLowerCase())),
+    [agents]
+  );
   const selectedAgentSet = useMemo(
     () => new Set(targetAgentIds.map((id) => formatAgentId(id)).filter(Boolean)),
     [targetAgentIds]
@@ -276,32 +246,34 @@ export default function PlaybooksMin() {
 
   const targetPickList = useMemo(() => {
     const query = targetSearch.trim().toLowerCase();
-    const list = agents.filter((agent) => !query || (
+    const list = connectedAgents.filter((agent) => !query || (
       agent.id.toLowerCase().includes(query)
       || String(agent.name || "").toLowerCase().includes(query)
       || String(agent.group || "").toLowerCase().includes(query)
     ));
-    return list.slice(0, 120);
-  }, [agents, targetSearch]);
+    return list.slice(0, 160);
+  }, [connectedAgents, targetSearch]);
 
   const scopedTargets = useMemo(() => {
     if (targetType === "agent") {
       if (!normalizedTargetValue) return [];
-      return agents.filter((agent) => agent.id === normalizedTargetValue);
+      return connectedAgents.filter((agent) => agent.id === normalizedTargetValue);
     }
     if (targetType === "multi") {
       if (!selectedAgentSet.size) return [];
-      return agents.filter((agent) => selectedAgentSet.has(agent.id));
+      return connectedAgents.filter((agent) => selectedAgentSet.has(agent.id));
     }
     if (targetType === "group") {
       const key = normalizedGroupValue.toLowerCase();
       if (!key) return [];
-      return agents.filter((agent) =>
+      return connectedAgents.filter((agent) =>
         (agent.groups || []).some((group) => String(group || "").toLowerCase() === key)
       );
     }
-    return agents;
-  }, [agents, normalizedGroupValue, normalizedTargetValue, selectedAgentSet, targetType]);
+    if (targetType === "os_windows") return connectedAgents.filter((agent) => agent.platform === "windows");
+    if (targetType === "os_linux") return connectedAgents.filter((agent) => agent.platform === "linux");
+    return connectedAgents;
+  }, [connectedAgents, normalizedGroupValue, normalizedTargetValue, selectedAgentSet, targetType]);
 
   const previewTargets = useMemo(
     () => scopedTargets.filter((agent) => !excludeSet.has(agent.id)),
@@ -311,9 +283,11 @@ export default function PlaybooksMin() {
   const buildTargetPayload = useCallback(() => {
     if (targetType === "group") return normalizedGroupValue ? { group: normalizedGroupValue } : {};
     if (targetType === "fleet") return { agent_id: "all" };
-    if (targetType === "multi") return { agent_ids: Array.from(selectedAgentSet) };
+    if (targetType === "multi" || targetType === "os_windows" || targetType === "os_linux") {
+      return { agent_ids: scopedTargets.map((agent) => agent.id) };
+    }
     return normalizedTargetValue ? { agent_id: normalizedTargetValue } : {};
-  }, [normalizedGroupValue, normalizedTargetValue, selectedAgentSet, targetType]);
+  }, [normalizedGroupValue, normalizedTargetValue, scopedTargets, targetType]);
 
   const executableActionIds = useMemo(
     () => new Set(actions.map((item) => String(item?.id || "").trim().toLowerCase()).filter(Boolean)),
@@ -325,22 +299,19 @@ export default function PlaybooksMin() {
     return ids;
   }, [executableActionIds]);
 
-  const findUnsupportedStepActions = useCallback(
-    (steps = [], supportedActionIds = executableActionIds) => {
-      const unsupported = [];
-      const seen = new Set();
-      (Array.isArray(steps) ? steps : []).forEach((step) => {
-        if (!step || typeof step !== "object") return;
-        const actionId = String(step.action || "").trim();
-        const key = actionId.toLowerCase();
-        if (!actionId || supportedActionIds.has(key) || seen.has(key)) return;
-        seen.add(key);
-        unsupported.push(actionId);
-      });
-      return unsupported;
-    },
-    [executableActionIds]
-  );
+  const findUnsupportedStepActions = useCallback((steps = [], supportedActionIds = executableActionIds) => {
+    const unsupported = [];
+    const seen = new Set();
+    (Array.isArray(steps) ? steps : []).forEach((step) => {
+      if (!step || typeof step !== "object") return;
+      const actionId = String(step.action || "").trim();
+      const key = actionId.toLowerCase();
+      if (!actionId || supportedActionIds.has(key) || seen.has(key)) return;
+      seen.add(key);
+      unsupported.push(actionId);
+    });
+    return unsupported;
+  }, [executableActionIds]);
 
   const loadPlaybook = async (name) => {
     setStatus("");
@@ -367,95 +338,6 @@ export default function PlaybooksMin() {
     setStatus("Manual playbook builder is ready.");
   };
 
-  const handleGenerate = async () => {
-    if (useAiGeneration && !aiEnabled) {
-      setStatus(aiDisabledReason || "AI is disabled. Enable it in Org Admin / Platform AI Configuration.");
-      return;
-    }
-    setStatus("");
-    setSelectedPlaybookName("");
-    try {
-      const parsedCaseId = Number(caseId);
-      const response = await generatePlaybook({
-        alert_id: alertId || undefined,
-        case_id: caseId && Number.isFinite(parsedCaseId) ? parsedCaseId : undefined,
-        use_ai: useAiGeneration,
-        ai_prompt: useAiGeneration ? (aiPrompt || undefined) : undefined,
-      });
-      const normalized = normalizePlaybook(response.data);
-      if (!normalized) {
-        setStatus("Generated playbook payload was empty.");
-        return;
-      }
-      setDraft(normalized);
-      openBuilder();
-      const agent = normalized.source?.agent_id || "";
-      if (agent) {
-        setTargetType("agent");
-        setTargetValue(agent);
-      }
-      const mode = String(response?.data?.source?.generation_mode || "").toLowerCase();
-      const aiError = String(response?.data?.source?.ai_error || "");
-      const unmapped = Array.isArray(response?.data?.source?.unmapped_actions)
-        ? response.data.source.unmapped_actions.filter(Boolean)
-        : [];
-      if (mode === "ai") {
-        setStatus("AI-generated playbook loaded into the editor.");
-      } else if (mode === "ai_prompt") {
-        setStatus(
-          unmapped.length
-            ? `AI playbook loaded with non-catalog actions (${unmapped.join(", ")}). Review steps before execution.`
-            : "AI-generated playbook loaded into the editor."
-        );
-      } else if (useAiGeneration && aiError) {
-        setStatus(`Heuristic playbook loaded (AI fallback): ${aiError}`);
-      } else {
-        setStatus("Generated playbook loaded into the editor.");
-      }
-    } catch (err) {
-      setStatus(formatApiError(err, "Failed to generate playbook."));
-    }
-  };
-
-  const handleGenerateFromAiGoal = async () => {
-    if (!aiEnabled) {
-      setStatus(aiDisabledReason || "AI is disabled. Enable it in Org Admin / Platform AI Configuration.");
-      return;
-    }
-    const prompt = String(aiGoalPrompt || "").trim();
-    if (!prompt) {
-      setStatus("Describe the playbook goal first, then generate.");
-      return;
-    }
-    setStatus("");
-    setSelectedPlaybookName("");
-    try {
-      const response = await generatePlaybook({
-        use_ai: true,
-        ai_prompt: prompt,
-      });
-      const normalized = normalizePlaybook(response.data);
-      if (!normalized || !Array.isArray(normalized.steps) || normalized.steps.length === 0) {
-        const reason = response?.data?.source?.ai_error
-          || "AI did not return valid playbook steps for this request.";
-        setStatus(`AI generation failed: ${reason}`);
-        return;
-      }
-      setDraft(normalized);
-      openBuilder();
-      const unmapped = Array.isArray(response?.data?.source?.unmapped_actions)
-        ? response.data.source.unmapped_actions.filter(Boolean)
-        : [];
-      setStatus(
-        unmapped.length
-          ? `AI playbook loaded with non-catalog actions (${unmapped.join(", ")}). Review or map these before execution.`
-          : "AI playbook loaded into the editor."
-      );
-    } catch (err) {
-      setStatus(formatApiError(err, "Failed to generate AI playbook."));
-    }
-  };
-
   const handleSave = async () => {
     if (!draft?.steps?.length) {
       setStatus("Build or load a playbook before saving.");
@@ -468,9 +350,11 @@ export default function PlaybooksMin() {
         payload,
       });
       await refresh();
-      setSelectedPlaybookName((payload?.name || "manual-playbook").endsWith(".json")
+      const resolvedName = (payload?.name || "manual-playbook").endsWith(".json")
         ? (payload?.name || "manual-playbook")
-        : `${payload?.name || "manual-playbook"}.json`);
+        : `${payload?.name || "manual-playbook"}.json`;
+      setSelectedPlaybookName(resolvedName);
+      setPlaybookPick(resolvedName);
       setStatus("Playbook saved.");
     } catch (err) {
       setStatus(formatApiError(err, "Failed to save playbook."));
@@ -480,9 +364,9 @@ export default function PlaybooksMin() {
   const ensureRunnableTarget = () => {
     const target = buildTargetPayload();
     const hasTarget =
-      Boolean(target.agent_id) ||
-      Boolean(target.group) ||
-      (Array.isArray(target.agent_ids) && target.agent_ids.length > 0);
+      Boolean(target.agent_id)
+      || Boolean(target.group)
+      || (Array.isArray(target.agent_ids) && target.agent_ids.length > 0);
     if (!hasTarget) {
       setStatus("Select a valid execution target.");
       return null;
@@ -501,9 +385,7 @@ export default function PlaybooksMin() {
     }
     const unsupported = findUnsupportedStepActions(draft.steps, approvalActionIds);
     if (unsupported.length) {
-      setStatus(
-        `Cannot request approvals for unsupported actions (${unsupported.join(", ")}). Replace these steps or execute the playbook directly.`
-      );
+      setStatus(`Cannot request approvals for unsupported actions (${unsupported.join(", ")}).`);
       return;
     }
     const target = ensureRunnableTarget();
@@ -512,13 +394,9 @@ export default function PlaybooksMin() {
     setStatus("Submitting approvals...");
     try {
       const excludeIds = Array.from(excludeSet);
-      const parsedCaseId = Number(caseId);
-      const effectiveCaseId = caseId && Number.isFinite(parsedCaseId) ? parsedCaseId : undefined;
       const basePayload = {
         ...target,
         ...(excludeIds.length ? { exclude_agent_ids: excludeIds } : {}),
-        alert_id: draft.source?.alert_id || alertId || undefined,
-        case_id: draft.source?.case_id || effectiveCaseId,
         justification: justification || undefined,
       };
       for (const step of draft.steps) {
@@ -541,41 +419,29 @@ export default function PlaybooksMin() {
     }
     const unsupported = findUnsupportedStepActions(draft.steps);
     if (unsupported.length) {
-      setStatus(
-        `Cannot execute with non-executable actions (${unsupported.join(", ")}). Map these steps to catalog actions or global-shell.`
-      );
+      setStatus(`Cannot execute with non-executable actions (${unsupported.join(", ")}).`);
       return;
     }
     const target = ensureRunnableTarget();
     if (!target) return;
 
-    setStatus(dryRun ? "Simulating playbook..." : "Executing playbook...");
+    setStatus(dryRun ? "Submitting playbook simulation..." : "Submitting playbook execution...");
     try {
       const excludeIds = Array.from(excludeSet);
-      const parsedCaseId = Number(caseId);
-      const effectiveCaseId = caseId && Number.isFinite(parsedCaseId) ? parsedCaseId : undefined;
       const response = await executePlaybook({
-        name: draft.name || "manual-playbook",
-        payload: normalizePlaybook(draft),
+        playbook: normalizePlaybook(draft),
+        dry_run: dryRun,
         ...target,
         ...(excludeIds.length ? { exclude_agent_ids: excludeIds } : {}),
-        dry_run: dryRun,
-        alert_id: draft.source?.alert_id || alertId || undefined,
-        case_id: draft.source?.case_id || effectiveCaseId,
         justification: justification || undefined,
       });
       if (response?.data?.dry_run || response?.data?.status === "SIMULATED") {
         setStatus("Playbook simulation completed. Review the resolved plan before live execution.");
         return;
       }
-      const executionId = response?.data?.execution_id;
-      if (executionId) {
-        navigate(`/executions?run=${encodeURIComponent(String(executionId))}`, {
-          state: { prefillExecutionId: executionId, source: "playbooks" },
-        });
-        return;
-      }
-      setStatus("Playbook execution submitted.");
+      const executionId = Number(response?.data?.execution_id || 0) || null;
+      if (executionId && typeof onExecutionCreated === "function") onExecutionCreated(executionId);
+      setStatus(executionId ? `Playbook execution queued as run #${executionId}.` : "Playbook execution submitted.");
     } catch (err) {
       setStatus(formatApiError(err, "Failed to execute playbook."));
     }
@@ -587,22 +453,17 @@ export default function PlaybooksMin() {
   );
 
   return (
-    <div className="page page-route-playbooks">
-      <div className="page-header">
+    <div className="card patch-workbench-command-card">
+      <div className="card-header">
         <div>
-          <h2>Playbooks</h2>
-          <p className="muted">
-            {minWorkbench
-              ? "Build or load playbooks, then run them across single agents, groups, or the fleet."
-              : "Generate or manually build playbooks, then run them across single agents, groups, or the fleet."}
-          </p>
-          <p className="muted">Custom JSON steps are allowed for drafting. Execution requires catalog actions or global-shell steps.</p>
+          <h3>4) Playbook Runner</h3>
+          <p className="muted">Load saved templates or build manually, then run across selected scope.</p>
         </div>
         <div className="page-actions">
-          <button className="btn secondary" onClick={refresh} disabled={loading}>
+          <button className="btn secondary" type="button" onClick={refresh} disabled={loading}>
             {loading ? "Refreshing..." : "Refresh"}
           </button>
-          <button className="btn" onClick={handleNewManual}>
+          <button className="btn" type="button" onClick={handleNewManual}>
             New Manual Playbook
           </button>
         </div>
@@ -610,162 +471,43 @@ export default function PlaybooksMin() {
 
       {status ? <div className="empty-state">{status}</div> : null}
 
-      <div className="grid-2 playbooks-source-grid">
-        <div className="card playbooks-saved-card">
-          <div className="card-header">
-            <div>
-              <h3>Saved Playbooks</h3>
-              <p className="muted">Load an existing template into the editor, then adjust steps or targets as needed.</p>
-            </div>
-          </div>
-          <div className="page-actions playbooks-search-row">
+      <div className="list">
+        <div className="list-item readable">
+          <div className="muted">Saved Playbooks</div>
+          <div className="meta-line mt-8">Search and load a template into the builder.</div>
+          <div className="grid-3 mt-10">
             <input
               className="input"
               placeholder="Search playbooks"
               value={playbookSearch}
               onChange={(event) => setPlaybookSearch(event.target.value)}
             />
-          </div>
-          {filteredPlaybooks.length === 0 ? (
-            <div className="empty-state">No playbooks available.</div>
-          ) : (
-            <div className="list-scroll h-240">
-              <div className="list">
-                {filteredPlaybooks.map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    className={`list-item clickable readable ${selectedPlaybookName === name ? "selected" : ""}`}
-                    onClick={() => loadPlaybook(name)}
-                  >
-                    <strong>{name}</strong>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {!minWorkbench ? (
-          <div className="card playbooks-generate-card">
-            <div className="card-header">
-              <div>
-                <h3>Generate From Alert or Case</h3>
-                <p className="muted">Keep the existing generator, but land the result in the same manual editor.</p>
-              </div>
-            </div>
-
-            <div className="playbook-generate-row">
-              <div className="playbook-generate-fields">
-                <input
-                  className="input"
-                  placeholder="Alert ID"
-                  value={alertId}
-                  onChange={(event) => setAlertId(event.target.value)}
-                />
-                <input
-                  className="input"
-                  placeholder="Case ID"
-                  value={caseId}
-                  onChange={(event) => setCaseId(event.target.value)}
-                />
-              </div>
-              <div className="playbook-generate-action">
-                <button className="btn" onClick={handleGenerate}>
-                  Generate
-                </button>
-              </div>
-            </div>
-
-            <div className="list mt-10">
-              <div className="list-item readable">
-                <label className="inline-check">
-                  <input
-                    type="checkbox"
-                    checked={useAiGeneration}
-                    disabled={!aiEnabled}
-                    onChange={(event) => setUseAiGeneration(event.target.checked)}
-                  />
-                  <span>Use AI Assist for higher-precision steps</span>
-                </label>
-              </div>
-              {useAiGeneration ? (
-                <div className="list-item readable">
-                  <div className="muted">AI Instructions (optional)</div>
-                  <textarea
-                    className="input mt-8"
-                    rows={3}
-                    value={aiPrompt}
-                    disabled={!aiEnabled}
-                    onChange={(event) => setAiPrompt(event.target.value)}
-                    placeholder="Example: prioritize containment first, keep user impact low, avoid reboot actions."
-                  />
-                  <div className="meta-line mt-8">
-                    {aiEnabled
-                      ? "AI is enabled from Org Admin / Platform AI Configuration."
-                      : (aiDisabledReason || "AI is disabled. Enable it in Org Admin / Platform AI Configuration.")}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-            <div className="meta-line">
-              Generated playbooks are editable. You can still save, modify, or replace every step before execution.
-            </div>
-          </div>
-        ) : (
-          <div className="card playbooks-generate-card">
-            <div className="card-header">
-              <div>
-                <h3>Manual Playbook Creation</h3>
-                <p className="muted">Alert/Case and AI generation are disabled in min workbench. Build manually or load saved templates.</p>
-              </div>
-            </div>
-            <div className="list">
-              <div className="list-item readable">
-                <div className="muted">Manual-only mode</div>
-                <div className="meta-line mt-8">Use the saved templates list or start a new manual playbook.</div>
-              </div>
-              <div className="page-actions">
-                <button className="btn" type="button" onClick={handleNewManual}>
-                  Open Manual Builder
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {!minWorkbench ? (
-        <div className="card playbooks-ai-card">
-          <div className="list-item readable">
-            <div className="muted">AI Playbook Generator</div>
-            <div className="meta-line mt-8">
-              Describe the response plan you need. AI will generate steps into the same manual editor.
-            </div>
-            <textarea
-              className="input mt-8"
-              rows={4}
-              value={aiGoalPrompt}
-              disabled={!aiEnabled}
-              onChange={(event) => setAiGoalPrompt(event.target.value)}
-              placeholder="Example: isolate endpoint, block suspicious outbound IPs, collect memory+forensics, then run SCA rescan."
-            />
-            <div className="page-actions mt-10">
-              <button className="btn" onClick={handleGenerateFromAiGoal} disabled={!aiEnabled}>
-                Generate From AI Goal
+            <select className="input" value={playbookPick} onChange={(event) => setPlaybookPick(event.target.value)}>
+              <option value="">Select saved playbook</option>
+              {filteredPlaybooks.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+            <div className="page-actions">
+              <button
+                className="btn secondary"
+                type="button"
+                disabled={!playbookPick}
+                onClick={() => {
+                  if (!playbookPick) return;
+                  void loadPlaybook(playbookPick);
+                }}
+              >
+                Load Selected
               </button>
             </div>
-            <div className="meta-line mt-8">
-              {aiEnabled
-                ? "AI is enabled from Org Admin / Platform AI Configuration."
-                : (aiDisabledReason || "AI is disabled. Enable it in Org Admin / Platform AI Configuration.")}
-            </div>
-            <div className="meta-line mt-8">
-              Prompt mode can include non-catalog action IDs and global-shell steps when needed. Review and map steps before execution.
-            </div>
+          </div>
+          <div className="meta-line mt-8">
+            {filteredPlaybooks.length} template(s) visible
+            {selectedPlaybookName ? ` | Loaded: ${selectedPlaybookName}` : ""}
           </div>
         </div>
-      ) : null}
+      </div>
 
       {editorOpened ? (
         <div className="playbook-builder-stack" ref={builderRef}>
@@ -773,7 +515,7 @@ export default function PlaybooksMin() {
             <div className="card-header">
               <div>
                 <h3>Playbook Builder</h3>
-                <p className="muted">Manually author the workflow or edit a generated/saved playbook step by step.</p>
+                <p className="muted">Author or adjust playbook steps before execution.</p>
               </div>
             </div>
             <PlaybookEditor playbook={draft} onChange={setDraft} actions={actions} />
@@ -809,11 +551,9 @@ export default function PlaybooksMin() {
                 <div className="stat-sub">{toDisplay(targetType)}</div>
               </div>
               <div className="stat-card">
-                <div className="stat-label">Source</div>
-                <div className="stat-value">{draft?.source?.mode === "manual" ? "Manual" : "Generated"}</div>
-                <div className="stat-sub">
-                  Alert {draft?.source?.alert_id || alertId || "n/a"} | Case {draft?.source?.case_id || caseId || "n/a"}
-                </div>
+                <div className="stat-label">Mode</div>
+                <div className="stat-value">{draft?.source?.mode === "manual" ? "Manual" : "Loaded"}</div>
+                <div className="stat-sub">Exclude list: {excludeSet.size}</div>
               </div>
             </div>
 
@@ -821,7 +561,7 @@ export default function PlaybooksMin() {
               <div className="list-item readable">
                 <div className="muted">1. Save Draft</div>
                 <div className="page-actions mt-8">
-                  <button className="btn secondary" onClick={handleSave}>
+                  <button className="btn secondary" type="button" onClick={handleSave}>
                     Save Playbook
                   </button>
                   <span className="meta-line">Persist current builder edits before targeting/execution.</span>
@@ -832,12 +572,38 @@ export default function PlaybooksMin() {
                 <div className="muted">2. Target Scope</div>
                 <div className="page-actions mt-8">
                   <select className="input" value={targetType} onChange={(event) => setTargetType(event.target.value)}>
-                    <option value="agent">Single agent</option>
+                    <option value="fleet">Fleet (all connected agents)</option>
+                    <option value="group">Group</option>
                     <option value="multi">Multiple agents</option>
-                    <option value="group">Specific group</option>
-                    <option value="fleet">Fleet (all)</option>
+                    <option value="agent">Single agent</option>
+                    <option value="os_windows">Windows agents</option>
+                    <option value="os_linux">Linux agents</option>
                   </select>
                 </div>
+
+                {targetType === "group" ? (
+                  <div className="page-actions mt-10">
+                    <select className="input" value={targetValue} onChange={(event) => setTargetValue(event.target.value)}>
+                      <option value="">Select group</option>
+                      {groups.map((group) => (
+                        <option key={group} value={group}>{group}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+
+                {targetType === "agent" ? (
+                  <div className="page-actions mt-10">
+                    <select className="input" value={targetValue} onChange={(event) => setTargetValue(event.target.value)}>
+                      <option value="">Select agent</option>
+                      {connectedAgents.map((agent) => (
+                        <option key={`playbook-agent-${agent.id}`} value={agent.id}>
+                          {agent.id} - {agent.name}{agent.group ? ` (${agent.group})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
 
                 {targetType === "multi" ? (
                   <div className="mt-10">
@@ -846,86 +612,43 @@ export default function PlaybooksMin() {
                         className="input"
                         value={targetSearch}
                         onChange={(event) => setTargetSearch(event.target.value)}
-                        placeholder="Search agents to select..."
+                        placeholder="Search agents"
                       />
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        onClick={() => setTargetAgentIds(targetPickList.map((agent) => agent.id))}
+                      <select
+                        className="input"
+                        value={multiPickAgentId}
+                        onChange={(event) => setMultiPickAgentId(formatAgentId(event.target.value))}
                       >
-                        Select All
+                        <option value="">Pick connected agent</option>
+                        {targetPickList.map((agent) => (
+                          <option key={`pick-target-${agent.id}`} value={agent.id}>
+                            {agent.id} - {agent.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className="btn secondary"
+                        type="button"
+                        onClick={() => {
+                          if (!multiPickAgentId) return;
+                          setTargetAgentIds((current) => (
+                            current.includes(multiPickAgentId) ? current : [...current, multiPickAgentId]
+                          ));
+                          setMultiPickAgentId("");
+                        }}
+                      >
+                        Add
                       </button>
-                      <button
-                        type="button"
-                        className="btn secondary"
-                        onClick={() => setTargetAgentIds([])}
-                      >
+                      <button className="btn secondary" type="button" onClick={() => setTargetAgentIds(targetPickList.map((agent) => agent.id))}>
+                        Select Visible
+                      </button>
+                      <button className="btn secondary" type="button" onClick={() => setTargetAgentIds([])}>
                         Clear
                       </button>
                     </div>
-                    <div className="meta-line mt-6">Selected: {selectedAgentSet.size}</div>
-                    <div className="list-scroll mt-10 h-240">
-                      <div className="list">
-                        {targetPickList.length === 0 ? (
-                          <div className="empty-state">No agents match the current search.</div>
-                        ) : (
-                          targetPickList.map((agent) => {
-                            const checked = selectedAgentSet.has(agent.id);
-                            return (
-                              <label key={`target-${agent.id}`} className="list-item clickable readable">
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={(event) => {
-                                    const enabled = event.target.checked;
-                                    setTargetAgentIds((current) => {
-                                      const next = new Set(current.map((id) => formatAgentId(id)).filter(Boolean));
-                                      if (enabled) next.add(agent.id);
-                                      else next.delete(agent.id);
-                                      return Array.from(next);
-                                    });
-                                  }}
-                                  className="mr-10"
-                                />
-                                {agent.name} ({agent.id}){agent.group ? ` - ${agent.group}` : ""}
-                              </label>
-                            );
-                          })
-                        )}
-                      </div>
-                    </div>
+                    <div className="meta-line mt-8">Selected: {selectedAgentSet.size}</div>
                   </div>
-                ) : targetType === "group" ? (
-                  <div className="page-actions mt-10">
-                    <select className="input" value={targetValue} onChange={(event) => setTargetValue(event.target.value)}>
-                      <option value="">Select group</option>
-                      {groups.map((group) => (
-                        <option key={group} value={group}>
-                          {group}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : targetType === "agent" ? (
-                  <div className="page-actions mt-10">
-                    <input
-                      className="input"
-                      value={targetValue}
-                      onChange={(event) => setTargetValue(event.target.value)}
-                      placeholder="Agent ID (example: 004)"
-                      list="playbookAgentIds"
-                    />
-                    <datalist id="playbookAgentIds">
-                      {agents.slice(0, 120).map((agent) => (
-                        <option key={`agent-${agent.id}`} value={agent.id}>
-                          {agent.name}
-                        </option>
-                      ))}
-                    </datalist>
-                  </div>
-                ) : (
-                  <div className="meta-line mt-10">Fleet targets every known agent unless excluded below.</div>
-                )}
+                ) : null}
               </div>
 
               <div className="list-item readable">
@@ -951,15 +674,13 @@ export default function PlaybooksMin() {
                         <th>Agent ID</th>
                         <th>Name</th>
                         <th>Group</th>
-                        <th>Status</th>
+                        <th>Platform</th>
                       </tr>
                     </thead>
                     <tbody>
                       {previewTargets.length === 0 ? (
                         <tr>
-                          <td colSpan="4" className="text-center">
-                            No agents match the current target scope.
-                          </td>
+                          <td colSpan="4" className="text-center">No agents match the current target scope.</td>
                         </tr>
                       ) : (
                         previewTargets.slice(0, 120).map((agent) => (
@@ -967,16 +688,14 @@ export default function PlaybooksMin() {
                             <td>{agent.id}</td>
                             <td>{agent.name || "-"}</td>
                             <td>{agent.group || "-"}</td>
-                            <td>{agent.status || "-"}</td>
+                            <td>{agent.platform || "-"}</td>
                           </tr>
                         ))
                       )}
                     </tbody>
                   </table>
                 </div>
-                {previewTargets.length > 120 ? (
-                  <div className="meta-line mt-8">Preview limited to the first 120 agents.</div>
-                ) : null}
+                {previewTargets.length > 120 ? <div className="meta-line mt-8">Preview limited to first 120 agents.</div> : null}
               </div>
 
               <div className="list-item readable">
@@ -990,21 +709,17 @@ export default function PlaybooksMin() {
               </div>
               <div className="list-item readable">
                 <label className="inline-check">
-                  <input
-                    type="checkbox"
-                    checked={dryRun}
-                    onChange={(event) => setDryRun(event.target.checked)}
-                  />
+                  <input type="checkbox" checked={dryRun} onChange={(event) => setDryRun(event.target.checked)} />
                   <span>Dry run (simulate only)</span>
                 </label>
               </div>
             </div>
 
             <div className="page-actions">
-              <button className="btn secondary" onClick={handleRequestApprovals}>
+              <button className="btn secondary" type="button" onClick={handleRequestApprovals}>
                 Request Approvals
               </button>
-              <button className="btn" onClick={handleExecutePlaybook}>
+              <button className="btn" type="button" onClick={handleExecutePlaybook}>
                 {dryRun ? "Simulate Playbook" : "Execute Playbook"}
               </button>
             </div>
@@ -1018,4 +733,3 @@ export default function PlaybooksMin() {
     </div>
   );
 }
-

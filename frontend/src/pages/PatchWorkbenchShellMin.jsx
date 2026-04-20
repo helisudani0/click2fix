@@ -35,6 +35,58 @@ const VULN_SEVERITY_ORDER = {
   medium: 2,
   low: 3,
 };
+const HISTORY_STATUS_OPTIONS = [
+  { value: "all", label: "All statuses" },
+  { value: "success", label: "Success" },
+  { value: "partial", label: "Partial" },
+  { value: "running", label: "Running/Queued" },
+  { value: "retryable", label: "Retryable" },
+  { value: "failed", label: "Failed" },
+];
+const HISTORY_MODULE_OPTIONS = [
+  { value: "all", label: "All modules" },
+  { value: "global-shell", label: "Global Shell" },
+  { value: "actions", label: "Actions" },
+  { value: "playbooks", label: "Playbooks" },
+];
+const HISTORY_RETRYABLE_MARKERS = [
+  "could not get lock /var/lib/apt/lists/lock",
+  "unable to lock directory /var/lib/apt/lists/",
+  "unable to acquire the dpkg frontend lock",
+  "another process has locked the package database",
+  "0x80240016",
+  "0x800710e0",
+  "wu_e_install_not_allowed",
+  "another installation is already in progress",
+  "operation is already in progress",
+  "without explicit terminal status log",
+  "temporary failure in name resolution",
+  "could not resolve host",
+  "network is unreachable",
+  "connection timed out",
+  "connection timeout",
+  "connection refused",
+  "winrm connection failed",
+  "unable to connect to port",
+  "no route to host",
+];
+const HISTORY_NO_CHANGE_MARKERS = [
+  "already the newest version",
+  "already installed",
+  "is already installed",
+  "0 upgraded, 0 newly installed",
+  "all packages are up to date",
+  "no packages marked for upgrade",
+  "no updates are available",
+  "no_applicable_update",
+  "already_target_state",
+];
+const HISTORY_WAITING_REBOOT_MARKERS = [
+  "outcome=waiting_reboot",
+  "reboot required",
+  "reboot pending",
+  "reboot_required=true",
+];
 const MIN_WORKBENCH_MODES = [
   { value: "shell", label: "Shell" },
   { value: "actions", label: "Actions" },
@@ -105,9 +157,30 @@ const agentPlatform = (agent) => {
 const statusTone = (status) => {
   const value = String(status || "").toUpperCase();
   if (value === "SUCCESS") return "success";
+  if (["NO_CHANGE", "SKIPPED", "UNCHANGED"].includes(value)) return "neutral";
   if (["FAILED", "ERROR", "KILLED"].includes(value)) return "failed";
-  if (["RUNNING", "PAUSED", "PENDING", "PENDING_VERIFICATION", "QUEUED", "CANCELLED", "PARTIAL"].includes(value)) return "pending";
+  if (["RUNNING", "PAUSED", "PENDING", "PENDING_VERIFICATION", "QUEUED", "CANCELLED", "PARTIAL", "WAITING_REBOOT", "RETRYABLE"].includes(value)) return "pending";
   return "neutral";
+};
+
+const moduleLabel = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "global-shell" || normalized === "global_shell") return "Global Shell";
+  if (normalized === "actions" || normalized === "action") return "Actions";
+  if (normalized === "playbooks" || normalized === "playbook") return "Playbooks";
+  return "Unknown";
+};
+
+const classifyHistoryStatus = (row) => {
+  const baseStatus = String(row?.status || "").trim().toUpperCase();
+  const blob = `${String(row?.latestStdout || "")}\n${String(row?.latestStderr || "")}`.toLowerCase();
+  if (!blob.trim()) return baseStatus || "UNKNOWN";
+  if (HISTORY_WAITING_REBOOT_MARKERS.some((marker) => blob.includes(marker))) return "WAITING_REBOOT";
+  if (HISTORY_NO_CHANGE_MARKERS.some((marker) => blob.includes(marker))) return "NO_CHANGE";
+  if (HISTORY_RETRYABLE_MARKERS.some((marker) => blob.includes(marker))) {
+    if (["FAILED", "ERROR", "PARTIAL", "KILLED"].includes(baseStatus)) return "RETRYABLE";
+  }
+  return baseStatus || "UNKNOWN";
 };
 
 const titleCase = (value) => {
@@ -223,25 +296,42 @@ const normalizeHistoryRows = (rows) => {
           status: String(row[3] || ""),
           target: String(row[1] || ""),
           action,
+          executionModule: action.toLowerCase() === "global-shell" ? "global-shell" : "actions",
+          executionType: action.toLowerCase() === "global-shell" ? "global_shell" : "action",
           startedAt: row[5] || "",
           finishedAt: row[6] || "",
           shell: commandMeta.shell,
           command: commandMeta.command,
+          latestStdout: "",
+          latestStderr: "",
         };
       }
       const commandMeta = resolveShellAndCommand(row?.args);
-      return {
+      const item = {
         id: Number(row?.id || 0),
         status: String(row?.status || ""),
         target: String(row?.agent || ""),
         action: String(row?.action || row?.action_id || row?.playbook || ""),
+        executionModule: String(row?.execution_module || ""),
+        executionType: String(row?.execution_type || ""),
         startedAt: row?.started_at || row?.startedAt || "",
         finishedAt: row?.finished_at || row?.finishedAt || "",
         shell: commandMeta.shell,
         command: commandMeta.command,
+        latestStdout: String(row?.latest_stdout || ""),
+        latestStderr: String(row?.latest_stderr || ""),
+      };
+      return {
+        ...item,
+        displayStatus: classifyHistoryStatus(item),
       };
     })
     .filter((row) => row.id > 0)
+    .map((row) => ({
+      ...row,
+      executionModule: String(row.executionModule || "").trim().toLowerCase() || "actions",
+      displayStatus: String(row.displayStatus || row.status || "UNKNOWN").toUpperCase(),
+    }))
     .sort((left, right) => right.id - left.id);
 };
 
@@ -314,6 +404,9 @@ export default function PatchWorkbenchShellMin({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyPageSize, setHistoryPageSize] = useState(15);
+  const [historyStatusFilter, setHistoryStatusFilter] = useState("all");
+  const [historyModuleFilter, setHistoryModuleFilter] = useState("all");
+  const [historyQuery, setHistoryQuery] = useState("");
   const [activeExecutionId, setActiveExecutionId] = useState(null);
   const [activeExecutionMode, setActiveExecutionMode] = useState("auto");
 
@@ -364,7 +457,7 @@ export default function PatchWorkbenchShellMin({
     setHistoryLoading(true);
     try {
       const response = await getExecutions(
-        { limit: 120, include_latest_output: false },
+        { limit: 160, include_latest_output: true },
         { force }
       );
       const rows = normalizeHistoryRows(response?.data);
@@ -583,10 +676,49 @@ export default function PatchWorkbenchShellMin({
     });
   }, [vulnerabilityRows]);
 
+  const filteredHistory = useMemo(() => {
+    const statusFilter = String(historyStatusFilter || "all").trim().toLowerCase();
+    const moduleFilter = String(historyModuleFilter || "all").trim().toLowerCase();
+    const query = String(historyQuery || "").trim().toLowerCase();
+    return history.filter((row) => {
+      const displayStatus = String(row?.displayStatus || row?.status || "").toUpperCase();
+      if (statusFilter === "success" && displayStatus !== "SUCCESS") return false;
+      if (statusFilter === "partial" && displayStatus !== "PARTIAL") return false;
+      if (statusFilter === "retryable" && displayStatus !== "RETRYABLE") return false;
+      if (statusFilter === "failed" && !["FAILED", "ERROR", "KILLED"].includes(displayStatus)) return false;
+      if (
+        statusFilter === "running"
+        && !["RUNNING", "QUEUED", "PENDING", "PENDING_VERIFICATION", "PAUSED", "IN_PROGRESS", "DISPATCHED"].includes(displayStatus)
+      ) {
+        return false;
+      }
+
+      if (moduleFilter !== "all" && String(row?.executionModule || "").toLowerCase() !== moduleFilter) return false;
+
+      if (!query) return true;
+      const blob = [
+        row?.id,
+        row?.target,
+        row?.action,
+        row?.executionModule,
+        row?.shell,
+        row?.command,
+        row?.status,
+        row?.displayStatus,
+      ]
+        .map((value) => String(value || "").toLowerCase())
+        .join(" ");
+      return blob.includes(query);
+    });
+  }, [history, historyModuleFilter, historyQuery, historyStatusFilter]);
+
   useEffect(() => {
-    const totalPages = Math.max(1, Math.ceil(history.length / historyPageSize));
+    const totalPages = Math.max(1, Math.ceil(filteredHistory.length / historyPageSize));
     if (historyPage > totalPages) setHistoryPage(totalPages);
-  }, [history.length, historyPage, historyPageSize]);
+  }, [filteredHistory.length, historyPage, historyPageSize]);
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [historyModuleFilter, historyQuery, historyStatusFilter]);
 
   const filteredVulnerabilities = useMemo(() => {
     const query = String(vulnerabilityQuery || "").trim().toLowerCase();
@@ -636,8 +768,8 @@ export default function PatchWorkbenchShellMin({
 
   const pagedHistory = useMemo(() => {
     const start = (historyPage - 1) * historyPageSize;
-    return history.slice(start, start + historyPageSize);
-  }, [history, historyPage, historyPageSize]);
+    return filteredHistory.slice(start, start + historyPageSize);
+  }, [filteredHistory, historyPage, historyPageSize]);
 
   const activeHistoryRow = useMemo(
     () => history.find((row) => Number(row.id) === Number(activeExecutionId)) || null,
@@ -1176,7 +1308,11 @@ export default function PatchWorkbenchShellMin({
         {!activeExecutionId ? (
           <div className="empty-state">No execution selected yet.</div>
         ) : (
-          <ExecutionStream executionId={activeExecutionId} showRelatedAlerts={false} />
+          <ExecutionStream
+            executionId={activeExecutionId}
+            showRelatedAlerts={false}
+            scopeEventsToSelectedTarget
+          />
         )}
       </div>
 
@@ -1195,12 +1331,51 @@ export default function PatchWorkbenchShellMin({
 
         {historyOpen ? (
           <>
+            <div className="page-actions mb-10">
+              <select
+                className="input"
+                value={historyStatusFilter}
+                onChange={(event) => setHistoryStatusFilter(event.target.value)}
+              >
+                {HISTORY_STATUS_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <select
+                className="input"
+                value={historyModuleFilter}
+                onChange={(event) => setHistoryModuleFilter(event.target.value)}
+              >
+                {HISTORY_MODULE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+              <input
+                className="input"
+                value={historyQuery}
+                onChange={(event) => setHistoryQuery(event.target.value)}
+                placeholder="Search id, module, action, target, command"
+              />
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => {
+                  setHistoryStatusFilter("all");
+                  setHistoryModuleFilter("all");
+                  setHistoryQuery("");
+                }}
+                disabled={!historyQuery.trim() && historyStatusFilter === "all" && historyModuleFilter === "all"}
+              >
+                Clear Filters
+              </button>
+            </div>
             <div className="table-scroll patch-workbench-history-scroll">
               <table className="table compact readable">
                 <thead>
                   <tr>
                     <th>ID</th>
                     <th>Status</th>
+                    <th>Module</th>
                     <th>Action</th>
                     <th>Target</th>
                     <th>Shell</th>
@@ -1212,7 +1387,7 @@ export default function PatchWorkbenchShellMin({
                 <tbody>
                   {pagedHistory.length === 0 ? (
                     <tr>
-                      <td colSpan="8" className="text-center">
+                      <td colSpan="9" className="text-center">
                         {historyLoading ? "Loading history..." : "No executions found yet."}
                       </td>
                     </tr>
@@ -1228,8 +1403,11 @@ export default function PatchWorkbenchShellMin({
                       >
                         <td>{row.id}</td>
                         <td>
-                          <span className={`status-pill ${statusTone(row.status)}`}>{row.status || "-"}</span>
+                          <span className={`status-pill ${statusTone(row.displayStatus || row.status)}`}>
+                            {row.displayStatus || row.status || "-"}
+                          </span>
                         </td>
+                        <td>{moduleLabel(row.executionModule)}</td>
                         <td>{row.action || "-"}</td>
                         <td>{row.target || "-"}</td>
                         <td>{row.shell || "-"}</td>
@@ -1245,7 +1423,7 @@ export default function PatchWorkbenchShellMin({
               </table>
             </div>
             <Pager
-              total={history.length}
+              total={filteredHistory.length}
               page={historyPage}
               pageSize={historyPageSize}
               onPageChange={setHistoryPage}

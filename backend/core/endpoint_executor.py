@@ -7490,6 +7490,20 @@ catch {
             "proxy error",
             "503 service unavailable",
             "429 too many requests",
+            "could not get lock /var/lib/apt/lists/lock",
+            "could not get lock /var/lib/dpkg/lock",
+            "could not get lock /var/lib/dpkg/lock-frontend",
+            "unable to lock directory /var/lib/apt/lists/",
+            "unable to acquire the dpkg frontend lock",
+            "another process is using package manager",
+            "another apt process is running",
+            "another installation is already in progress",
+            "wu_e_install_not_allowed",
+            "0x80240016",
+            "0x800710e0",
+            "without explicit terminal status log",
+            "operation is already in progress",
+            "resource temporarily unavailable",
         )
         if not any(marker in blob for marker in external_markers):
             return False
@@ -8144,6 +8158,23 @@ catch {
             "if(Test-Path $rf){ Get-Content -Path $rf -Raw }"
         )
 
+        def _latest_evidence(lines: List[str], key: str = "") -> str:
+            for ln in reversed(lines):
+                marker = " evidence="
+                idx = ln.find(marker)
+                if idx < 0:
+                    continue
+                payload = ln[idx + len(marker) :].strip()
+                if not payload:
+                    continue
+                if key:
+                    prefix = f"{key}="
+                    if payload.lower().startswith(prefix.lower()):
+                        return payload[len(prefix) :].strip()
+                    continue
+                return payload
+            return ""
+
         def poll_once() -> Optional[Dict[str, Any]]:
             nonlocal terminal_status
             # Stream any new log evidence.
@@ -8152,9 +8183,6 @@ catch {
             except Exception:
                 out = ""
             lines = [ln.strip() for ln in str(out or "").splitlines() if ln.strip()]
-            hinted_report = _latest_evidence(lines, "scan_report_path")
-            if hinted_report:
-                latest_report_hint = hinted_report
             for ln in reversed(lines):
                 if " status=SUCCESS" in ln:
                     msg = ""
@@ -9688,8 +9716,20 @@ catch {
             inner = "echo 'healthcheck ok'; echo \"host=$(hostname)\"; echo \"user=$(id -un)\"; echo \"is_admin=$(id -u | awk '{print ($1==0)?\"true\":\"false\"}')\"; date -Iseconds"
             return self._wrap_linux_script(aid, inner, context or {}, target or {})
         if aid in {"patch-linux", "fleet-software-update"}:
+            linux_creds = self._linux_credentials_for_agent_target(
+                agent_id=str((target or {}).get("agent_id") or ""),
+            )
+            sudo_password = _sh_quote(linux_creds.get("password") or "")
             inner = (
                 "set -e; "
+                f"sudo_password={sudo_password}; "
+                "sudo_exec(){ "
+                "if [ \"$(id -u)\" = \"0\" ]; then \"$@\"; return $?; fi; "
+                "if ! command -v sudo >/dev/null 2>&1; then \"$@\"; return $?; fi; "
+                "if sudo -n true >/dev/null 2>&1; then sudo -n \"$@\"; return $?; fi; "
+                "if [ -n \"$sudo_password\" ]; then printf '%s\\n' \"$sudo_password\" | sudo -S -p '' \"$@\"; return $?; fi; "
+                "sudo \"$@\"; return $?; "
+                "}; "
                 "if [ -f /etc/os-release ]; then . /etc/os-release; "
                 "c2f_evidence \"os_name=${PRETTY_NAME:-$NAME}\"; "
                 "c2f_evidence \"os_version=${VERSION_ID:-unknown}\"; "
@@ -9706,8 +9746,32 @@ catch {
                 "c2f_evidence \"update_${idx}=${pkg}|${ver}\"; "
                 "idx=$((idx+1)); "
                 "done <<EOF\n$up_before\nEOF\n"
-                "sudo apt-get update -y >/tmp/c2f_apt_update.log 2>&1; "
-                "sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y >/tmp/c2f_apt_upgrade.log 2>&1; "
+                "apt_lock_retry=0; "
+                "while true; do "
+                "sudo_exec apt-get update -y >/tmp/c2f_apt_update.log 2>&1 && break; "
+                "if grep -Eiq 'could not get lock|unable to lock directory|dpkg frontend lock|is another process using it' /tmp/c2f_apt_update.log; then "
+                "apt_lock_retry=$((apt_lock_retry+1)); "
+                "c2f_evidence apt_lock_wait_update_attempt=$apt_lock_retry; "
+                "if [ \"$apt_lock_retry\" -ge 8 ]; then cat /tmp/c2f_apt_update.log >&2; exit 100; fi; "
+                "sleep 8; "
+                "continue; "
+                "fi; "
+                "cat /tmp/c2f_apt_update.log >&2; "
+                "exit 100; "
+                "done; "
+                "apt_lock_retry=0; "
+                "while true; do "
+                "DEBIAN_FRONTEND=noninteractive sudo_exec apt-get upgrade -y >/tmp/c2f_apt_upgrade.log 2>&1 && break; "
+                "if grep -Eiq 'could not get lock|unable to lock directory|dpkg frontend lock|is another process using it' /tmp/c2f_apt_upgrade.log; then "
+                "apt_lock_retry=$((apt_lock_retry+1)); "
+                "c2f_evidence apt_lock_wait_upgrade_attempt=$apt_lock_retry; "
+                "if [ \"$apt_lock_retry\" -ge 8 ]; then cat /tmp/c2f_apt_upgrade.log >&2; exit 100; fi; "
+                "sleep 8; "
+                "continue; "
+                "fi; "
+                "cat /tmp/c2f_apt_upgrade.log >&2; "
+                "exit 100; "
+                "done; "
                 "up_after=$(apt list --upgradable 2>/dev/null | sed '1d' | sed '/^$/d' || true); "
                 "count_after=$(printf '%s\\n' \"$up_after\" | sed '/^$/d' | wc -l | tr -d ' '); "
                 "idx=0; "

@@ -23,6 +23,58 @@ const MAX_RENDERED_EVENTS = 180;
 const MAX_STEP_OUTPUT_CHARS = 16000;
 const TARGET_LOG_BUFFER_FLUSH_MS = 250;
 const TARGET_LOG_MAX_LINES = 300;
+const RETRYABLE_FAILURE_MARKERS = [
+  "could not get lock /var/lib/apt/lists/lock",
+  "unable to lock directory /var/lib/apt/lists/",
+  "unable to acquire the dpkg frontend lock",
+  "could not get lock /var/lib/dpkg/lock",
+  "could not get lock /var/lib/dpkg/lock-frontend",
+  "another process has locked the package database",
+  "0x80240016",
+  "0x800710e0",
+  "wu_e_install_not_allowed",
+  "install already in progress",
+  "another installation is already in progress",
+  "operation is already in progress",
+  "without explicit terminal status log",
+  "failed to establish a new connection",
+  "temporary failure in name resolution",
+  "name or service not known",
+  "could not resolve host",
+  "network is unreachable",
+  "connection timed out",
+  "connection timeout",
+  "connection refused",
+  "winrm connection failed",
+  "unable to connect to port",
+  "no route to host",
+];
+const REBOOT_TRANSIENT_MARKERS = [
+  "outcome=waiting_reboot",
+  "reboot_required=true",
+  "reboot pending",
+  "reboot required",
+  "restart-computer",
+  "shutdown /r",
+  "systemctl reboot",
+  "connection reset",
+  "connection was forcibly closed",
+  "remote host closed",
+  "broken pipe",
+  "transport endpoint is not connected",
+];
+const NO_CHANGE_MARKERS = [
+  "already the newest version",
+  "already installed",
+  "is already installed",
+  "0 upgraded, 0 newly installed",
+  "all packages are up to date",
+  "no packages marked for upgrade",
+  "no upgrades available",
+  "no_applicable_update",
+  "already_target_state",
+  "version_already_installed",
+];
 
 const getExecutionDetailRequest = (executionId) => api.get(`/executions/${executionId}`);
 
@@ -58,8 +110,29 @@ const hasUpdateEvidence = (target) => {
   );
 };
 
+const hasAnyMarker = (text, markers = []) => markers.some((marker) => text.includes(marker));
+
+const targetOutputBlob = (target) => `${String(target?.stdout || "")}\n${String(target?.stderr || "")}`.toLowerCase();
+
+const detectTargetStatusOverride = (target, isUpdateAction) => {
+  const blob = targetOutputBlob(target);
+  if (!blob.trim()) return null;
+  if (hasAnyMarker(blob, REBOOT_TRANSIENT_MARKERS)) {
+    return { label: "WAITING_REBOOT", tone: "pending" };
+  }
+  if (hasAnyMarker(blob, RETRYABLE_FAILURE_MARKERS)) {
+    return { label: "RETRYABLE", tone: "pending" };
+  }
+  if (isUpdateAction && hasAnyMarker(blob, NO_CHANGE_MARKERS)) {
+    return { label: "NO_CHANGE", tone: "neutral" };
+  }
+  return null;
+};
+
 const resolveTargetStatus = (target, isUpdateAction) => {
   if (isTargetSuccess(target)) return { label: "SUCCESS", tone: "success" };
+  const override = detectTargetStatusOverride(target, isUpdateAction);
+  if (override) return override;
   if (isUpdateAction || hasUpdateEvidence(target)) {
     const updateReport = collectUpdateReport(target?.stdout, target?.update_report);
     const outcome = String(updateReport?.metrics?.outcome || "").trim().toUpperCase();
@@ -83,6 +156,8 @@ const normalizeStep = (row) => {
       stdout: clamp(row[1]),
       stderr: clamp(row[2]),
       status: row[3],
+      event_type: "",
+      agent_id: "",
     };
   }
   return {
@@ -90,7 +165,41 @@ const normalizeStep = (row) => {
     stdout: clamp(row?.stdout),
     stderr: clamp(row?.stderr),
     status: row?.status || "UNKNOWN",
+    event_type: row?.type || row?.event || "",
+    agent_id: row?.agent_id || row?.agent || "",
   };
+};
+
+const inferEventAgentId = (event, knownAgentIds = new Set()) => {
+  if (!event || typeof event !== "object") return "";
+  const directAgent = String(event.agent_id || "").trim();
+  if (directAgent) return directAgent;
+
+  const step = String(event.step || "").trim();
+  if (step) {
+    const endpointMatch = step.match(/^endpoint:([a-zA-Z0-9_-]+)$/i);
+    if (endpointMatch) return String(endpointMatch[1] || "").trim();
+    const suffixMatch = step.match(/(?:^|[:#\s-])(00\d|0\d{2}|\d{3,})$/);
+    if (suffixMatch) return String(suffixMatch[1] || "").trim();
+  }
+
+  const blob = `${String(event.stdout || "")}\n${String(event.stderr || "")}`;
+  if (!blob.trim()) return "";
+  const explicitPatterns = [
+    /endpoint\s+execution\s+(?:failed|succeeded)\s*:\s*([0-9]{3,})/i,
+    /agent[_\s-]?id\s*[=:]\s*([0-9]{3,})/i,
+    /target[_\s-]?id\s*[=:]\s*([0-9]{3,})/i,
+  ];
+  for (const pattern of explicitPatterns) {
+    const match = blob.match(pattern);
+    if (match && match[1]) return String(match[1]).trim();
+  }
+
+  for (const id of knownAgentIds) {
+    const tokenPattern = new RegExp(`(?:^|[^0-9])${id}(?:[^0-9]|$)`);
+    if (tokenPattern.test(blob)) return id;
+  }
+  return "";
 };
 
 const normalizeTarget = (row) => {
@@ -1030,7 +1139,11 @@ const extractTargetIssue = (target, { isUpdateAction, isScanAction }) => {
   return "";
 };
 
-export default function ExecutionStream({ executionId, showRelatedAlerts = true }) {
+export default function ExecutionStream({
+  executionId,
+  showRelatedAlerts = true,
+  scopeEventsToSelectedTarget = false,
+}) {
   const navigate = useNavigate();
   const [events, setEvents] = useState([]);
   const [targets, setTargets] = useState([]);
@@ -1361,6 +1474,10 @@ export default function ExecutionStream({ executionId, showRelatedAlerts = true 
 
   const deferredTargets = useDeferredValue(targets);
   const selectedTarget = deferredTargets.find((t) => t.agent_id === selectedTargetId) || null;
+  const knownTargetIds = useMemo(
+    () => new Set((deferredTargets || []).map((target) => String(target?.agent_id || "").trim()).filter(Boolean)),
+    [deferredTargets]
+  );
   const execution = meta?.execution || null;
   const executionStatus = String(execution?.status || "").toUpperCase();
   const summary = useMemo(
@@ -1477,6 +1594,14 @@ export default function ExecutionStream({ executionId, showRelatedAlerts = true 
     if (events.length <= MAX_RENDERED_EVENTS) return events;
     return events.slice(events.length - MAX_RENDERED_EVENTS);
   }, [events]);
+  const scopedVisibleEvents = useMemo(() => {
+    if (!scopeEventsToSelectedTarget || !selectedTargetId) return visibleEvents;
+    return visibleEvents.filter((event) => {
+      const agentId = inferEventAgentId(event, knownTargetIds);
+      if (!agentId) return true;
+      return String(agentId) === String(selectedTargetId);
+    });
+  }, [knownTargetIds, scopeEventsToSelectedTarget, selectedTargetId, visibleEvents]);
   const targetEvidenceById = useMemo(() => {
     const out = new Map();
     (deferredTargets || []).forEach((target) => {
@@ -2131,8 +2256,12 @@ export default function ExecutionStream({ executionId, showRelatedAlerts = true 
         </>
       )}
 
-      {loading || error ? null : events.length === 0 ? (
-        <div className="empty-state">No execution events yet.</div>
+      {loading || error ? null : scopedVisibleEvents.length === 0 ? (
+        <div className="empty-state">
+          {scopeEventsToSelectedTarget && selectedTargetId
+            ? `No execution events for selected agent ${selectedTargetId} yet.`
+            : "No execution events yet."}
+        </div>
       ) : (
         <>
           <div className="card-header mb-0">
@@ -2146,9 +2275,14 @@ export default function ExecutionStream({ executionId, showRelatedAlerts = true 
               Showing latest {MAX_RENDERED_EVENTS} events out of {events.length}. Older events are retained but collapsed for performance.
             </div>
           ) : null}
+          {scopeEventsToSelectedTarget && selectedTargetId && scopedVisibleEvents.length !== visibleEvents.length ? (
+            <div className="meta-line ws-normal">
+              Showing {scopedVisibleEvents.length} event(s) for selected agent {selectedTargetId}.
+            </div>
+          ) : null}
           <div className="list-scroll tall">
             <div className="list">
-              {visibleEvents.map((e, i) => (
+              {scopedVisibleEvents.map((e, i) => (
                 <div key={`${executionId}-${e._event_id || `${e.step}-${i}`}`} className="list-item readable">
                   <div className="page-actions justify-between">
                     <strong>{e.step || "-"}</strong>

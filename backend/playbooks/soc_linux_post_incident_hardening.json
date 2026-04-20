@@ -1,0 +1,30 @@
+{
+  "name": "SOC Linux Post-Incident Hardening",
+  "description": "Post-remediation Linux hardening and service stability checks.",
+  "steps": [
+    {
+      "id": "patch_linux",
+      "action": "patch-linux",
+      "args": {},
+      "reason": "Apply latest Linux package security updates."
+    },
+    {
+      "id": "restart_security_agent",
+      "action": "restart-wazuh",
+      "args": {},
+      "reason": "Refresh telemetry and policy channels."
+    },
+    {
+      "id": "sca_rescan",
+      "action": "sca-rescan",
+      "args": {},
+      "reason": "Re-validate compliance posture after hardening."
+    },
+    {
+      "id": "collect_forensics",
+      "action": "collect-forensics",
+      "args": {},
+      "reason": "Capture post-hardening evidence for audit trail."
+    }
+  ]
+}

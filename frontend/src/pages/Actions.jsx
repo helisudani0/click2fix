@@ -94,6 +94,18 @@ const buildDefaultActionInputs = (action) => {
 
 const actionLabel = (action) => String(action?.label || action?.name || action?.id || "").trim();
 const actionCategory = (action) => String(action?.category || action?.type || "Uncategorized").trim() || "Uncategorized";
+const actionSupportedPlatforms = (action) => {
+  const values = Array.isArray(action?.capabilities?.supported_os)
+    ? action.capabilities.supported_os
+    : [];
+  return values
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+};
+const actionIsUpdate = (action) =>
+  /(patch|update|upgrade|software|package|os)/i.test(
+    [action?.id, action?.label, action?.description, action?.category].filter(Boolean).join(" ")
+  );
 const actionInputCount = (action) => (Array.isArray(action?.inputs) ? action.inputs.length : 0);
 const actionRequiredInputCount = (action) =>
   Array.isArray(action?.inputs) ? action.inputs.filter((field) => field?.required).length : 0;
@@ -177,6 +189,7 @@ export default function Actions() {
   const [actions, setActions] = useState([]);
   const [actionSearch, setActionSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  const [focusFilter, setFocusFilter] = useState("all");
   const [actionId, setActionId] = useState("");
   const [actionInputs, setActionInputs] = useState({});
   const [actionStatus, setActionStatus] = useState("");
@@ -209,11 +222,15 @@ export default function Actions() {
     return actions.filter((action) => {
       const category = actionCategory(action);
       if (categoryFilter && category !== categoryFilter) return false;
+      const platforms = actionSupportedPlatforms(action);
+      if (focusFilter === "linux" && !platforms.includes("linux")) return false;
+      if (focusFilter === "windows" && !platforms.includes("windows")) return false;
+      if (focusFilter === "updates" && !actionIsUpdate(action)) return false;
       if (!query) return true;
       const haystack = [actionLabel(action), category, action?.description || "", action?.id || ""].join(" ").toLowerCase();
       return haystack.includes(query);
     });
-  }, [actions, actionSearch, categoryFilter]);
+  }, [actions, actionSearch, categoryFilter, focusFilter]);
 
   const selectedCatalogAction = useMemo(
     () => filteredActions.find((action) => String(action?.id || "") === String(actionId)) || selectedAction,
@@ -223,6 +240,18 @@ export default function Actions() {
   const connectedAgents = useMemo(
     () => agents.filter((agent) => isAgentConnected(agent.status)),
     [agents]
+  );
+  const connectedWindowsCount = useMemo(
+    () => connectedAgents.filter((agent) => String(agent.os || "").toLowerCase().includes("windows")).length,
+    [connectedAgents]
+  );
+  const connectedLinuxCount = useMemo(
+    () =>
+      connectedAgents.filter((agent) => {
+        const os = String(agent.os || "").toLowerCase();
+        return os.includes("linux") || os.includes("ubuntu") || os.includes("debian") || os.includes("centos");
+      }).length,
+    [connectedAgents]
   );
 
   const availableGroups = useMemo(() => {
@@ -493,7 +522,9 @@ export default function Actions() {
         <div className="mission-card">
           <div className="mission-label">Connected Agents</div>
           <div className="mission-value">{connectedAgentCount}</div>
-          <div className="mission-meta">{agents.length} agents loaded from inventory</div>
+          <div className="mission-meta">
+            {agents.length} loaded | Windows {connectedWindowsCount} | Linux {connectedLinuxCount}
+          </div>
         </div>
         <div className="mission-card">
           <div className="mission-label">Execution Readiness</div>
@@ -654,14 +685,21 @@ export default function Actions() {
                   <option key={category} value={category}>{category}</option>
                 ))}
               </select>
+              <select className="input" value={focusFilter} onChange={(event) => setFocusFilter(event.target.value)}>
+                <option value="all">All platforms</option>
+                <option value="linux">Linux-focused</option>
+                <option value="windows">Windows-focused</option>
+                <option value="updates">Update actions</option>
+              </select>
               <button
                 type="button"
                 className="btn secondary"
                 onClick={() => {
                   setActionSearch("");
                   setCategoryFilter("");
+                  setFocusFilter("all");
                 }}
-                disabled={!actionSearch.trim() && !categoryFilter}
+                disabled={!actionSearch.trim() && !categoryFilter && focusFilter === "all"}
               >
                 Clear Filters
               </button>

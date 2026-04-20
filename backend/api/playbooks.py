@@ -212,6 +212,74 @@ DEFAULT_PLAYBOOKS: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    "soc_linux_malware_containment.json": {
+        "name": "SOC Linux Malware Containment",
+        "description": "Contain suspicious Linux malware behavior with endpoint-safe steps.",
+        "steps": [
+            {
+                "id": "kill_suspicious_process",
+                "action": "kill-process",
+                "args": {"pid": "1234"},
+                "reason": "Terminate suspicious process execution rapidly.",
+            },
+            {
+                "id": "quarantine_payload",
+                "action": "quarantine-file",
+                "args": {"path": "/tmp/suspect.bin"},
+                "reason": "Prevent execution and preserve artifact for analysis.",
+            },
+            {
+                "id": "block_hash",
+                "action": "hash-blocklist",
+                "args": {
+                    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                },
+                "reason": "Block known malicious artifact across Linux endpoints.",
+            },
+            {
+                "id": "collect_forensics",
+                "action": "collect-forensics",
+                "args": {},
+                "reason": "Capture triage evidence before cleanup.",
+            },
+            {
+                "id": "persistence_hunt",
+                "action": "threat-hunt-persistence",
+                "args": {},
+                "reason": "Confirm persistence artifacts are removed after containment.",
+            },
+        ],
+    },
+    "soc_linux_post_incident_hardening.json": {
+        "name": "SOC Linux Post-Incident Hardening",
+        "description": "Post-remediation Linux hardening and service stability checks.",
+        "steps": [
+            {
+                "id": "patch_linux",
+                "action": "patch-linux",
+                "args": {},
+                "reason": "Apply latest Linux package security updates.",
+            },
+            {
+                "id": "restart_security_agent",
+                "action": "restart-wazuh",
+                "args": {},
+                "reason": "Refresh telemetry and policy channels.",
+            },
+            {
+                "id": "sca_rescan",
+                "action": "sca-rescan",
+                "args": {},
+                "reason": "Re-validate compliance posture after hardening.",
+            },
+            {
+                "id": "collect_forensics",
+                "action": "collect-forensics",
+                "args": {},
+                "reason": "Capture post-hardening evidence for audit trail.",
+            },
+        ],
+    },
     "soc_suspicious_login_response.json": {
         "name": "SOC Suspicious Login Response",
         "description": "Respond to suspicious account activity and capture evidence.",

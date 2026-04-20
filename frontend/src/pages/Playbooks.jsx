@@ -162,7 +162,7 @@ const parseExcludeIds = (value) =>
       .filter(Boolean)
   );
 
-export default function Playbooks() {
+export default function Playbooks({ minWorkbench = false }) {
   const navigate = useNavigate();
   const [playbooks, setPlaybooks] = useState([]);
   const [actions, setActions] = useState([]);
@@ -590,7 +590,11 @@ export default function Playbooks() {
       <div className="page-header">
         <div>
           <h2>Playbooks</h2>
-          <p className="muted">Generate or manually build playbooks, then run them across single agents, groups, or the fleet.</p>
+          <p className="muted">
+            {minWorkbench
+              ? "Build or load playbooks, then run them across single agents, groups, or the fleet."
+              : "Generate or manually build playbooks, then run them across single agents, groups, or the fleet."}
+          </p>
           <p className="muted">Custom JSON steps are allowed for drafting. Execution requires catalog actions or global-shell steps.</p>
         </div>
         <div className="page-actions">
@@ -641,71 +645,108 @@ export default function Playbooks() {
           )}
         </div>
 
-        <div className="card playbooks-generate-card">
-          <div className="card-header">
-            <div>
-              <h3>Generate From Alert or Case</h3>
-              <p className="muted">Keep the existing generator, but land the result in the same manual editor.</p>
-            </div>
-          </div>
-
-          <div className="playbook-generate-row">
-            <div className="playbook-generate-fields">
-              <input
-                className="input"
-                placeholder="Alert ID"
-                value={alertId}
-                onChange={(event) => setAlertId(event.target.value)}
-              />
-              <input
-                className="input"
-                placeholder="Case ID"
-                value={caseId}
-                onChange={(event) => setCaseId(event.target.value)}
-              />
-            </div>
-            <div className="playbook-generate-action">
-              <button className="btn" onClick={handleGenerate}>
-                Generate
-              </button>
-            </div>
-          </div>
-
-          <div className="list mt-10">
-            <div className="list-item readable">
-              <label className="inline-check">
-                <input
-                  type="checkbox"
-                  checked={useAiGeneration}
-                  disabled={!aiEnabled}
-                  onChange={(event) => setUseAiGeneration(event.target.checked)}
-                />
-                <span>Use AI Assist for higher-precision steps</span>
-              </label>
-            </div>
-            {useAiGeneration ? (
-              <div className="list-item readable">
-                <div className="muted">AI Instructions (optional)</div>
-                <textarea
-                  className="input mt-8"
-                  rows={3}
-                  value={aiPrompt}
-                  disabled={!aiEnabled}
-                  onChange={(event) => setAiPrompt(event.target.value)}
-                  placeholder="Example: prioritize containment first, keep user impact low, avoid reboot actions."
-                />
-                <div className="meta-line mt-8">
-                  {aiEnabled
-                    ? "AI is enabled from Org Admin / Platform AI Configuration."
-                    : (aiDisabledReason || "AI is disabled. Enable it in Org Admin / Platform AI Configuration.")}
-                </div>
+        {!minWorkbench ? (
+          <div className="card playbooks-generate-card">
+            <div className="card-header">
+              <div>
+                <h3>Generate From Alert or Case</h3>
+                <p className="muted">Keep the existing generator, but land the result in the same manual editor.</p>
               </div>
-            ) : null}
+            </div>
+
+            <div className="playbook-generate-row">
+              <div className="playbook-generate-fields">
+                <input
+                  className="input"
+                  placeholder="Alert ID"
+                  value={alertId}
+                  onChange={(event) => setAlertId(event.target.value)}
+                />
+                <input
+                  className="input"
+                  placeholder="Case ID"
+                  value={caseId}
+                  onChange={(event) => setCaseId(event.target.value)}
+                />
+              </div>
+              <div className="playbook-generate-action">
+                <button className="btn" onClick={handleGenerate}>
+                  Generate
+                </button>
+              </div>
+            </div>
+
+            <div className="list mt-10">
+              <div className="list-item readable">
+                <label className="inline-check">
+                  <input
+                    type="checkbox"
+                    checked={useAiGeneration}
+                    disabled={!aiEnabled}
+                    onChange={(event) => setUseAiGeneration(event.target.checked)}
+                  />
+                  <span>Use AI Assist for higher-precision steps</span>
+                </label>
+              </div>
+              {useAiGeneration ? (
+                <div className="list-item readable">
+                  <div className="muted">AI Instructions (optional)</div>
+                  <textarea
+                    className="input mt-8"
+                    rows={3}
+                    value={aiPrompt}
+                    disabled={!aiEnabled}
+                    onChange={(event) => setAiPrompt(event.target.value)}
+                    placeholder="Example: prioritize containment first, keep user impact low, avoid reboot actions."
+                  />
+                  <div className="meta-line mt-8">
+                    {aiEnabled
+                      ? "AI is enabled from Org Admin / Platform AI Configuration."
+                      : (aiDisabledReason || "AI is disabled. Enable it in Org Admin / Platform AI Configuration.")}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="meta-line">
+              Generated playbooks are editable. You can still save, modify, or replace every step before execution.
+            </div>
           </div>
-          <div className="meta-line">
-            Generated playbooks are editable. You can still save, modify, or replace every step before execution.
+        ) : (
+          <div className="card playbooks-generate-card">
+            <div className="card-header">
+              <div>
+                <h3>Manual + AI Playbook Creation</h3>
+                <p className="muted">Alert/Case generation is disabled in min workbench; build from templates or AI goal prompt.</p>
+              </div>
+            </div>
+            <div className="list">
+              <div className="list-item readable">
+                <label className="inline-check">
+                  <input
+                    type="checkbox"
+                    checked={useAiGeneration}
+                    disabled={!aiEnabled}
+                    onChange={(event) => setUseAiGeneration(event.target.checked)}
+                  />
+                  <span>Use AI Assist for higher-precision manual drafts</span>
+                </label>
+              </div>
+              {useAiGeneration ? (
+                <div className="list-item readable">
+                  <div className="muted">AI Instructions (optional)</div>
+                  <textarea
+                    className="input mt-8"
+                    rows={3}
+                    value={aiPrompt}
+                    disabled={!aiEnabled}
+                    onChange={(event) => setAiPrompt(event.target.value)}
+                    placeholder="Example: prioritize containment first, keep user impact low, avoid reboot actions."
+                  />
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       <div className="card playbooks-ai-card">

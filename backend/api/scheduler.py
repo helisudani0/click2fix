@@ -70,7 +70,35 @@ async def create_scheduled_job(request: Request, user: dict = Depends(require_ro
         body = {}
 
     name = str(body.get("name") or "Scheduled Policy").strip()
-    playbook = str(body.get("playbook") or body.get("action_id") or "endpoint-healthcheck").strip()
+    job_kind = str(body.get("job_kind") or body.get("kind") or "action").strip().lower() or "action"
+    payload = body.get("payload") if isinstance(body.get("payload"), dict) else {}
+    if job_kind == "shell":
+        playbook = "global-shell"
+        payload = {
+            **payload,
+            "command": str(
+                payload.get("command")
+                or body.get("command")
+                or body.get("shell_command")
+                or body.get("script")
+                or ""
+            ).strip(),
+            "shell": str(payload.get("shell") or body.get("shell") or "powershell").strip().lower(),
+            "run_as_system": _to_bool(payload.get("run_as_system") if "run_as_system" in payload else body.get("run_as_system"), False),
+            "verify_kb": str(payload.get("verify_kb") or body.get("verify_kb") or "").strip(),
+            "verify_min_build": str(payload.get("verify_min_build") or body.get("verify_min_build") or "").strip(),
+            "verify_stdout_contains": str(payload.get("verify_stdout_contains") or body.get("verify_stdout_contains") or "").strip(),
+        }
+    elif job_kind == "playbook":
+        playbook = str(body.get("playbook") or body.get("name") or "scheduled-playbook").strip() or "scheduled-playbook"
+        if isinstance(body.get("playbook_payload"), dict) and "steps" in body.get("playbook_payload", {}):
+            payload = {**payload, **body["playbook_payload"]}
+        if isinstance(body.get("steps"), list):
+            payload = {**payload, "steps": body.get("steps")}
+    else:
+        playbook = str(body.get("playbook") or body.get("action_id") or "endpoint-healthcheck").strip()
+        if "args" in body and "args" not in payload:
+            payload = {**payload, "args": body.get("args")}
     target = str(body.get("target") or body.get("agent_id") or "all").strip() or "all"
     cron = str(body.get("cron") or "").strip()
     interval_hours = body.get("interval_hours")
@@ -91,6 +119,8 @@ async def create_scheduled_job(request: Request, user: dict = Depends(require_ro
         created = create_job(
             name=name,
             playbook=playbook,
+            job_kind=job_kind,
+            payload=payload if isinstance(payload, dict) else {},
             target=target,
             cron=cron,
             enabled=enabled,
@@ -163,6 +193,46 @@ async def update_scheduler_job(job_id: int, request: Request, user: dict = Depen
         updates["name"] = str(body.get("name") or "").strip() or "Scheduled Policy"
     if "playbook" in body or "action_id" in body:
         updates["playbook"] = str(body.get("playbook") or body.get("action_id") or "").strip()
+    if "job_kind" in body or "kind" in body:
+        updates["job_kind"] = str(body.get("job_kind") or body.get("kind") or "").strip().lower() or "action"
+    payload_from_body = body.get("payload") if isinstance(body.get("payload"), dict) else None
+    if payload_from_body is not None:
+        updates["payload"] = payload_from_body
+    if "args" in body:
+        updates["payload"] = {
+            **(updates.get("payload") if isinstance(updates.get("payload"), dict) else {}),
+            "args": body.get("args"),
+        }
+    if any(field in body for field in ("command", "shell_command", "script", "shell", "run_as_system", "verify_kb", "verify_min_build", "verify_stdout_contains")):
+        updates["job_kind"] = str(updates.get("job_kind") or "shell").lower()
+        updates["payload"] = {
+            **(updates.get("payload") if isinstance(updates.get("payload"), dict) else {}),
+            "command": str(
+                body.get("command")
+                or body.get("shell_command")
+                or body.get("script")
+                or ""
+            ).strip(),
+            "shell": str(body.get("shell") or "powershell").strip().lower(),
+            "run_as_system": _to_bool(body.get("run_as_system"), False),
+            "verify_kb": str(body.get("verify_kb") or "").strip(),
+            "verify_min_build": str(body.get("verify_min_build") or "").strip(),
+            "verify_stdout_contains": str(body.get("verify_stdout_contains") or "").strip(),
+        }
+        updates["playbook"] = "global-shell"
+    if isinstance(body.get("playbook_payload"), dict):
+        updates["job_kind"] = str(updates.get("job_kind") or "playbook").lower()
+        updates["payload"] = {**body["playbook_payload"]}
+        if "playbook" not in updates:
+            updates["playbook"] = str(body.get("playbook") or "scheduled-playbook").strip() or "scheduled-playbook"
+    if isinstance(body.get("steps"), list):
+        updates["job_kind"] = str(updates.get("job_kind") or "playbook").lower()
+        updates["payload"] = {
+            **(updates.get("payload") if isinstance(updates.get("payload"), dict) else {}),
+            "steps": body.get("steps"),
+        }
+        if "playbook" not in updates:
+            updates["playbook"] = str(body.get("playbook") or "scheduled-playbook").strip() or "scheduled-playbook"
     if "target" in body or "agent_id" in body:
         updates["target"] = str(body.get("target") or body.get("agent_id") or "all").strip() or "all"
 

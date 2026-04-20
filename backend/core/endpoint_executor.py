@@ -6422,8 +6422,25 @@ catch {
                         break
                 results = [row for row in ordered_results if row is not None]
 
+        external_failed = 0
+        for row in results:
+            if row.get("ok"):
+                continue
+            if self._is_external_transient_failure(action_id, row.get("stdout", ""), row.get("stderr", "")):
+                row["failure_type"] = "external_transient"
+                external_failed += 1
+
         success = sum(1 for r in results if r["ok"])
         failed = len(results) - success
+        if failed == 0 and len(results) > 0:
+            overall_status = "SUCCESS"
+        elif success > 0 and failed > 0:
+            overall_status = "PARTIAL"
+        elif failed > 0 and failed == external_failed:
+            # Infra/transient failures should not be treated as hard logical failures.
+            overall_status = "PARTIAL"
+        else:
+            overall_status = "FAILED"
 
         return {
             "channel": "endpoint",
@@ -6433,6 +6450,8 @@ catch {
             "success": success,
             "failed": failed,
             "ok": failed == 0 and len(results) > 0,
+            "overall_status": overall_status,
+            "external_failed": external_failed,
             "results": results,
         }
 
@@ -7340,6 +7359,52 @@ catch {
                 or (explicit_no_change and (no_remaining or "updates_remaining=0" in blob))
             ):
                 return True
+
+        already_updated_markers = (
+            "already the newest version",
+            "already installed",
+            "is already installed",
+            "0 upgraded, 0 newly installed",
+            "no packages marked for upgrade",
+            "no upgrades available",
+            "nothing to do",
+            "all packages are up to date",
+            "reason=no_applicable_update",
+            "message=no_applicable_update",
+            "reason=already_target_state",
+            "reason=version_already_installed",
+        )
+        if (
+            action in update_actions or action == "custom-os-command"
+        ) and any(marker in blob for marker in already_updated_markers):
+            return True
+
+        reboot_markers = (
+            "outcome=waiting_reboot",
+            "waiting_reboot",
+            "reboot_required=true",
+            "reboot pending",
+            "reboot required",
+            "restart-computer",
+            "shutdown /r",
+            "systemctl reboot",
+            "reboot_policy=deferred_user_controlled",
+        )
+        transport_disconnect_markers = (
+            "winrm connection failed",
+            "connection reset",
+            "connection was forcibly closed",
+            "remote host closed",
+            "transport endpoint is not connected",
+            "broken pipe",
+            "i/o operation has been aborted",
+            "ssh session not active",
+            "unable to connect to port",
+        )
+        if any(marker in blob for marker in reboot_markers) and any(
+            marker in blob for marker in transport_disconnect_markers
+        ):
+            return True
         hard_error_markers = (
             "parsererror",
             "expectedvalueexpression",
@@ -7395,6 +7460,85 @@ catch {
             return True
 
         return False
+
+    @staticmethod
+    def _is_external_transient_failure(action_id: str, stdout: str, stderr: str) -> bool:
+        action = str(action_id or "").strip().lower()
+        out = str(stdout or "")
+        err = str(stderr or "")
+        blob = f"{out}\n{err}".lower()
+        if not blob.strip():
+            return False
+
+        external_markers = (
+            "temporary failure in name resolution",
+            "name or service not known",
+            "could not resolve host",
+            "unable to resolve host",
+            "network is unreachable",
+            "connection timed out",
+            "connection timeout",
+            "connection refused",
+            "read timed out",
+            "tls handshake timeout",
+            "failed to establish a new connection",
+            "max retries exceeded",
+            "unable to connect to port",
+            "no route to host",
+            "winrm connection failed",
+            "failed to connect",
+            "proxy error",
+            "503 service unavailable",
+            "429 too many requests",
+        )
+        if not any(marker in blob for marker in external_markers):
+            return False
+
+        # Pure parser/schema/argument failures are still logical failures.
+        hard_logic_markers = (
+            "parsererror",
+            "expectedvalueexpression",
+            "unexpected token",
+            "must provide a value expression following",
+            "requires command argument",
+            "verification failed",
+            "failed to prepare endpoint script",
+            "script missing",
+            "cannot find the path specified",
+            "cannot find the file specified",
+        )
+        if any(marker in blob for marker in hard_logic_markers):
+            return False
+
+        # Reboot-path disconnects are expected for maintenance actions.
+        reboot_markers = (
+            "outcome=waiting_reboot",
+            "waiting_reboot",
+            "reboot_required=true",
+            "reboot pending",
+            "reboot required",
+            "restart-computer",
+            "shutdown /r",
+            "systemctl reboot",
+        )
+        if any(marker in blob for marker in reboot_markers):
+            return True
+
+        # For update/remediation flows, infra/network failures should not be
+        # treated as strict logic failures in the global status.
+        maintenance_actions = {
+            "package-update",
+            "software-install-upgrade",
+            "patch-windows",
+            "windows-os-update",
+            "fleet-software-update",
+            "patch-linux",
+            "custom-os-command",
+        }
+        if action in maintenance_actions:
+            return True
+
+        return True
 
     @classmethod
     def _has_update_evidence(cls, stdout: str, stderr: str = "") -> bool:

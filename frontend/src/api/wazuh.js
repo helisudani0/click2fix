@@ -240,7 +240,7 @@ export const getAgentDetail = (agentId) => api.get(`/agents/${agentId}`);
 export const getAgentVulnerabilities = (agentId, limit = 200) =>
   api.get(`/agents/${agentId}/vulnerabilities`, { params: { limit } });
 export const getVulnerabilities = (params = {}) =>
-  api.get("/vulnerabilities", { params });
+  api.get("/vulnerabilities", { params, timeout: 20000 });
 export const closeVulnerabilityLocal = (payload) =>
   api.post("/vulnerabilities/local-close", payload);
 export const getVulnerabilityAiPlan = (payload = {}) =>
@@ -407,7 +407,7 @@ export const runAction = (payload) =>
   api.post("/remediate", payload);
 
 export const runGlobalShell = (payload) =>
-  api.post("/actions/global-shell", payload);
+  api.post("/actions/global-shell", payload, { timeout: 60000 });
 
 export const getExecutions = (params = {}, options = {}) => {
   const rawParams = params && typeof params === "object" ? { ...params } : {};

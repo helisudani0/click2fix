@@ -197,6 +197,8 @@ scheduled_jobs = Table(
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("name", String),
     Column("playbook", String),
+    Column("job_kind", String, server_default=text("'action'")),
+    Column("payload_json", Text),
     Column("target", String),
     Column("cron", String),
     Column("enabled", Boolean),
@@ -934,6 +936,18 @@ def init():
             conn.execute(text("ALTER TABLE executions ADD COLUMN IF NOT EXISTS target_success INTEGER DEFAULT 0"))
             conn.execute(text("ALTER TABLE executions ADD COLUMN IF NOT EXISTS target_failed INTEGER DEFAULT 0"))
             conn.execute(text("ALTER TABLE executions ADD COLUMN IF NOT EXISTS batch_size INTEGER DEFAULT 0"))
+            conn.execute(
+                text(
+                    "ALTER TABLE scheduled_jobs "
+                    "ADD COLUMN IF NOT EXISTS job_kind VARCHAR DEFAULT 'action'"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE scheduled_jobs "
+                    "ADD COLUMN IF NOT EXISTS payload_json TEXT"
+                )
+            )
             conn.execute(
                 text(
                     "ALTER TABLE execution_steps ADD COLUMN IF NOT EXISTS created_at "

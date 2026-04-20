@@ -18,8 +18,8 @@ export default function AppMin() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route element={<RequireAuth />}>
-          <Route path="/" element={<PatchWorkbench />} />
-          <Route path="/patch-workbench" element={<PatchWorkbench />} />
+          <Route path="/" element={<PatchWorkbench minMode />} />
+          <Route path="/patch-workbench" element={<PatchWorkbench minMode />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

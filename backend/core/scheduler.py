@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shlex
 import threading
 import uuid
 from typing import Any, Dict, Iterable, List, Optional
@@ -88,6 +89,8 @@ _HEALTHCHECK_ACTION_ID = "endpoint-healthcheck"
 _INTEGRITY_SWEEP_POLICY_NAME = "Evidence Integrity Sweep Policy"
 _INTEGRITY_SWEEP_ACTION_ID = "integrity-sweep"
 _DEFAULT_POLICY_CRON = "0 */6 * * *"
+_ALLOWED_SCHEDULE_JOB_KINDS = {"action", "shell", "playbook"}
+_SUPPORTED_SHELLS = {"powershell", "cmd", "bash", "sh"}
 
 _ingest_cfg = SETTINGS.get("analytics_ingest", {}) if isinstance(SETTINGS, dict) else {}
 INGEST_ENABLED = bool(_ingest_cfg.get("enabled", True))
@@ -165,6 +168,179 @@ def _parse_cron(cron_expr: str) -> CronTrigger:
     if not expr:
         expr = _DEFAULT_POLICY_CRON
     return CronTrigger.from_crontab(expr, timezone="UTC")
+
+
+def _normalize_job_kind(value: Any, *, default: str = "action") -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        raw = str(default or "action").strip().lower()
+    if raw not in _ALLOWED_SCHEDULE_JOB_KINDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"job_kind must be one of {sorted(_ALLOWED_SCHEDULE_JOB_KINDS)}",
+        )
+    return raw
+
+
+def _parse_payload_json(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if value is None:
+        return {}
+    if isinstance(value, str):
+        text_value = str(value).strip()
+        if not text_value:
+            return {}
+        try:
+            parsed = json.loads(text_value)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _to_payload_json(value: Any) -> str | None:
+    payload = _parse_payload_json(value)
+    if not payload:
+        return None
+    return json.dumps(payload, default=str)
+
+
+def _ps_single_quoted(value: str) -> str:
+    raw = str(value or "")
+    return "'" + raw.replace("'", "''") + "'"
+
+
+def _wrap_cmd_for_powershell(raw_command: str) -> str:
+    raw = str(raw_command or "").strip()
+    if not raw:
+        return "cmd.exe /d /s /c \"\""
+    lowered = raw.lower()
+    if lowered.startswith("cmd ") or lowered.startswith("cmd.exe "):
+        return raw
+    return f"$c={_ps_single_quoted(raw)}; cmd.exe /d /s /c $c"
+
+
+def _wrap_linux_shell_command(raw_command: str, *, shell: str) -> str:
+    raw = str(raw_command or "").strip()
+    if not raw:
+        return ""
+    lowered = raw.lower()
+    if shell == "bash":
+        if lowered.startswith("bash ") or lowered.startswith("/bin/bash "):
+            return raw
+        return f"bash -lc {shlex.quote(raw)}"
+    if shell == "sh":
+        if lowered.startswith("sh ") or lowered.startswith("/bin/sh "):
+            return raw
+        return f"sh -lc {shlex.quote(raw)}"
+    return raw
+
+
+def _prepare_shell_command(raw_command: str, shell: str) -> str:
+    normalized_shell = str(shell or "").strip().lower()
+    if normalized_shell == "cmd":
+        return _wrap_cmd_for_powershell(raw_command)
+    if normalized_shell in {"bash", "sh"}:
+        return _wrap_linux_shell_command(raw_command, shell=normalized_shell)
+    return str(raw_command or "").strip()
+
+
+def _coerce_custom_command_arguments(
+    arguments: list[str],
+    *,
+    command: str,
+    verify_kb: str = "",
+    verify_min_build: str = "",
+    verify_stdout_contains: str = "",
+    run_as_system: bool = False,
+) -> list[str]:
+    existing = [str(v) for v in (arguments or [])]
+    command_value = str(command or "").strip()
+    if existing:
+        first = str(existing[0] or "").strip()
+        if first:
+            command_value = first
+    return [
+        command_value,
+        str(verify_kb or ""),
+        str(verify_min_build or ""),
+        str(verify_stdout_contains or ""),
+        "true" if bool(run_as_system) else "false",
+    ]
+
+
+def _build_shell_dispatch(payload: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+    shell = str(payload.get("shell") or "powershell").strip().lower()
+    if shell not in _SUPPORTED_SHELLS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"shell must be one of {sorted(_SUPPORTED_SHELLS)}",
+        )
+    raw_command = str(
+        payload.get("command")
+        or payload.get("shell_command")
+        or payload.get("script")
+        or ""
+    ).strip()
+    if not raw_command:
+        raise HTTPException(status_code=400, detail="shell jobs require payload.command")
+    run_as_system = _to_bool(payload.get("run_as_system"), False)
+    verify_kb = str(payload.get("verify_kb") or "").strip()
+    verify_min_build = str(payload.get("verify_min_build") or "").strip()
+    verify_stdout_contains = str(payload.get("verify_stdout_contains") or "").strip()
+    command_to_run = _prepare_shell_command(raw_command, shell)
+
+    action = get_action("custom-os-command")
+    arguments = _coerce_custom_command_arguments(
+        normalize_args(
+            action,
+            {
+                "command": command_to_run,
+                "verify_kb": verify_kb,
+                "verify_min_build": verify_min_build,
+                "verify_stdout_contains": verify_stdout_contains,
+                "run_as_system": "true" if bool(run_as_system) else "false",
+            },
+        ),
+        command=command_to_run,
+        verify_kb=verify_kb,
+        verify_min_build=verify_min_build,
+        verify_stdout_contains=verify_stdout_contains,
+        run_as_system=run_as_system,
+    )
+    dispatch = resolve_action_dispatch(action, arguments)
+    return raw_command, dispatch
+
+
+def _normalize_playbook_steps(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    steps = payload.get("steps") if isinstance(payload, dict) else None
+    if not isinstance(steps, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            continue
+        step_id = str(step.get("id") or f"step_{index + 1}").strip() or f"step_{index + 1}"
+        action_id = str(step.get("action") or step.get("command") or "").strip()
+        if not action_id:
+            raise HTTPException(status_code=400, detail=f"Playbook step '{step_id}' has no action")
+        if action_id.lower() == "global-shell":
+            action_id = "custom-os-command"
+        raw_args = step.get("args")
+        if raw_args is None:
+            raw_args = {}
+        if not isinstance(raw_args, (dict, list, str)):
+            raise HTTPException(status_code=400, detail=f"Playbook step '{step_id}' args are invalid")
+        out.append(
+            {
+                "id": step_id,
+                "action": action_id,
+                "args": raw_args,
+                "reason": str(step.get("reason") or "Scheduled playbook step").strip() or "Scheduled playbook step",
+            }
+        )
+    return out
 
 
 def _to_text(value: Any) -> str:
@@ -326,7 +502,18 @@ def _list_db_jobs(org_id: Optional[int] = None) -> List[Dict[str, Any]]:
         rows = db.execute(
             text(
                 f"""
-                SELECT id, name, playbook, target, cron, enabled, require_approval, last_run, org_id
+                SELECT
+                    id,
+                    name,
+                    playbook,
+                    job_kind,
+                    payload_json,
+                    target,
+                    cron,
+                    enabled,
+                    require_approval,
+                    last_run,
+                    org_id
                 FROM scheduled_jobs
                 {where_sql}
                 ORDER BY id DESC
@@ -337,6 +524,11 @@ def _list_db_jobs(org_id: Optional[int] = None) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
         for row in rows:
             item = serialize_row(row) or {}
+            try:
+                item["job_kind"] = _normalize_job_kind(item.get("job_kind"), default="action")
+            except HTTPException:
+                item["job_kind"] = "action"
+            item["payload"] = _parse_payload_json(item.get("payload_json"))
             runtime_id = _job_runtime_id(int(item["id"]))
             item["runtime_job_id"] = runtime_id
             item["runtime_registered"] = scheduler.get_job(runtime_id) is not None
@@ -414,7 +606,11 @@ def _create_execution_record(
     target: str,
     action_id: str,
     org_id: Optional[int],
+    args_payload: Any = None,
 ) -> int:
+    args_text = "[]"
+    if args_payload is not None:
+        args_text = _to_text(args_payload)
     inserted = db.execute(
         text(
             """
@@ -429,7 +625,7 @@ def _create_execution_record(
             "agent": target,
             "playbook": action_id,
             "action": action_id,
-            "args": "[]",
+            "args": args_text,
             "status": "RUNNING",
             "approved_by": "scheduler",
             "started_at": utc_now_naive(),
@@ -489,7 +685,17 @@ def _resolve_job_row(job_id: int) -> Optional[Dict[str, Any]]:
         row = db.execute(
             text(
                 """
-                SELECT id, name, playbook, target, cron, enabled, require_approval, org_id
+                SELECT
+                    id,
+                    name,
+                    playbook,
+                    job_kind,
+                    payload_json,
+                    target,
+                    cron,
+                    enabled,
+                    require_approval,
+                    org_id
                 FROM scheduled_jobs
                 WHERE id=:id
                 """
@@ -501,16 +707,137 @@ def _resolve_job_row(job_id: int) -> Optional[Dict[str, Any]]:
     if not row:
         return None
     if hasattr(row, "_mapping"):
-        return serialize_row(row)
+        item = serialize_row(row)
+        if not isinstance(item, dict):
+            return None
+        try:
+            item["job_kind"] = _normalize_job_kind(item.get("job_kind"), default="action")
+        except HTTPException:
+            item["job_kind"] = "action"
+        item["payload"] = _parse_payload_json(item.get("payload_json"))
+        return item
     return {
         "id": row[0],
         "name": row[1],
         "playbook": row[2],
-        "target": row[3],
-        "cron": row[4],
-        "enabled": row[5],
-        "require_approval": row[6],
-        "org_id": row[7],
+        "job_kind": (
+            _normalize_job_kind(row[3], default="action")
+            if str(row[3] or "").strip().lower() in _ALLOWED_SCHEDULE_JOB_KINDS
+            else "action"
+        ),
+        "payload_json": row[4],
+        "payload": _parse_payload_json(row[4]),
+        "target": row[5],
+        "cron": row[6],
+        "enabled": row[7],
+        "require_approval": row[8],
+        "org_id": row[9],
+    }
+
+
+def _execute_scheduled_playbook_steps(
+    *,
+    db,
+    execution_id: int,
+    steps: List[Dict[str, Any]],
+    agent_ids: List[str],
+) -> Dict[str, Any]:
+    target_rows_by_agent: Dict[str, Dict[str, Any]] = {}
+    overall_status = "SUCCESS"
+    trace: List[Dict[str, Any]] = []
+
+    for index, step in enumerate(steps):
+        step_id = str(step.get("id") or f"step_{index + 1}").strip() or f"step_{index + 1}"
+        step_action = str(step.get("action") or "").strip()
+        step_status = "FAILED"
+        step_stdout = ""
+        step_stderr = ""
+        step_rows: List[Dict[str, Any]] = []
+        result_payload: Dict[str, Any] = {}
+        try:
+            action = get_action(step_action)
+            arguments = normalize_args(action, step.get("args"))
+            dispatch = resolve_action_dispatch(action, arguments)
+            execution = execute_action(
+                _scheduler_client,
+                step_action,
+                dispatch,
+                agent_ids,
+                execution_id=execution_id,
+            )
+            result_payload = execution.get("result") if isinstance(execution, dict) else {}
+            if isinstance(result_payload, dict) and isinstance(result_payload.get("results"), list):
+                step_rows = [row for row in (result_payload.get("results") or []) if isinstance(row, dict)]
+                for row in step_rows:
+                    agent_id = str(row.get("agent_id") or "").strip()
+                    if agent_id:
+                        target_rows_by_agent[agent_id] = row
+            step_status = _result_status(result_payload, step_rows)
+            step_stdout = _to_text(execution)
+            if step_status != "SUCCESS":
+                step_stderr = _to_text(
+                    result_payload.get("message")
+                    or ("Scheduled playbook step returned partial target failures." if step_status == "PARTIAL" else "Scheduled playbook step failed.")
+                )
+        except HTTPException as exc:
+            step_status = "FAILED"
+            err = exc.detail.get("message") if isinstance(exc.detail, dict) else exc.detail
+            step_stderr = _to_text(err)
+            detail_payload = exc.detail.get("result") if isinstance(exc.detail, dict) else None
+            if isinstance(detail_payload, dict):
+                result_payload = detail_payload
+                if isinstance(detail_payload.get("results"), list):
+                    step_rows = [row for row in (detail_payload.get("results") or []) if isinstance(row, dict)]
+                    for row in step_rows:
+                        agent_id = str(row.get("agent_id") or "").strip()
+                        if agent_id:
+                            target_rows_by_agent[agent_id] = row
+        except Exception as exc:
+            step_status = "FAILED"
+            step_stderr = _to_text(exc)
+
+        db.execute(
+            text(
+                """
+                INSERT INTO execution_steps
+                (execution_id, step, stdout, stderr, status)
+                VALUES (:execution_id, :step, :stdout, :stderr, :status)
+                """
+            ),
+            {
+                "execution_id": execution_id,
+                "step": f"scheduler:{step_id}",
+                "stdout": step_stdout,
+                "stderr": step_stderr,
+                "status": step_status,
+            },
+        )
+        db.commit()
+        trace.append(
+            {
+                "id": step_id,
+                "action": step_action,
+                "status": step_status,
+                "summary": {
+                    "total": _to_int(result_payload.get("total"), len(step_rows)),
+                    "success": _to_int(result_payload.get("success"), sum(1 for row in step_rows if _to_bool(row.get("ok"), False))),
+                    "failed": _to_int(result_payload.get("failed"), sum(1 for row in step_rows if not _to_bool(row.get("ok"), False))),
+                },
+            }
+        )
+        if step_status == "FAILED":
+            overall_status = "FAILED"
+            break
+        if step_status == "PARTIAL" and overall_status == "SUCCESS":
+            overall_status = "PARTIAL"
+
+    target_rows = list(target_rows_by_agent.values())
+    counts = _result_counts({}, target_rows)
+    return {
+        "status": overall_status,
+        "counts": counts,
+        "target_rows": target_rows,
+        "trace": trace,
     }
 
 
@@ -522,7 +849,13 @@ def run_scheduled_job(job_id: int) -> Dict[str, Any]:
         return {"ok": False, "error": "job_disabled", "job_id": int(job_id)}
 
     target = str(row.get("target") or "all").strip() or "all"
+    job_kind = _normalize_job_kind(row.get("job_kind"), default="action")
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else _parse_payload_json(row.get("payload_json"))
     action_id = str(row.get("playbook") or _HEALTHCHECK_ACTION_ID).strip()
+    if job_kind == "shell":
+        action_id = "global-shell"
+    elif job_kind == "playbook":
+        action_id = str(row.get("playbook") or "scheduled-playbook").strip() or "scheduled-playbook"
     org_id = row.get("org_id")
 
     if _to_bool(row.get("require_approval"), False):
@@ -543,8 +876,14 @@ def run_scheduled_job(job_id: int) -> Dict[str, Any]:
     result_payload: Dict[str, Any] = {}
     counts: Dict[str, int] = {"total": 0, "completed": 0, "success": 0, "failed": 0}
     try:
-        execution_id = _create_execution_record(db, target=target, action_id=action_id, org_id=org_id)
-        if str(action_id).strip().lower() == _INTEGRITY_SWEEP_ACTION_ID:
+        execution_id = _create_execution_record(
+            db,
+            target=target,
+            action_id=action_id,
+            org_id=org_id,
+            args_payload={"job_kind": job_kind, "payload": payload},
+        )
+        if job_kind == "action" and str(action_id).strip().lower() == _INTEGRITY_SWEEP_ACTION_ID:
             try:
                 sweep = run_integrity_sweep_job()
                 step_stdout = _to_text(sweep)
@@ -561,24 +900,74 @@ def run_scheduled_job(job_id: int) -> Dict[str, Any]:
                 step_stderr = _to_text(exc)
         else:
             try:
-                action = get_action(action_id)
-                arguments = normalize_args(action, [])
-                dispatch = resolve_action_dispatch(action, arguments)
                 agent_ids = resolve_agent_ids(_scheduler_client, target=target, group=None)
-                execution = execute_action(
-                    _scheduler_client,
-                    action_id,
-                    dispatch,
-                    agent_ids,
-                    execution_id=execution_id,
-                )
-                result_payload = execution.get("result") if isinstance(execution, dict) else {}
-                if isinstance(result_payload, dict) and isinstance(result_payload.get("results"), list):
-                    target_rows = [r for r in (result_payload.get("results") or []) if isinstance(r, dict)]
-                counts = _result_counts(result_payload, target_rows)
-                execution_status = _result_status(result_payload, target_rows)
-                step_status = execution_status
-                step_stdout = _to_text(execution)
+                if job_kind == "shell":
+                    shell_command, dispatch = _build_shell_dispatch(payload)
+                    execution = execute_action(
+                        _scheduler_client,
+                        "global-shell",
+                        dispatch,
+                        agent_ids,
+                        execution_id=execution_id,
+                    )
+                    result_payload = execution.get("result") if isinstance(execution, dict) else {}
+                    if isinstance(result_payload, dict) and isinstance(result_payload.get("results"), list):
+                        target_rows = [r for r in (result_payload.get("results") or []) if isinstance(r, dict)]
+                    counts = _result_counts(result_payload, target_rows)
+                    execution_status = _result_status(result_payload, target_rows)
+                    step_status = execution_status
+                    step_stdout = _to_text(
+                        {
+                            "kind": "shell",
+                            "command": shell_command,
+                            "shell": str(payload.get("shell") or "powershell"),
+                            "result": execution,
+                        }
+                    )
+                elif job_kind == "playbook":
+                    steps = _normalize_playbook_steps(payload)
+                    if not steps:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="playbook jobs require payload.steps with at least one step",
+                        )
+                    playbook_run = _execute_scheduled_playbook_steps(
+                        db=db,
+                        execution_id=int(execution_id),
+                        steps=steps,
+                        agent_ids=agent_ids,
+                    )
+                    target_rows = playbook_run.get("target_rows") or []
+                    counts = playbook_run.get("counts") or _result_counts({}, target_rows)
+                    execution_status = str(playbook_run.get("status") or "FAILED").upper()
+                    step_status = execution_status
+                    step_stdout = _to_text(
+                        {
+                            "kind": "playbook",
+                            "step_count": len(steps),
+                            "trace": playbook_run.get("trace") or [],
+                        }
+                    )
+                    if execution_status != "SUCCESS":
+                        step_stderr = "Scheduled playbook completed with failed or partial steps."
+                else:
+                    action = get_action(action_id)
+                    arguments = normalize_args(action, payload.get("args") if isinstance(payload, dict) else [])
+                    dispatch = resolve_action_dispatch(action, arguments)
+                    execution = execute_action(
+                        _scheduler_client,
+                        action_id,
+                        dispatch,
+                        agent_ids,
+                        execution_id=execution_id,
+                    )
+                    result_payload = execution.get("result") if isinstance(execution, dict) else {}
+                    if isinstance(result_payload, dict) and isinstance(result_payload.get("results"), list):
+                        target_rows = [r for r in (result_payload.get("results") or []) if isinstance(r, dict)]
+                    counts = _result_counts(result_payload, target_rows)
+                    execution_status = _result_status(result_payload, target_rows)
+                    step_status = execution_status
+                    step_stdout = _to_text(execution)
             except HTTPException as exc:
                 execution_status = "FAILED"
                 step_status = "FAILED"
@@ -598,7 +987,7 @@ def run_scheduled_job(job_id: int) -> Dict[str, Any]:
             if not step_stderr and execution_status != "SUCCESS":
                 step_stderr = _to_text(
                     (result_payload if isinstance(result_payload, dict) else {}).get("message")
-                    or "Scheduled action returned target failures."
+                    or ("Scheduled playbook returned target failures." if job_kind == "playbook" else "Scheduled action returned target failures.")
                 )
 
         db.execute(
@@ -657,7 +1046,7 @@ def run_scheduled_job(job_id: int) -> Dict[str, Any]:
         entity_type="scheduler_job",
         entity_id=str(job_id),
         detail=(
-            f"action={action_id}; target={target}; status={execution_status}; "
+            f"kind={job_kind}; action={action_id}; target={target}; status={execution_status}; "
             f"execution_id={execution_id}"
         ),
         org_id=org_id,
@@ -668,6 +1057,7 @@ def run_scheduled_job(job_id: int) -> Dict[str, Any]:
         "job_id": int(job_id),
         "execution_id": execution_id,
         "status": execution_status,
+        "job_kind": job_kind,
         "action_id": action_id,
         "target": target,
     }
@@ -677,6 +1067,8 @@ def create_job(
     *,
     name: str,
     playbook: str,
+    job_kind: str = "action",
+    payload: Optional[Dict[str, Any]] = None,
     target: str,
     cron: str,
     enabled: bool,
@@ -684,20 +1076,24 @@ def create_job(
     org_id: Optional[int],
 ) -> Dict[str, Any]:
     _parse_cron(cron)
+    normalized_kind = _normalize_job_kind(job_kind, default="action")
+    payload_json = _to_payload_json(payload)
     db = connect()
     try:
         inserted = db.execute(
             text(
                 """
                 INSERT INTO scheduled_jobs
-                (name, playbook, target, cron, enabled, require_approval, last_run, org_id)
-                VALUES (:name, :playbook, :target, :cron, :enabled, :require_approval, :last_run, :org_id)
+                (name, playbook, job_kind, payload_json, target, cron, enabled, require_approval, last_run, org_id)
+                VALUES (:name, :playbook, :job_kind, :payload_json, :target, :cron, :enabled, :require_approval, :last_run, :org_id)
                 RETURNING id
                 """
             ),
             {
                 "name": str(name).strip(),
                 "playbook": str(playbook).strip(),
+                "job_kind": normalized_kind,
+                "payload_json": payload_json,
                 "target": str(target).strip() or "all",
                 "cron": str(cron).strip(),
                 "enabled": bool(enabled),
@@ -723,6 +1119,8 @@ def update_job(
     *,
     name: Optional[str] = None,
     playbook: Optional[str] = None,
+    job_kind: Optional[str] = None,
+    payload: Optional[Dict[str, Any]] = None,
     target: Optional[str] = None,
     cron: Optional[str] = None,
     enabled: Optional[bool] = None,
@@ -749,6 +1147,10 @@ def update_job(
             updates["name"] = str(name).strip() or "Scheduled Policy"
         if playbook is not None:
             updates["playbook"] = str(playbook).strip()
+        if job_kind is not None:
+            updates["job_kind"] = _normalize_job_kind(job_kind, default="action")
+        if payload is not None:
+            updates["payload_json"] = _to_payload_json(payload)
         if target is not None:
             updates["target"] = str(target).strip() or "all"
         if cron is not None:
@@ -842,7 +1244,14 @@ def upsert_healthcheck_policy(
                 text(
                     """
                     UPDATE scheduled_jobs
-                    SET playbook=:playbook, target=:target, cron=:cron, enabled=:enabled, require_approval=false
+                    SET
+                        playbook=:playbook,
+                        job_kind='action',
+                        payload_json=NULL,
+                        target=:target,
+                        cron=:cron,
+                        enabled=:enabled,
+                        require_approval=false
                     WHERE id=:id
                     """
                 ),
@@ -859,8 +1268,8 @@ def upsert_healthcheck_policy(
                 text(
                     """
                     INSERT INTO scheduled_jobs
-                    (name, playbook, target, cron, enabled, require_approval, last_run, org_id)
-                    VALUES (:name, :playbook, :target, :cron, :enabled, false, :last_run, :org_id)
+                    (name, playbook, job_kind, payload_json, target, cron, enabled, require_approval, last_run, org_id)
+                    VALUES (:name, :playbook, 'action', NULL, :target, :cron, :enabled, false, :last_run, :org_id)
                     RETURNING id
                     """
                 ),
@@ -922,7 +1331,14 @@ def upsert_integrity_sweep_policy(
                 text(
                     """
                     UPDATE scheduled_jobs
-                    SET playbook=:playbook, target=:target, cron=:cron, enabled=:enabled, require_approval=false
+                    SET
+                        playbook=:playbook,
+                        job_kind='action',
+                        payload_json=NULL,
+                        target=:target,
+                        cron=:cron,
+                        enabled=:enabled,
+                        require_approval=false
                     WHERE id=:id
                     """
                 ),
@@ -939,8 +1355,8 @@ def upsert_integrity_sweep_policy(
                 text(
                     """
                     INSERT INTO scheduled_jobs
-                    (name, playbook, target, cron, enabled, require_approval, last_run, org_id)
-                    VALUES (:name, :playbook, :target, :cron, :enabled, false, :last_run, :org_id)
+                    (name, playbook, job_kind, payload_json, target, cron, enabled, require_approval, last_run, org_id)
+                    VALUES (:name, :playbook, 'action', NULL, :target, :cron, :enabled, false, :last_run, :org_id)
                     RETURNING id
                     """
                 ),

@@ -15,7 +15,7 @@ const lazyWithPreload = (loader) => {
 };
 
 const loadLogin = memoizedLoader(() => import("../pages/Login"));
-const loadPatchWorkbench = memoizedLoader(() => import("../pages/PatchWorkbench"));
+const loadPatchWorkbench = memoizedLoader(() => import("../pages/PatchWorkbenchMin"));
 
 export const Login = lazyWithPreload(loadLogin);
 export const PatchWorkbench = lazyWithPreload(loadPatchWorkbench);

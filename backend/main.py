@@ -17,7 +17,7 @@ _PATCH_WORKBENCH_MODE = str(os.getenv("C2F_PATCH_WORKBENCH_MODE", "false")).stri
 
 # Import only the required API modules for the selected runtime surface.
 if _PATCH_WORKBENCH_MODE:
-    from api import actions, agents, auth, executions, ops, system, vulnerabilities, ws_exec
+    from api import actions, agents, approvals, auth, executions, ops, playbooks, remediation, scheduler, system, vulnerabilities, ws_exec
 else:
     from api import actions, agents, alerts, analytics, approvals, audit, auth, cases, changes, dashboard, executions, forensics, governance, incidents, integration, ioc, ops, orgs, playbooks, remediation, scheduler, system, vulnerabilities, ws, ws_exec
 from core.http_security import (
@@ -105,6 +105,10 @@ _INCLUDE_HSTS = _parse_bool(_SECURITY.get("enable_hsts"), True)
 _MAX_REQUEST_BYTES = int(_SECURITY.get("max_request_body_bytes", 10 * 1024 * 1024))
 _UPLOAD_LIMIT_BYTES = int(_SECURITY.get("max_upload_body_bytes", 25 * 1024 * 1024))
 _ENABLE_V1_SOAR = _parse_bool(os.getenv("C2F_ENABLE_V1_SOAR"), True)
+_PATCH_WORKBENCH_ENABLE_SCHEDULER = _parse_bool(
+    os.getenv("C2F_PATCH_WORKBENCH_ENABLE_SCHEDULER"),
+    True,
+)
 ## _CUTOVER_TEST_MODE = _parse_bool(os.getenv("C2F_CUTOVER_TEST_MODE"), False)
 ## _ENABLE_V2_SOAR = _parse_bool(os.getenv("C2F_ENABLE_V2_SOAR"), False)
 _ENABLE_V2_SOAR = False
@@ -122,6 +126,8 @@ _PATCH_WORKBENCH_PUBLIC_GET_PATHS = {
     "/ops/c2f-logo.svg",
 }
 _PATCH_WORKBENCH_ALLOWED_HTTP = {
+    ("GET", "/api/actions"),
+    ("GET", "/api/actions/connector-status"),
     ("GET", "/api/agents"),
     ("GET", "/api/agents/groups"),
     ("GET", "/api/auth/me"),
@@ -130,15 +136,27 @@ _PATCH_WORKBENCH_ALLOWED_HTTP = {
     ("GET", "/api/auth/session/reset"),
     ("GET", "/api/executions"),
     ("GET", "/api/executions/health"),
+    ("GET", "/api/playbooks"),
+    ("GET", "/api/scheduler/jobs"),
     ("GET", "/api/system/version"),
     ("GET", "/api/vulnerabilities"),
     ("POST", "/api/actions/global-shell"),
     ("POST", "/api/actions/global-shell/assist"),
+    ("POST", "/api/approvals/request"),
     ("POST", "/api/auth/login"),
     ("POST", "/api/auth/logout"),
+    ("POST", "/api/playbooks"),
+    ("POST", "/api/playbooks/execute"),
+    ("POST", "/api/playbooks/generate"),
+    ("POST", "/api/playbooks/seed-defaults"),
+    ("POST", "/api/remediate"),
+    ("POST", "/api/scheduler/jobs"),
 }
 _PATCH_WORKBENCH_EXECUTION_DETAIL_RE = re.compile(r"^/api/executions/\d+$")
 _PATCH_WORKBENCH_EXECUTION_ACTION_RE = re.compile(r"^/api/executions/\d+/(control|retry-failed)$")
+_PATCH_WORKBENCH_PLAYBOOK_DETAIL_RE = re.compile(r"^/api/playbooks/[^/]+$")
+_PATCH_WORKBENCH_SCHEDULER_JOB_RE = re.compile(r"^/api/scheduler/jobs/\d+$")
+_PATCH_WORKBENCH_SCHEDULER_RUN_NOW_RE = re.compile(r"^/api/scheduler/jobs/\d+/run-now$")
 
 ## if _CUTOVER_TEST_MODE:
 ##     # Cutover test mode intentionally disables v1 SOAR APIs and fallback signaling.
@@ -187,7 +205,13 @@ def _patch_workbench_http_allowed(method: str, path: str) -> bool:
         return True
     if request_method == "GET" and _PATCH_WORKBENCH_EXECUTION_DETAIL_RE.match(request_path):
         return True
+    if request_method == "GET" and _PATCH_WORKBENCH_PLAYBOOK_DETAIL_RE.match(request_path):
+        return True
     if request_method == "POST" and _PATCH_WORKBENCH_EXECUTION_ACTION_RE.match(request_path):
+        return True
+    if request_method == "PATCH" and _PATCH_WORKBENCH_SCHEDULER_JOB_RE.match(request_path):
+        return True
+    if request_method == "POST" and _PATCH_WORKBENCH_SCHEDULER_RUN_NOW_RE.match(request_path):
         return True
     return False
 
@@ -243,7 +267,11 @@ async def _register_ws_loop():
     except Exception as exc:
         logger.exception("Startup execution reconciliation failed: %s", exc)
     if _PATCH_WORKBENCH_MODE:
-        logger.info("Patch Workbench mode enabled: scheduler startup skipped.")
+        if _PATCH_WORKBENCH_ENABLE_SCHEDULER:
+            start_scheduler()
+            logger.info("Patch Workbench mode enabled: scheduler startup active.")
+        else:
+            logger.info("Patch Workbench mode enabled: scheduler startup skipped.")
     else:
         start_scheduler()
 
@@ -259,7 +287,7 @@ async def _shutdown_background_services():
         await close_redis()
     except Exception as exc:
         logger.exception("Redis WS bus shutdown failed: %s", exc)
-    if not _PATCH_WORKBENCH_MODE:
+    if (not _PATCH_WORKBENCH_MODE) or _PATCH_WORKBENCH_ENABLE_SCHEDULER:
         stop_scheduler()
 
 
@@ -341,6 +369,10 @@ if _PATCH_WORKBENCH_MODE:
     app.include_router(actions.router, prefix="/api", tags=["Actions"])
     app.include_router(auth.router, prefix="/api", tags=["Auth"])
     app.include_router(agents.router, prefix="/api/agents", tags=["Agents"])
+    app.include_router(approvals.router, prefix="/api", tags=["Approvals"])
+    app.include_router(playbooks.router, prefix="/api/playbooks", tags=["Playbooks"])
+    app.include_router(remediation.router, prefix="/api/remediate", tags=["Remediation"])
+    app.include_router(scheduler.router, prefix="/api", tags=["Scheduler"])
     app.include_router(system.router, prefix="/api", tags=["System"])
     app.include_router(vulnerabilities.router, prefix="/api", tags=["Vulnerabilities"])
     app.include_router(executions.router, prefix="/api", tags=["Executions"])

@@ -4,6 +4,7 @@ import RequireAuth from "./components/RequireAuth";
 import { Login, PatchWorkbench } from "./routes/minLazyRoutes";
 import "./index-base.css";
 import "./styles/patch-workbench.css";
+import "./styles/patch-workbench-min.css";
 
 export default function AppMin() {
   useEffect(() => {

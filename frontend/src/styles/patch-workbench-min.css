@@ -1,0 +1,136 @@
+body.patch-min-ui .card,
+body.patch-min-ui .mission-card,
+body.patch-min-ui .stat-card,
+body.patch-min-ui .kpi-card,
+body.patch-min-ui .list-item,
+body.patch-min-ui .table-scroll,
+body.patch-min-ui .empty-state {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(246, 251, 255, 0.99)) !important;
+  border-color: rgba(0, 78, 134, 0.18) !important;
+  box-shadow: 0 10px 22px rgba(7, 52, 93, 0.08) !important;
+  color: #12314f;
+}
+
+body.patch-min-ui .page-header h2,
+body.patch-min-ui h2,
+body.patch-min-ui h3,
+body.patch-min-ui .mission-value,
+body.patch-min-ui .stat-value,
+body.patch-min-ui .kv-value,
+body.patch-min-ui th,
+body.patch-min-ui td,
+body.patch-min-ui .table,
+body.patch-min-ui table {
+  color: #12314f;
+}
+
+body.patch-min-ui .muted,
+body.patch-min-ui .meta-line,
+body.patch-min-ui .mission-meta,
+body.patch-min-ui .mission-label,
+body.patch-min-ui .stat-label,
+body.patch-min-ui .stat-sub {
+  color: #607b96 !important;
+}
+
+body.patch-min-ui .table thead,
+body.patch-min-ui table thead,
+body.patch-min-ui .table-scroll thead th {
+  background: #eef5fd !important;
+  color: #3f5e7d !important;
+}
+
+body.patch-min-ui .table tbody tr:hover,
+body.patch-min-ui table tbody tr:hover {
+  background: rgba(0, 119, 200, 0.06) !important;
+}
+
+body.patch-min-ui .table tbody tr.selected,
+body.patch-min-ui table tbody tr.selected {
+  background: rgba(0, 119, 200, 0.12) !important;
+}
+
+body.patch-min-ui .input,
+body.patch-min-ui textarea.input,
+body.patch-min-ui select.input {
+  background: #ffffff;
+  border-color: rgba(0, 78, 134, 0.24);
+  color: #12314f;
+}
+
+body.patch-min-ui .input::placeholder,
+body.patch-min-ui textarea.input::placeholder {
+  color: rgba(88, 115, 140, 0.62);
+}
+
+body.patch-min-ui .patch-workbench-mode-pane .page {
+  padding: 0;
+  margin: 0;
+}
+
+body.patch-min-ui .patch-workbench-mode-pane .page-header {
+  padding-top: 0;
+}
+
+body.patch-min-ui .actions-pro {
+  --actions-border: rgba(0, 78, 134, 0.22);
+  --actions-border-soft: rgba(0, 78, 134, 0.14);
+  --actions-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(246, 251, 255, 0.99));
+  --actions-surface-soft: #f7fbff;
+  --actions-shadow: 0 10px 22px rgba(7, 52, 93, 0.08);
+  --actions-accent: rgba(0, 119, 200, 0.86);
+  --actions-accent-soft: rgba(0, 119, 200, 0.16);
+}
+
+body.patch-min-ui .actions-pro .actions-catalog-stat,
+body.patch-min-ui .actions-pro .actions-catalog-selected,
+body.patch-min-ui .actions-pro .actions-selection-strip.compact .chip,
+body.patch-min-ui .actions-pro .actions-inline-status,
+body.patch-min-ui .actions-pro .code-block {
+  background: #f2f8ff !important;
+  border-color: rgba(0, 78, 134, 0.2) !important;
+  color: #12314f !important;
+}
+
+body.patch-min-ui .actions-pro .actions-selection-strip.compact .panel-collapse-btn {
+  border-color: rgba(174, 64, 64, 0.28);
+  color: #9b3232;
+  background: rgba(219, 92, 92, 0.08);
+}
+
+body.patch-min-ui .actions-pro .status-pill,
+body.patch-min-ui .status-pill {
+  border-color: rgba(0, 78, 134, 0.2);
+}
+
+body.patch-min-ui .actions-pro .actions-catalog-risk.risk-high,
+body.patch-min-ui .status-pill.failed {
+  background: rgba(207, 63, 63, 0.1) !important;
+  color: #9b3232 !important;
+  border-color: rgba(207, 63, 63, 0.24) !important;
+}
+
+body.patch-min-ui .actions-pro .actions-catalog-risk.risk-medium,
+body.patch-min-ui .status-pill.pending {
+  background: rgba(201, 135, 23, 0.12) !important;
+  color: #8b5f14 !important;
+  border-color: rgba(201, 135, 23, 0.24) !important;
+}
+
+body.patch-min-ui .actions-pro .actions-catalog-risk.risk-low,
+body.patch-min-ui .status-pill.success {
+  background: rgba(23, 143, 88, 0.12) !important;
+  color: #0f7348 !important;
+  border-color: rgba(23, 143, 88, 0.26) !important;
+}
+
+body.patch-min-ui .actions-pro .actions-catalog-risk.risk-neutral,
+body.patch-min-ui .status-pill.neutral {
+  background: rgba(0, 78, 134, 0.08) !important;
+  color: #3c5d7e !important;
+  border-color: rgba(0, 78, 134, 0.2) !important;
+}
+
+body.patch-min-ui .patch-workbench-switcher-card {
+  margin-top: 2px;
+}

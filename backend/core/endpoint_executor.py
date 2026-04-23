@@ -6369,6 +6369,7 @@ catch {
                 try:
                     result = self._execute_target(action_id, action_args, target, ctx)
                 except Exception as exc:
+                    err_text = str(exc or "").strip() or f"{aid or action_id} execution raised an unexpected endpoint error"
                     result = {
                         "agent_id": target["agent_id"],
                         "agent_name": target["agent_name"],
@@ -6376,7 +6377,7 @@ catch {
                         "platform": target["platform"],
                         "ok": False,
                         "stdout": "",
-                        "stderr": str(exc),
+                        "stderr": err_text,
                     }
                 results.append(result)
                 if on_progress:
@@ -6402,6 +6403,7 @@ catch {
                     try:
                         result = fut.result()
                     except Exception as exc:
+                        err_text = str(exc or "").strip() or f"{aid or action_id} execution raised an unexpected endpoint error"
                         result = {
                             "agent_id": target["agent_id"],
                             "agent_name": target["agent_name"],
@@ -6409,7 +6411,7 @@ catch {
                             "platform": target["platform"],
                             "ok": False,
                             "stdout": "",
-                            "stderr": str(exc),
+                            "stderr": err_text,
                         }
                     ordered_results[idx] = result
                     if on_progress:
@@ -6939,6 +6941,25 @@ catch {
             stdout=stdout,
             stderr=stderr,
         )
+        stdout_text = str(stdout or "")
+        stderr_text = str(stderr or "")
+        if status_code != 0:
+            if not stderr_text.strip() and stdout_text.strip():
+                preview = [line.strip() for line in stdout_text.splitlines() if line.strip()]
+                if preview:
+                    stderr_text = preview[-1]
+            if not stderr_text.strip() and not stdout_text.strip():
+                fallback_reason = (
+                    f"{logical_aid or aid} failed on endpoint {target['agent_id']}"
+                    f" ({target['platform']}, exit_code={status_code}) without explicit stdout/stderr"
+                )
+                if target["platform"] == "linux":
+                    creds = self._linux_credentials_for_agent_target(
+                        agent_id=str(target.get("agent_id") or ""),
+                    )
+                    if not str(creds.get("username") or "").strip():
+                        fallback_reason += "; Linux connector username is missing"
+                stderr_text = fallback_reason
 
         return {
             "agent_id": target["agent_id"],
@@ -6947,8 +6968,8 @@ catch {
             "platform": target["platform"],
             "ok": status_code == 0,
             "status_code": status_code,
-            "stdout": stdout,
-            "stderr": stderr,
+            "stdout": stdout_text,
+            "stderr": stderr_text,
         }
 
     def _emit_target_log(self, target: Dict[str, Any], context: Dict[str, Any], lines: List[str]) -> None:
@@ -9689,12 +9710,46 @@ catch {
         safe_action = _sh_quote(action_id or "")
         safe_agent = _sh_quote(agent_id)
         safe_exec = _sh_quote(exec_tag)
+        linux_creds = self._linux_credentials_for_agent_target(agent_id=agent_id)
+        sudo_password = _sh_quote(linux_creds.get("password") or "")
         return (
             "set -e; "
             "logfile='/var/tmp/click2fix_executions.log'; "
-            f"exec_id={safe_exec}; agent_id={safe_agent}; action_id={safe_action}; "
+            f"exec_id={safe_exec}; agent_id={safe_agent}; action_id={safe_action}; sudo_password={sudo_password}; "
+            "c2f_askpass=''; "
+            "if [ -n \"$sudo_password\" ]; then "
+            "c2f_askpass=\"/tmp/c2f_askpass_${exec_id}_${agent_id}.sh\"; "
+            "cat > \"$c2f_askpass\" <<'C2F_ASKPASS'\n"
+            "#!/bin/sh\n"
+            "printf '%s\\n' \"$C2F_SUDO_PASSWORD\"\n"
+            "C2F_ASKPASS\n"
+            "chmod 700 \"$c2f_askpass\" >/dev/null 2>&1 || true; "
+            "fi; "
+            "c2f_cleanup(){ if [ -n \"$c2f_askpass\" ] && [ -f \"$c2f_askpass\" ]; then rm -f \"$c2f_askpass\" >/dev/null 2>&1 || true; fi; }; "
+            "trap c2f_cleanup EXIT; "
             "user=$(id -un); ts=$(date -Iseconds); "
-            "c2f_log_append(){ line=\"$1\"; if printf '%s\\n' \"$line\" | tee -a \"$logfile\" >/dev/null 2>&1; then return 0; fi; if command -v sudo >/dev/null 2>&1; then printf '%s\\n' \"$line\" | sudo -n tee -a \"$logfile\" >/dev/null 2>&1 || true; fi; }; "
+            "c2f_exec(){ env \"$@\"; }; "
+            "c2f_sudo_exec(){ "
+            "if [ \"$#\" -eq 0 ]; then return 0; fi; "
+            "if [ \"$(id -u)\" = \"0\" ]; then c2f_exec \"$@\"; return $?; fi; "
+            "if ! command -v sudo >/dev/null 2>&1; then c2f_exec \"$@\"; return $?; fi; "
+            "if command sudo -n true >/dev/null 2>&1; then command sudo -n \"$@\"; return $?; fi; "
+            "if [ -n \"$sudo_password\" ]; then "
+            "if [ -n \"$c2f_askpass\" ] && [ -x \"$c2f_askpass\" ]; then "
+            "C2F_SUDO_PASSWORD=\"$sudo_password\" SUDO_ASKPASS=\"$c2f_askpass\" command sudo -A -p '' \"$@\"; rc=$?; "
+            "if [ \"$rc\" -eq 0 ]; then return 0; fi; "
+            "fi; "
+            "if [ -p /dev/stdin ]; then "
+            "echo 'sudo credentials require SUDO_ASKPASS or NOPASSWD for piped command execution' >&2; "
+            "return 1; "
+            "fi; "
+            "printf '%s\\n' \"$sudo_password\" | command sudo -S -p '' \"$@\"; return $?; "
+            "fi; "
+            "command sudo \"$@\"; return $?; "
+            "}; "
+            "sudo(){ c2f_sudo_exec \"$@\"; }; "
+            "sudo_exec(){ c2f_sudo_exec \"$@\"; }; "
+            "c2f_log_append(){ line=\"$1\"; if printf '%s\\n' \"$line\" | tee -a \"$logfile\" >/dev/null 2>&1; then return 0; fi; if command -v sudo >/dev/null 2>&1; then printf '%s\\n' \"$line\" | c2f_sudo_exec tee -a \"$logfile\" >/dev/null 2>&1 || true; fi; }; "
             "c2f_log_append \"$ts exec=$exec_id agent=$agent_id action=$action_id user=$user status=START\"; "
             "c2f_evidence(){ msg=\"$*\"; ts=$(date -Iseconds); c2f_log_append \"$ts exec=$exec_id agent=$agent_id action=$action_id user=$user evidence=$msg\"; }; "
             f"{inner}; "
@@ -9832,7 +9887,19 @@ catch {
                 "all_mode=0; "
                 "if [ -z \"$(printf '%s' \"$pkgs\" | tr -d '[:space:]')\" ]; then all_mode=1; fi; "
                 "if [ \"$pkgs\" = \"all\" ] || [ \"$pkgs\" = \"*\" ]; then all_mode=1; fi; "
-                "sudo apt-get update -y >/tmp/c2f_pkg_update.log 2>&1; "
+                "apt_lock_retry=0; "
+                "while true; do "
+                "sudo apt-get update -y >/tmp/c2f_pkg_update.log 2>&1 && break; "
+                "if grep -Eiq 'could not get lock|unable to lock directory|dpkg frontend lock|is another process using it' /tmp/c2f_pkg_update.log; then "
+                "apt_lock_retry=$((apt_lock_retry+1)); "
+                "c2f_evidence apt_lock_wait_package_update_attempt=$apt_lock_retry; "
+                "if [ \"$apt_lock_retry\" -ge 8 ]; then cat /tmp/c2f_pkg_update.log >&2; exit 100; fi; "
+                "sleep 8; "
+                "continue; "
+                "fi; "
+                "cat /tmp/c2f_pkg_update.log >&2; "
+                "exit 100; "
+                "done; "
                 "applicable=0; installable=0; installed=0; failed=0; remaining=0; skipped=0; "
                 "skipped_not_installed=0; skipped_no_change=0; idx=0; "
                 "if [ \"$all_mode\" -eq 1 ]; then "
@@ -10016,8 +10083,8 @@ catch {
                 f"ioc_set={ioc_set}; "
                 f"scan_type={_sh_quote(scan_type)}; "
                 f"scan_label={_sh_quote(scan_label)}; "
-                "report_dir='/var/tmp/click2fix_reports'; "
-                "sudo mkdir -p \"$report_dir\"; "
+                "report_dir='/tmp/click2fix_reports'; "
+                "mkdir -p \"$report_dir\"; "
                 f"report_path=\"$report_dir/{report_prefix}-${{exec_id}}.txt\"; "
                 "scan_started=$(date -Iseconds); "
                 "patterns='powershell -enc|rundll32|mimikatz|certutil -urlcache|base64 -d|curl[[:space:]].*https?://|nc[[:space:]]+-e'; "
@@ -10037,7 +10104,7 @@ catch {
 	                "printf '%s\\n' \"$hits\"; "
 	                "echo \"-- recommendation --\"; "
 	                "echo \"Investigate matched commands, validate legitimacy, and isolate host if malicious behavior is confirmed.\"; "
-	                "} | sudo tee \"$report_path\" >/dev/null; "
+	                "} > \"$report_path\"; "
 	                "idx=0; "
 	                "while IFS= read -r line; do "
 	                "[ -z \"$line\" ] && continue; "
@@ -10069,8 +10136,8 @@ catch {
             inner = (
                 f"scan_path={scan_path}; "
                 "if [ ! -e \"$scan_path\" ]; then echo \"scan path not found: $scan_path\" >&2; exit 1; fi; "
-                "report_dir='/var/tmp/click2fix_reports'; "
-                "sudo mkdir -p \"$report_dir\"; "
+                "report_dir='/tmp/click2fix_reports'; "
+                "mkdir -p \"$report_dir\"; "
                 "report_path=\"$report_dir/yara-scan-${exec_id}.txt\"; "
                 "scan_started=$(date -Iseconds); "
                 "yara_engine='fallback-grep'; "
@@ -10107,7 +10174,7 @@ catch {
 	                "printf '%s\\n' \"$hit_lines\"; "
 	                "echo \"-- recommendation --\"; "
 	                "echo \"Validate each matched file, quarantine untrusted artifacts, and hunt for related persistence.\"; "
-	                "} | sudo tee \"$report_path\" >/dev/null; "
+	                "} > \"$report_path\"; "
 	                "idx=0; "
 	                "while IFS= read -r line; do "
 	                "[ -z \"$line\" ] && continue; "
@@ -10132,8 +10199,8 @@ catch {
             return self._wrap_linux_script(aid, inner, context or {}, target or {})
         if aid == "collect-forensics":
             inner = (
-                "report_dir='/var/tmp/click2fix_reports'; "
-                "sudo mkdir -p \"$report_dir\"; "
+                "report_dir='/tmp/click2fix_reports'; "
+                "mkdir -p \"$report_dir\"; "
                 "report_path=\"$report_dir/forensics-${exec_id}.txt\"; "
                 "scan_started=$(date -Iseconds); "
                 "proc_rows=$(ps aux --sort=-%cpu 2>/dev/null | head -n 120 || true); "
@@ -10155,7 +10222,7 @@ catch {
                 "echo \"-- connections --\"; printf '%s\\n' \"$conn_rows\"; "
                 "echo \"-- logged_users --\"; printf '%s\\n' \"$user_rows\"; "
                 "echo \"-- startup_services --\"; printf '%s\\n' \"$startup_rows\"; "
-                "} | sudo tee \"$report_path\" >/dev/null; "
+                "} > \"$report_path\"; "
                 "c2f_evidence scan_type=forensics; "
                 "c2f_evidence scan_engine=linux-native; "
                 "c2f_evidence \"scan_report_path=$report_path\"; "
@@ -10169,8 +10236,8 @@ catch {
             return self._wrap_linux_script(aid, inner, context or {}, target or {})
         if aid == "collect-memory":
             inner = (
-                "report_dir='/var/tmp/click2fix_reports'; "
-                "sudo mkdir -p \"$report_dir\"; "
+                "report_dir='/tmp/click2fix_reports'; "
+                "mkdir -p \"$report_dir\"; "
                 "report_path=\"$report_dir/memory-${exec_id}.txt\"; "
                 "scan_started=$(date -Iseconds); "
                 "meminfo=$(cat /proc/meminfo 2>/dev/null || true); "
@@ -10188,7 +10255,7 @@ catch {
                 "echo \"top_process_count=$top_count\"; "
                 "echo \"-- meminfo --\"; printf '%s\\n' \"$meminfo\"; "
                 "echo \"-- top_processes --\"; printf '%s\\n' \"$top_mem\"; "
-                "} | sudo tee \"$report_path\" >/dev/null; "
+                "} > \"$report_path\"; "
                 "c2f_evidence scan_type=memory; "
                 "c2f_evidence scan_engine=linux-native; "
                 "c2f_evidence \"scan_report_path=$report_path\"; "
@@ -10227,8 +10294,8 @@ catch {
             scope = _sh_quote(args[0] if args else "quick")
             inner = (
                 f"scan_scope={scope}; "
-                "report_dir='/var/tmp/click2fix_reports'; "
-                "sudo mkdir -p \"$report_dir\"; "
+                "report_dir='/tmp/click2fix_reports'; "
+                "mkdir -p \"$report_dir\"; "
                 "report_path=\"$report_dir/malware-scan-${exec_id}.txt\"; "
                 "scan_started=$(date -Iseconds); "
                 "engine='heuristic-process-patterns'; "
@@ -10263,7 +10330,7 @@ catch {
                 "printf '%s\\n' \"$hits\"; "
                 "echo '-- recommendation --'; "
                 "echo 'Investigate matched artifacts/processes, isolate endpoint if malicious, and remove persistence.'; "
-                "} | sudo tee \"$report_path\" >/dev/null; "
+                "} > \"$report_path\"; "
                 "idx=0; "
                 "while IFS= read -r line; do "
                 "[ -z \"$line\" ] && continue; "
@@ -10289,8 +10356,8 @@ catch {
             return self._wrap_linux_script(aid, inner, context or {}, target or {})
         if aid == "threat-hunt-persistence":
             inner = (
-                "report_dir='/var/tmp/click2fix_reports'; "
-                "sudo mkdir -p \"$report_dir\"; "
+                "report_dir='/tmp/click2fix_reports'; "
+                "mkdir -p \"$report_dir\"; "
                 "report_path=\"$report_dir/persistence-hunt-${exec_id}.txt\"; "
                 "scan_started=$(date -Iseconds); "
                 "cron_rows=$( (crontab -l 2>/dev/null; cat /etc/crontab 2>/dev/null; grep -RIna -E '.' /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly 2>/dev/null | head -n 200) || true ); "
@@ -10314,7 +10381,7 @@ catch {
                 "printf '%s\\n' \"$hits\"; "
                 "echo '-- recommendation --'; "
                 "echo 'Validate startup/task entries, remove unauthorized persistence, and quarantine referenced payloads.'; "
-                "} | sudo tee \"$report_path\" >/dev/null; "
+                "} > \"$report_path\"; "
                 "idx=0; "
                 "while IFS= read -r line; do "
                 "[ -z \"$line\" ] && continue; "

@@ -38,10 +38,12 @@ const VULN_SEVERITY_ORDER = {
 const HISTORY_STATUS_OPTIONS = [
   { value: "all", label: "All statuses" },
   { value: "success", label: "Success" },
+  { value: "no_change", label: "No Change" },
   { value: "partial", label: "Partial" },
   { value: "running", label: "Running/Queued" },
-  { value: "retryable", label: "Retryable" },
-  { value: "failed", label: "Failed" },
+  { value: "endpoint_issue", label: "Endpoint-side issue" },
+  { value: "retryable", label: "Retryable/Busy/Reboot" },
+  { value: "failed", label: "Tool failure" },
 ];
 const HISTORY_MODULE_OPTIONS = [
   { value: "all", label: "All modules" },
@@ -86,6 +88,277 @@ const HISTORY_WAITING_REBOOT_MARKERS = [
   "reboot required",
   "reboot pending",
   "reboot_required=true",
+];
+const HISTORY_BUSY_MARKERS = [
+  "another process is using",
+  "another process has locked",
+  "already running",
+  "operation is already in progress",
+  "resource busy",
+];
+const HISTORY_PRIVILEGE_MARKERS = [
+  "sudo: a terminal is required",
+  "sudo: a password is required",
+  "permission denied",
+  "access is denied",
+  "requires sudo privileges",
+  "requires sudo or root",
+  "run_as_system=true",
+  "elevation required",
+];
+const HISTORY_COMMAND_ERROR_MARKERS = [
+  "command not found",
+  "is not recognized as an internal or external command",
+  "parsererror",
+  "unexpected token",
+  "invalid option",
+  "unknown option",
+  "missing argument",
+  "requires command argument",
+];
+const HISTORY_TOOL_FAILURE_MARKERS = [
+  "traceback",
+  "nameerror",
+  "typeerror",
+  "attributeerror",
+  "keyerror",
+  "valueerror",
+  "failed to prepare endpoint script",
+  "script missing",
+  "internal server error",
+];
+const BUILTIN_COMMAND_LIBRARY = [
+  {
+    id: "linux_apt_update",
+    label: "Linux Apt: update",
+    shells: ["bash", "sh"],
+    runAsSystem: true,
+    command: "apt-get update",
+  },
+  {
+    id: "linux_apt_upgrade",
+    label: "Linux Apt: upgrade",
+    shells: ["bash", "sh"],
+    runAsSystem: true,
+    command: "apt-get upgrade -y",
+  },
+  {
+    id: "linux_apt_refresh_upgrade_cleanup",
+    label: "Linux Apt: update + upgrade + autoremove",
+    shells: ["bash", "sh"],
+    runAsSystem: true,
+    command: "apt-get update && apt-get upgrade -y && apt-get autoremove -y",
+  },
+  {
+    id: "linux_apt_full_upgrade",
+    label: "Linux Apt: full-upgrade",
+    shells: ["bash", "sh"],
+    runAsSystem: true,
+    command: "apt-get update && apt-get full-upgrade -y",
+  },
+  {
+    id: "linux_apt_autoremove",
+    label: "Linux Apt: autoremove",
+    shells: ["bash", "sh"],
+    runAsSystem: true,
+    command: "apt-get autoremove -y",
+  },
+  {
+    id: "linux_dnf_upgrade",
+    label: "Linux DNF: upgrade",
+    shells: ["bash", "sh"],
+    runAsSystem: true,
+    command: "dnf upgrade -y",
+  },
+  {
+    id: "linux_yum_update",
+    label: "Linux YUM: update",
+    shells: ["bash", "sh"],
+    runAsSystem: true,
+    command: "yum update -y",
+  },
+  {
+    id: "linux_pacman_update",
+    label: "Linux Pacman: full sync update",
+    shells: ["bash", "sh"],
+    runAsSystem: true,
+    command: "pacman -Syu --noconfirm",
+  },
+  {
+    id: "linux_zypper_update",
+    label: "Linux Zypper: update",
+    shells: ["bash", "sh"],
+    runAsSystem: true,
+    command: "zypper update -y",
+  },
+  {
+    id: "linux_list_upgradable",
+    label: "Linux: list upgradable packages",
+    shells: ["bash", "sh"],
+    runAsSystem: false,
+    command: "apt list --upgradable",
+  },
+  {
+    id: "linux_kernel_version",
+    label: "Linux: current kernel version",
+    shells: ["bash", "sh"],
+    runAsSystem: false,
+    command: "uname -r",
+  },
+  {
+    id: "windows_usoclient_scan",
+    label: "Windows: UsoClient StartScan",
+    shells: ["powershell", "cmd"],
+    runAsSystem: true,
+    command: "UsoClient StartScan",
+  },
+  {
+    id: "windows_usoclient_download",
+    label: "Windows: UsoClient StartDownload",
+    shells: ["powershell", "cmd"],
+    runAsSystem: true,
+    command: "UsoClient StartDownload",
+  },
+  {
+    id: "windows_usoclient_install",
+    label: "Windows: UsoClient StartInstall",
+    shells: ["powershell", "cmd"],
+    runAsSystem: true,
+    command: "UsoClient StartInstall",
+  },
+  {
+    id: "windows_usoclient_download_install",
+    label: "Windows: UsoClient download + install",
+    shells: ["powershell", "cmd"],
+    runAsSystem: true,
+    command: "UsoClient StartDownload && UsoClient StartInstall",
+  },
+  {
+    id: "windows_usoclient_restart",
+    label: "Windows: UsoClient restart device",
+    shells: ["powershell", "cmd"],
+    runAsSystem: true,
+    command: "UsoClient RestartDevice",
+  },
+  {
+    id: "windows_wuauclt_detectnow",
+    label: "Windows: wuauclt /detectnow",
+    shells: ["powershell", "cmd"],
+    runAsSystem: true,
+    command: "wuauclt /detectnow",
+  },
+  {
+    id: "windows_wuauclt_updatenow",
+    label: "Windows: wuauclt /updatenow",
+    shells: ["powershell", "cmd"],
+    runAsSystem: true,
+    command: "wuauclt /updatenow",
+  },
+  {
+    id: "windows_wuauclt_scan_install",
+    label: "Windows: wuauclt detect + update now",
+    shells: ["powershell", "cmd"],
+    runAsSystem: true,
+    command: "wuauclt /detectnow && wuauclt /updatenow",
+  },
+  {
+    id: "windows_get_hotfix",
+    label: "Windows PS: Get-Hotfix",
+    shells: ["powershell"],
+    runAsSystem: false,
+    command: "Get-Hotfix",
+  },
+  {
+    id: "windows_get_wu_reboot_status",
+    label: "Windows PS: Get-WURebootStatus",
+    shells: ["powershell"],
+    runAsSystem: false,
+    command: "Get-WURebootStatus",
+  },
+  {
+    id: "windows_get_windows_update",
+    label: "Windows PS: Get-WindowsUpdate",
+    shells: ["powershell"],
+    runAsSystem: false,
+    command: "Get-WindowsUpdate -MicrosoftUpdate",
+  },
+  {
+    id: "windows_install_windows_update",
+    label: "Windows PS: Install-WindowsUpdate",
+    shells: ["powershell"],
+    runAsSystem: true,
+    command: "Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -AutoReboot",
+  },
+  {
+    id: "windows_get_wu_history",
+    label: "Windows PS: Get-WUHistory",
+    shells: ["powershell"],
+    runAsSystem: false,
+    command: "Get-WUHistory",
+  },
+  {
+    id: "windows_reset_wu_components",
+    label: "Windows PS: Reset-WUComponents",
+    shells: ["powershell"],
+    runAsSystem: true,
+    command: "Reset-WUComponents -Verbose",
+  },
+  {
+    id: "windows_add_microsoft_update",
+    label: "Windows PS: Add-WUServiceManager",
+    shells: ["powershell"],
+    runAsSystem: true,
+    command: "Add-WUServiceManager -MicrosoftUpdate",
+  },
+  {
+    id: "windows_hide_kb",
+    label: "Windows PS: Hide-WUUpdate (KB)",
+    shells: ["powershell"],
+    runAsSystem: true,
+    command: "Hide-WUUpdate -KBArticleID KB5030219",
+  },
+  {
+    id: "windows_remove_kb",
+    label: "Windows PS: Remove-WindowsUpdate (KB)",
+    shells: ["powershell"],
+    runAsSystem: true,
+    command: "Remove-WindowsUpdate -KBArticleID KB5030219",
+  },
+  {
+    id: "windows_winget_upgrade_all",
+    label: "Windows: winget upgrade --all",
+    shells: ["powershell", "cmd"],
+    runAsSystem: false,
+    command: "winget upgrade --all --accept-package-agreements --accept-source-agreements",
+  },
+  {
+    id: "windows_winget_list_upgrades",
+    label: "Windows: winget list upgrades",
+    shells: ["powershell", "cmd"],
+    runAsSystem: false,
+    command: "winget list --upgrade-available",
+  },
+  {
+    id: "windows_choco_upgrade_all",
+    label: "Windows: choco upgrade all",
+    shells: ["powershell", "cmd"],
+    runAsSystem: true,
+    command: "choco upgrade all -y",
+  },
+  {
+    id: "windows_scoop_update_all",
+    label: "Windows: scoop update *",
+    shells: ["powershell", "cmd"],
+    runAsSystem: false,
+    command: "scoop update *",
+  },
+  {
+    id: "windows_dism_packages",
+    label: "Windows: DISM get packages",
+    shells: ["powershell", "cmd"],
+    runAsSystem: true,
+    command: "dism /online /get-packages",
+  },
 ];
 const MIN_WORKBENCH_MODES = [
   { value: "shell", label: "Shell" },
@@ -158,8 +431,30 @@ const statusTone = (status) => {
   const value = String(status || "").toUpperCase();
   if (value === "SUCCESS") return "success";
   if (["NO_CHANGE", "SKIPPED", "UNCHANGED"].includes(value)) return "neutral";
-  if (["FAILED", "ERROR", "KILLED"].includes(value)) return "failed";
-  if (["RUNNING", "PAUSED", "PENDING", "PENDING_VERIFICATION", "QUEUED", "CANCELLED", "PARTIAL", "WAITING_REBOOT", "RETRYABLE"].includes(value)) return "pending";
+  if (["FAILED_LOGIC", "TOOL_FAILED"].includes(value)) return "failed";
+  if (
+    [
+      "RUNNING",
+      "PAUSED",
+      "PENDING",
+      "PENDING_VERIFICATION",
+      "QUEUED",
+      "CANCELLED",
+      "PARTIAL",
+      "WAITING_REBOOT",
+      "RETRYABLE",
+      "BUSY",
+      "ENDPOINT_ERROR",
+      "COMMAND_ERROR",
+      "INPUT_ERROR",
+      "NEEDS_PRIVILEGE",
+      "FAILED",
+      "ERROR",
+      "KILLED",
+    ].includes(value)
+  ) {
+    return "pending";
+  }
   return "neutral";
 };
 
@@ -171,15 +466,72 @@ const moduleLabel = (value) => {
   return "Unknown";
 };
 
+const looksLikePlaybookName = (value) => {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return false;
+  if (text.endsWith(".json")) return true;
+  if (text.includes("/") || text.includes("\\")) return true;
+  if (text.includes("playbook") && text !== "playbook-test") return true;
+  return false;
+};
+
+const isGlobalShellHistoryAction = (actionId, argsValue) => {
+  const normalized = String(actionId || "").trim().toLowerCase();
+  if (normalized === "global-shell" || normalized === "global_shell") return true;
+  if (normalized !== "custom-os-command") return false;
+  let argsText = "";
+  if (typeof argsValue === "string") {
+    argsText = argsValue;
+  } else {
+    try {
+      argsText = JSON.stringify(argsValue ?? "");
+    } catch {
+      argsText = String(argsValue ?? "");
+    }
+  }
+  return argsText.toLowerCase().includes("global-shell");
+};
+
+const inferHistoryModule = ({ executionModule, executionType, action, args }) => {
+  const moduleRaw = String(executionModule || "").trim().toLowerCase();
+  const typeRaw = String(executionType || "").trim().toLowerCase();
+  const actionRaw = String(action || "").trim();
+  const actionNormalized = actionRaw.toLowerCase();
+
+  if (isGlobalShellHistoryAction(actionNormalized, args)) return "global-shell";
+
+  if (moduleRaw === "global-shell" || moduleRaw === "global_shell") return "global-shell";
+  if (moduleRaw === "actions" || moduleRaw === "action") return "actions";
+  if (moduleRaw === "playbooks" || moduleRaw === "playbook") {
+    if (actionRaw && !looksLikePlaybookName(actionRaw)) return "actions";
+    return "playbooks";
+  }
+
+  if (typeRaw === "global_shell") return "global-shell";
+  if (typeRaw === "action") return "actions";
+  if (typeRaw === "playbook") return "playbooks";
+
+  if (!actionRaw) return "actions";
+  if (looksLikePlaybookName(actionRaw)) return "playbooks";
+  return "actions";
+};
+
 const classifyHistoryStatus = (row) => {
   const baseStatus = String(row?.status || "").trim().toUpperCase();
   const blob = `${String(row?.latestStdout || "")}\n${String(row?.latestStderr || "")}`.toLowerCase();
-  if (!blob.trim()) return baseStatus || "UNKNOWN";
+  const failedBase = ["FAILED", "ERROR", "KILLED", "PARTIAL"].includes(baseStatus);
+  if (!blob.trim()) {
+    if (failedBase) return "ENDPOINT_ERROR";
+    return baseStatus || "UNKNOWN";
+  }
   if (HISTORY_WAITING_REBOOT_MARKERS.some((marker) => blob.includes(marker))) return "WAITING_REBOOT";
   if (HISTORY_NO_CHANGE_MARKERS.some((marker) => blob.includes(marker))) return "NO_CHANGE";
-  if (HISTORY_RETRYABLE_MARKERS.some((marker) => blob.includes(marker))) {
-    if (["FAILED", "ERROR", "PARTIAL", "KILLED"].includes(baseStatus)) return "RETRYABLE";
-  }
+  if (HISTORY_RETRYABLE_MARKERS.some((marker) => blob.includes(marker)) && failedBase) return "RETRYABLE";
+  if (HISTORY_BUSY_MARKERS.some((marker) => blob.includes(marker)) && failedBase) return "BUSY";
+  if (HISTORY_PRIVILEGE_MARKERS.some((marker) => blob.includes(marker)) && failedBase) return "NEEDS_PRIVILEGE";
+  if (HISTORY_COMMAND_ERROR_MARKERS.some((marker) => blob.includes(marker)) && failedBase) return "COMMAND_ERROR";
+  if (HISTORY_TOOL_FAILURE_MARKERS.some((marker) => blob.includes(marker))) return "FAILED_LOGIC";
+  if (failedBase) return "ENDPOINT_ERROR";
   return baseStatus || "UNKNOWN";
 };
 
@@ -296,8 +648,13 @@ const normalizeHistoryRows = (rows) => {
           status: String(row[3] || ""),
           target: String(row[1] || ""),
           action,
-          executionModule: action.toLowerCase() === "global-shell" ? "global-shell" : "actions",
-          executionType: action.toLowerCase() === "global-shell" ? "global_shell" : "action",
+          executionModule: inferHistoryModule({
+            executionModule: "",
+            executionType: "",
+            action,
+            args: row[7],
+          }),
+          executionType: action.toLowerCase() === "global-shell" ? "global_shell" : "",
           startedAt: row[5] || "",
           finishedAt: row[6] || "",
           shell: commandMeta.shell,
@@ -307,12 +664,18 @@ const normalizeHistoryRows = (rows) => {
         };
       }
       const commandMeta = resolveShellAndCommand(row?.args);
+      const resolvedModule = inferHistoryModule({
+        executionModule: row?.execution_module,
+        executionType: row?.execution_type,
+        action: row?.action || row?.action_id || row?.playbook || "",
+        args: row?.args,
+      });
       const item = {
         id: Number(row?.id || 0),
         status: String(row?.status || ""),
         target: String(row?.agent || ""),
         action: String(row?.action || row?.action_id || row?.playbook || ""),
-        executionModule: String(row?.execution_module || ""),
+        executionModule: resolvedModule,
         executionType: String(row?.execution_type || ""),
         startedAt: row?.started_at || row?.startedAt || "",
         finishedAt: row?.finished_at || row?.finishedAt || "",
@@ -329,7 +692,12 @@ const normalizeHistoryRows = (rows) => {
     .filter((row) => row.id > 0)
     .map((row) => ({
       ...row,
-      executionModule: String(row.executionModule || "").trim().toLowerCase() || "actions",
+      executionModule: inferHistoryModule({
+        executionModule: row.executionModule,
+        executionType: row.executionType,
+        action: row.action,
+        args: row.command,
+      }),
       displayStatus: String(row.displayStatus || row.status || "UNKNOWN").toUpperCase(),
     }))
     .sort((left, right) => right.id - left.id);
@@ -395,6 +763,8 @@ export default function PatchWorkbenchShellMin({
   const [runAsSystem, setRunAsSystem] = useState(false);
   const [allowDestructive, setAllowDestructive] = useState(false);
   const [command, setCommand] = useState("");
+  const [builtinQuery, setBuiltinQuery] = useState("");
+  const [selectedBuiltinId, setSelectedBuiltinId] = useState("");
   const [justification, setJustification] = useState("");
   const [runStatus, setRunStatus] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -584,11 +954,37 @@ export default function PatchWorkbenchShellMin({
 
   const shellTargetPlatform = SHELL_PLATFORM_MAP[shell] || "windows";
   const shellTargetLabel = shellTargetPlatform === "linux" ? "Linux" : "Windows";
+  const availableBuiltins = useMemo(() => {
+    const query = String(builtinQuery || "").trim().toLowerCase();
+    return BUILTIN_COMMAND_LIBRARY.filter((item) => {
+      const shells = Array.isArray(item?.shells) ? item.shells : [];
+      if (!shells.includes(shell)) return false;
+      if (!query) return true;
+      const blob = [item?.label, item?.id, item?.command]
+        .map((value) => String(value || "").toLowerCase())
+        .join(" ");
+      return blob.includes(query);
+    });
+  }, [builtinQuery, shell]);
+  const selectedBuiltin = useMemo(
+    () => availableBuiltins.find((item) => String(item?.id || "") === String(selectedBuiltinId || "")) || null,
+    [availableBuiltins, selectedBuiltinId]
+  );
   const normalizedMode = (() => {
     const raw = String(mode || "").trim().toLowerCase();
     if (raw === "actions" || raw === "playbooks" || raw === "scheduler") return raw;
     return "shell";
   })();
+
+  useEffect(() => {
+    if (!availableBuiltins.length) {
+      if (selectedBuiltinId) setSelectedBuiltinId("");
+      return;
+    }
+    if (!selectedBuiltinId || !availableBuiltins.some((item) => String(item?.id || "") === String(selectedBuiltinId))) {
+      setSelectedBuiltinId(String(availableBuiltins[0]?.id || ""));
+    }
+  }, [availableBuiltins, selectedBuiltinId]);
 
   const handleModuleExecutionCreated = useCallback((executionId) => {
     const id = Number(executionId || 0);
@@ -683,9 +1079,11 @@ export default function PatchWorkbenchShellMin({
     return history.filter((row) => {
       const displayStatus = String(row?.displayStatus || row?.status || "").toUpperCase();
       if (statusFilter === "success" && displayStatus !== "SUCCESS") return false;
+      if (statusFilter === "no_change" && !["NO_CHANGE", "SKIPPED", "UNCHANGED"].includes(displayStatus)) return false;
       if (statusFilter === "partial" && displayStatus !== "PARTIAL") return false;
-      if (statusFilter === "retryable" && displayStatus !== "RETRYABLE") return false;
-      if (statusFilter === "failed" && !["FAILED", "ERROR", "KILLED"].includes(displayStatus)) return false;
+      if (statusFilter === "retryable" && !["RETRYABLE", "BUSY", "WAITING_REBOOT"].includes(displayStatus)) return false;
+      if (statusFilter === "endpoint_issue" && !["ENDPOINT_ERROR", "COMMAND_ERROR", "NEEDS_PRIVILEGE", "INPUT_ERROR"].includes(displayStatus)) return false;
+      if (statusFilter === "failed" && !["FAILED_LOGIC", "TOOL_FAILED"].includes(displayStatus)) return false;
       if (
         statusFilter === "running"
         && !["RUNNING", "QUEUED", "PENDING", "PENDING_VERIFICATION", "PAUSED", "IN_PROGRESS", "DISPATCHED"].includes(displayStatus)
@@ -814,6 +1212,29 @@ export default function PatchWorkbenchShellMin({
       return Array.from(selected);
     });
   }, [pagedVulnerabilities]);
+
+  const applyBuiltinCommand = useCallback((mode = "replace") => {
+    if (!selectedBuiltin) {
+      setRunStatus("Pick a built-in command first.");
+      return;
+    }
+    const snippet = String(selectedBuiltin.command || "").trim();
+    if (!snippet) {
+      setRunStatus("Selected built-in command is empty.");
+      return;
+    }
+    setCommand((current) => {
+      const existing = String(current || "").trim();
+      if (mode === "append") {
+        if (!existing) return snippet;
+        const glue = shell === "powershell" ? "; " : " && ";
+        return `${existing}${glue}${snippet}`;
+      }
+      return snippet;
+    });
+    if (selectedBuiltin.runAsSystem) setRunAsSystem(true);
+    setRunStatus(`Loaded built-in command: ${selectedBuiltin.label}`);
+  }, [selectedBuiltin, shell]);
 
   const runPatchCommand = useCallback(async () => {
     const rawCommand = String(command || "").trim();
@@ -1243,6 +1664,46 @@ export default function PatchWorkbenchShellMin({
                 <input type="checkbox" checked={allowDestructive} onChange={(event) => setAllowDestructive(Boolean(event.target.checked))} />
                 <span className="muted">Allow destructive commands</span>
               </label>
+              <div className="muted mt-10">Built-in Commands</div>
+              <input
+                className="input mt-8"
+                value={builtinQuery}
+                onChange={(event) => setBuiltinQuery(event.target.value)}
+                placeholder="Search built-ins"
+              />
+              <select
+                className="input mt-8"
+                value={selectedBuiltinId}
+                onChange={(event) => setSelectedBuiltinId(event.target.value)}
+              >
+                {availableBuiltins.length === 0 ? (
+                  <option value="">No built-ins for this shell</option>
+                ) : (
+                  availableBuiltins.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))
+                )}
+              </select>
+              <div className="page-actions mt-8">
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => applyBuiltinCommand("replace")}
+                  disabled={!selectedBuiltin}
+                >
+                  Use Built-in
+                </button>
+                <button
+                  className="btn secondary"
+                  type="button"
+                  onClick={() => applyBuiltinCommand("append")}
+                  disabled={!selectedBuiltin}
+                >
+                  Append
+                </button>
+              </div>
             </div>
 
             <div className="list-item readable">

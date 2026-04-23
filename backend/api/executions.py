@@ -104,6 +104,33 @@ def _to_text(value: Any) -> str:
         return str(value)
 
 
+def _parse_json_maybe(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        text_value = value.strip()
+        if not text_value:
+            return None
+        try:
+            return json.loads(text_value)
+        except Exception:
+            return text_value
+    return value
+
+
+def _looks_like_catalog_action(action_id: Any) -> bool:
+    normalized = str(action_id or "").strip()
+    if not normalized:
+        return False
+    try:
+        get_action(normalized)
+        return True
+    except Exception:
+        return False
+
+
 def _is_active_execution_status(status: str, finished_at: Any = None) -> bool:
     value = str(status or "").strip().upper()
     if finished_at:
@@ -126,10 +153,37 @@ def _derive_execution_classification(execution: dict[str, Any] | None) -> tuple[
     playbook_name = str(item.get("playbook") or "").strip()
     action_id = str(item.get("action_id") or item.get("action") or "").strip()
     args_payload = item.get("args")
-    if playbook_name:
-        return "playbook", "playbooks"
-    if _is_global_shell_execution(action_id, args_payload):
+    parsed_args = _parse_json_maybe(args_payload)
+
+    inferred_kind = ""
+    if isinstance(parsed_args, dict):
+        inferred_kind = str(parsed_args.get("job_kind") or parsed_args.get("kind") or "").strip().lower()
+        if not action_id:
+            inferred_action = str(parsed_args.get("action_id") or parsed_args.get("action") or "").strip()
+            if inferred_action:
+                action_id = inferred_action
+
+    global_shell_hint = action_id or playbook_name
+    if _is_global_shell_execution(global_shell_hint, args_payload):
         return "global_shell", "global-shell"
+    if inferred_kind == "shell":
+        return "global_shell", "global-shell"
+
+    if action_id:
+        return "action", "actions"
+
+    if playbook_name:
+        playbook_lower = playbook_name.lower()
+        if playbook_lower in {"global-shell", "custom-os-command"}:
+            return "global_shell", "global-shell"
+        if inferred_kind == "action":
+            return "action", "actions"
+        if inferred_kind == "playbook":
+            return "playbook", "playbooks"
+        if _looks_like_catalog_action(playbook_name):
+            return "action", "actions"
+        return "playbook", "playbooks"
+
     return "action", "actions"
 
 
@@ -139,6 +193,20 @@ def _apply_execution_classification(execution: dict[str, Any] | None) -> dict[st
     item["execution_type"] = execution_type
     item["execution_module"] = execution_module
     return item
+
+
+def _execution_type_matches(item: dict[str, Any], requested: str) -> bool:
+    normalized = str(requested or "").strip().lower()
+    if not normalized:
+        return True
+    value = str(item.get("execution_type") or "").strip().lower()
+    if normalized in {"playbook", "playbooks"}:
+        return value == "playbook"
+    if normalized in {"global_shell", "global-shell", "globalshell", "shell"}:
+        return value == "global_shell"
+    if normalized in {"action", "actions"}:
+        return value == "action"
+    return False
 
 
 def _execution_summary(execution: dict[str, Any], targets: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -644,30 +712,34 @@ def list_executions(
     try:
         where = []
         params: dict[str, Any] = {}
-        if limit is not None:
-            params["limit"] = int(limit)
+        requested_limit = int(limit) if limit is not None else None
+        query_limit = requested_limit
         if status:
             where.append("e.status = :status")
             params["status"] = status
         normalized_type = str(execution_type or "").strip().lower()
-        global_shell_sql = (
-            "(LOWER(COALESCE(e.action, '')) = 'global-shell' "
-            "OR (LOWER(COALESCE(e.action, '')) = 'custom-os-command' AND COALESCE(e.args, '') ILIKE '%global-shell%'))"
-        )
-        if normalized_type:
-            if normalized_type in {"playbook", "playbooks"}:
-                where.append("COALESCE(e.playbook, '') <> ''")
-            elif normalized_type in {"global_shell", "global-shell", "globalshell", "shell"}:
-                where.append(global_shell_sql)
-            elif normalized_type in {"action", "actions"}:
-                where.append(f"COALESCE(e.playbook, '') = '' AND NOT {global_shell_sql}")
-            else:
-                raise HTTPException(status_code=400, detail="Unsupported execution type filter")
+        if normalized_type and normalized_type not in {
+            "playbook",
+            "playbooks",
+            "global_shell",
+            "global-shell",
+            "globalshell",
+            "shell",
+            "action",
+            "actions",
+        }:
+            raise HTTPException(status_code=400, detail="Unsupported execution type filter")
+        if query_limit is not None and normalized_type:
+            # Execution type can be inferred from mixed legacy rows. Fetch a wider
+            # window first, then apply strict classification filtering in Python.
+            query_limit = min(max(query_limit * 6, query_limit), 2000)
+        if query_limit is not None:
+            params["limit"] = int(query_limit)
         if q:
             where.append("(e.agent ILIKE :q OR e.action ILIKE :q OR e.playbook ILIKE :q)")
             params["q"] = f"%{q}%"
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-        limit_sql = "LIMIT :limit" if limit is not None else ""
+        limit_sql = "LIMIT :limit" if query_limit is not None else ""
         latest_output_sql = "NULL::text AS latest_stdout, NULL::text AS latest_stderr"
         if include_latest_output:
             latest_output_sql = """
@@ -736,8 +808,12 @@ def list_executions(
         items = []
         for row in rows:
             item = _apply_execution_classification(_serialize_row(row))
+            if normalized_type and not _execution_type_matches(item, normalized_type):
+                continue
             item["summary"] = _execution_summary(item)
             items.append(item)
+            if requested_limit is not None and len(items) >= requested_limit:
+                break
         return items
     finally:
         db.close()

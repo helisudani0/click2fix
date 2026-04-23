@@ -12,14 +12,6 @@ import {
 } from "../api/wazuh";
 import PlaybookEditor from "../components/PlaybookEditor";
 import { formatApiError } from "../utils/httpErrors";
-import {
-  buildMatrixPlaybookDraft,
-  commandMatrixToPlaybookStep,
-  filterMatrixCommands,
-  getMatrixCommandById,
-  MIN_COMMAND_MATRIX,
-  MIN_COMMAND_MATRIX_BUNDLES,
-} from "./minCommandMatrix";
 
 const CONNECTED_STATUSES = new Set(["active", "connected", "online"]);
 const PLAYBOOK_GLOBAL_SHELL_ACTION = {
@@ -162,10 +154,6 @@ export default function PlaybooksMin({ onExecutionCreated }) {
 
   const [playbookSearch, setPlaybookSearch] = useState("");
   const [playbookPick, setPlaybookPick] = useState("");
-  const [matrixSearch, setMatrixSearch] = useState("");
-  const [matrixPlatform, setMatrixPlatform] = useState("all");
-  const [matrixCommandPick, setMatrixCommandPick] = useState("");
-  const [matrixBundlePick, setMatrixBundlePick] = useState("");
   const [targetType, setTargetType] = useState("fleet");
   const [targetValue, setTargetValue] = useState("");
   const [targetAgentIds, setTargetAgentIds] = useState([]);
@@ -243,43 +231,6 @@ export default function PlaybooksMin({ onExecutionCreated }) {
     if (!query) return playbooks;
     return playbooks.filter((name) => name.toLowerCase().includes(query));
   }, [playbookSearch, playbooks]);
-
-  const effectiveMatrixPlatform = useMemo(() => {
-    if (matrixPlatform !== "all") return matrixPlatform;
-    if (targetType === "os_linux") return "linux";
-    if (targetType === "os_windows") return "windows";
-    return "all";
-  }, [matrixPlatform, targetType]);
-
-  const matrixCommands = useMemo(
-    () => filterMatrixCommands(MIN_COMMAND_MATRIX, { query: matrixSearch, platform: effectiveMatrixPlatform }),
-    [effectiveMatrixPlatform, matrixSearch]
-  );
-
-  useEffect(() => {
-    if (!matrixCommands.length) {
-      if (matrixCommandPick) setMatrixCommandPick("");
-      return;
-    }
-    if (!matrixCommandPick || !matrixCommands.some((command) => command.id === matrixCommandPick)) {
-      setMatrixCommandPick(String(matrixCommands[0]?.id || ""));
-    }
-  }, [matrixCommandPick, matrixCommands]);
-
-  const matrixBundles = useMemo(() => {
-    if (effectiveMatrixPlatform === "all") return MIN_COMMAND_MATRIX_BUNDLES;
-    return MIN_COMMAND_MATRIX_BUNDLES.filter((bundle) => String(bundle.platform || "all").toLowerCase() === effectiveMatrixPlatform);
-  }, [effectiveMatrixPlatform]);
-
-  useEffect(() => {
-    if (!matrixBundles.length) {
-      if (matrixBundlePick) setMatrixBundlePick("");
-      return;
-    }
-    if (!matrixBundlePick || !matrixBundles.some((bundle) => bundle.id === matrixBundlePick)) {
-      setMatrixBundlePick(String(matrixBundles[0]?.id || ""));
-    }
-  }, [matrixBundlePick, matrixBundles]);
 
   const connectedAgents = useMemo(
     () => agents.filter((agent) => CONNECTED_STATUSES.has(String(agent.status || "").toLowerCase())),
@@ -378,50 +329,6 @@ export default function PlaybooksMin({ onExecutionCreated }) {
     } catch (err) {
       setStatus(formatApiError(err, "Failed to load playbook."));
     }
-  };
-
-  const loadMatrixBundle = () => {
-    const bundleDraft = buildMatrixPlaybookDraft(matrixBundlePick);
-    if (!bundleDraft) {
-      setStatus("Select a valid matrix bundle first.");
-      return;
-    }
-    const normalized = normalizePlaybook(bundleDraft);
-    if (!normalized) {
-      setStatus("Matrix bundle did not produce a valid playbook payload.");
-      return;
-    }
-    setDraft(normalized);
-    setSelectedPlaybookName(`${normalized.name || "matrix-playbook"}.json`);
-    openBuilder();
-    const bundleLabel = matrixBundles.find((item) => item.id === matrixBundlePick)?.label
-      || String(bundleDraft?.name || matrixBundlePick);
-    setStatus(`Loaded matrix bundle: ${bundleLabel}`);
-  };
-
-  const appendMatrixStep = () => {
-    const command = getMatrixCommandById(matrixCommandPick);
-    if (!command) {
-      setStatus("Pick a matrix command first.");
-      return;
-    }
-    setDraft((current) => {
-      const base = normalizePlaybook(current) || blankPlaybook();
-      const currentSteps = Array.isArray(base.steps) ? base.steps : [];
-      const nextIndex = currentSteps.length + 1;
-      const nextStep = commandMatrixToPlaybookStep(command, nextIndex);
-      return normalizePlaybook({
-        ...base,
-        source: {
-          mode: "matrix",
-          command_id: command.id,
-          platform: command.platform,
-        },
-        steps: [...currentSteps, nextStep],
-      });
-    });
-    openBuilder();
-    setStatus(`Appended matrix step: ${command.label}`);
   };
 
   const handleNewManual = () => {
@@ -563,66 +470,6 @@ export default function PlaybooksMin({ onExecutionCreated }) {
       </div>
 
       {status ? <div className="empty-state">{status}</div> : null}
-
-      <div className="list">
-        <div className="list-item readable">
-          <div className="muted">Command Matrix Playbooks</div>
-          <div className="meta-line mt-8">
-            Load full matrix bundles or append single matrix steps to the current playbook builder.
-          </div>
-          <div className="page-actions mt-8">
-            <select className="input" value={matrixPlatform} onChange={(event) => setMatrixPlatform(event.target.value)}>
-              <option value="all">All matrix platforms</option>
-              <option value="windows">Windows matrix</option>
-              <option value="linux">Linux matrix</option>
-            </select>
-            <select className="input" value={matrixBundlePick} onChange={(event) => setMatrixBundlePick(event.target.value)}>
-              {matrixBundles.length === 0 ? (
-                <option value="">No matrix bundles for selected platform</option>
-              ) : (
-                matrixBundles.map((bundle) => (
-                  <option key={`matrix-bundle-${bundle.id}`} value={bundle.id}>
-                    {bundle.label}
-                  </option>
-                ))
-              )}
-            </select>
-            <button className="btn secondary" type="button" disabled={!matrixBundlePick} onClick={loadMatrixBundle}>
-              Load Matrix Bundle
-            </button>
-          </div>
-
-          <div className="page-actions mt-10">
-            <input
-              className="input"
-              value={matrixSearch}
-              onChange={(event) => setMatrixSearch(event.target.value)}
-              placeholder="Search matrix commands"
-            />
-            <select className="input" value={matrixCommandPick} onChange={(event) => setMatrixCommandPick(event.target.value)}>
-              {matrixCommands.length === 0 ? (
-                <option value="">No matrix commands match current filters</option>
-              ) : (
-                matrixCommands.map((command) => (
-                  <option key={`matrix-command-${command.id}`} value={command.id}>
-                    {command.label}
-                  </option>
-                ))
-              )}
-            </select>
-            <button className="btn secondary" type="button" disabled={!matrixCommandPick} onClick={appendMatrixStep}>
-              Append Matrix Step
-            </button>
-          </div>
-
-          <div className="meta-line mt-8">
-            {matrixCommands.length} / {MIN_COMMAND_MATRIX.length} matrix commands visible
-          </div>
-          <div className="meta-line">
-            Effective matrix platform: {effectiveMatrixPlatform === "all" ? "All platforms" : effectiveMatrixPlatform}
-          </div>
-        </div>
-      </div>
 
       <div className="list">
         <div className="list-item readable">

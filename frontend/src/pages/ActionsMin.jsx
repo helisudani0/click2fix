@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getActions, getAgents, runAction, runGlobalShell } from "../api/wazuh";
-import { filterMatrixCommands, getMatrixCommandById, MIN_COMMAND_MATRIX } from "./minCommandMatrix";
+import { getActions, getAgents, runAction } from "../api/wazuh";
 import { formatApiError } from "../utils/httpErrors";
 
 const CONNECTED_STATUSES = new Set(["active", "connected", "online"]);
@@ -150,12 +149,6 @@ export default function ActionsMin({ onExecutionCreated }) {
   const [catalogSearch, setCatalogSearch] = useState("");
   const [catalogCategory, setCatalogCategory] = useState("");
   const [catalogPlatform, setCatalogPlatform] = useState("all");
-  const [matrixSearch, setMatrixSearch] = useState("");
-  const [matrixPlatform, setMatrixPlatform] = useState("all");
-  const [matrixPresetId, setMatrixPresetId] = useState("");
-  const [matrixShell, setMatrixShell] = useState("powershell");
-  const [matrixRunAsSystem, setMatrixRunAsSystem] = useState(false);
-  const [matrixCommand, setMatrixCommand] = useState("");
 
   const loadActions = useCallback(async () => {
     setActionsLoading(true);
@@ -288,64 +281,6 @@ export default function ActionsMin({ onExecutionCreated }) {
   }, [connectedAgents, selectedAgentSet, targetMode, targetValue]);
 
   const resolvedTargetIds = useMemo(() => scopedTargets.map((agent) => agent.id), [scopedTargets]);
-  const scopedPlatformSet = useMemo(
-    () => new Set(scopedTargets.map((agent) => String(agent.platform || "").toLowerCase()).filter((platform) => platform === "windows" || platform === "linux")),
-    [scopedTargets]
-  );
-
-  const effectiveMatrixPlatform = useMemo(() => {
-    if (matrixPlatform !== "all") return matrixPlatform;
-    if (targetMode === "os_linux") return "linux";
-    if (targetMode === "os_windows") return "windows";
-    return "all";
-  }, [matrixPlatform, targetMode]);
-
-  const matrixPresets = useMemo(
-    () => filterMatrixCommands(MIN_COMMAND_MATRIX, { query: matrixSearch, platform: effectiveMatrixPlatform }),
-    [effectiveMatrixPlatform, matrixSearch]
-  );
-
-  useEffect(() => {
-    if (!matrixPresets.length) {
-      if (matrixPresetId) setMatrixPresetId("");
-      return;
-    }
-    if (!matrixPresetId || !matrixPresets.some((item) => item.id === matrixPresetId)) {
-      setMatrixPresetId(String(matrixPresets[0]?.id || ""));
-    }
-  }, [matrixPresetId, matrixPresets]);
-
-  const selectedMatrixPreset = useMemo(
-    () => getMatrixCommandById(matrixPresetId),
-    [matrixPresetId]
-  );
-
-  useEffect(() => {
-    if (!selectedMatrixPreset) return;
-    const shellOptions = Array.isArray(selectedMatrixPreset.shellOptions)
-      ? selectedMatrixPreset.shellOptions.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)
-      : [];
-    const fallbackShell = String(selectedMatrixPreset.shell || "powershell").trim().toLowerCase();
-    setMatrixShell(shellOptions[0] || fallbackShell || "powershell");
-    setMatrixRunAsSystem(Boolean(selectedMatrixPreset.runAsSystem));
-    setMatrixCommand(String(selectedMatrixPreset.command || ""));
-  }, [selectedMatrixPreset]);
-
-  const matrixShellOptions = useMemo(() => {
-    const fromPreset = Array.isArray(selectedMatrixPreset?.shellOptions)
-      ? selectedMatrixPreset.shellOptions.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)
-      : [];
-    if (fromPreset.length) return fromPreset;
-    const fallbackShell = String(selectedMatrixPreset?.shell || "").trim().toLowerCase();
-    return fallbackShell ? [fallbackShell] : ["powershell"];
-  }, [selectedMatrixPreset]);
-
-  const matrixPlatformMismatch = useMemo(() => {
-    const platform = String(selectedMatrixPreset?.platform || "").trim().toLowerCase();
-    if (!platform || platform === "all") return false;
-    if (!scopedPlatformSet.size) return false;
-    return Array.from(scopedPlatformSet).some((item) => item !== platform);
-  }, [scopedPlatformSet, selectedMatrixPreset]);
 
   const categories = useMemo(
     () => Array.from(new Set(actions.map((item) => actionCategory(item)))).sort((left, right) => left.localeCompare(right)),
@@ -401,64 +336,6 @@ export default function ActionsMin({ onExecutionCreated }) {
   );
 
   const canRun = Boolean(selectedAction) && resolvedTargetIds.length > 0 && !missingRequiredInput && !dispatching;
-  const canRunMatrix = Boolean(selectedMatrixPreset)
-    && resolvedTargetIds.length > 0
-    && String(matrixCommand || "").trim().length > 0
-    && !matrixPlatformMismatch
-    && !dispatching;
-
-  const runMatrixAction = useCallback(async () => {
-    const commandToRun = String(matrixCommand || "").trim();
-    if (!selectedMatrixPreset) {
-      setDispatchStatus("Select a matrix command first.");
-      return;
-    }
-    if (!resolvedTargetIds.length) {
-      setDispatchStatus("Select target scope with at least one connected agent.");
-      return;
-    }
-    if (!commandToRun) {
-      setDispatchStatus("Matrix command cannot be empty.");
-      return;
-    }
-    if (matrixPlatformMismatch) {
-      const requiredPlatform = String(selectedMatrixPreset.platform || "").toLowerCase() === "linux" ? "Linux" : "Windows";
-      setDispatchStatus(`Current scope contains mixed/other platforms. Select only ${requiredPlatform} targets for this matrix command.`);
-      return;
-    }
-
-    setDispatching(true);
-    setDispatchStatus("Submitting matrix action...");
-    try {
-      const response = await runGlobalShell({
-        agent_ids: resolvedTargetIds,
-        shell: matrixShell,
-        command: commandToRun,
-        run_as_system: Boolean(matrixRunAsSystem),
-        allow_destructive: false,
-        async: true,
-        justification: justification.trim() || `Matrix action: ${selectedMatrixPreset.label}`,
-      });
-      const executionId = Number(response?.data?.execution_id || 0) || null;
-      if (executionId && typeof onExecutionCreated === "function") {
-        onExecutionCreated(executionId);
-      }
-      setDispatchStatus(executionId ? `Matrix action queued as execution #${executionId}.` : "Matrix action queued.");
-    } catch (err) {
-      setDispatchStatus(formatApiError(err, "Matrix action dispatch failed."));
-    } finally {
-      setDispatching(false);
-    }
-  }, [
-    justification,
-    matrixCommand,
-    matrixPlatformMismatch,
-    matrixRunAsSystem,
-    matrixShell,
-    onExecutionCreated,
-    resolvedTargetIds,
-    selectedMatrixPreset,
-  ]);
 
   const runSelectedAction = useCallback(async () => {
     if (!selectedAction) {
@@ -597,88 +474,6 @@ export default function ActionsMin({ onExecutionCreated }) {
           ) : null}
 
           <div className="meta-line mt-10">Resolved connected targets: {resolvedTargetIds.length}</div>
-        </div>
-
-        <div className="list-item readable">
-          <div className="muted">Command Matrix Actions</div>
-          <div className="meta-line mt-8">Dedicated Linux/Windows update command matrix for direct action dispatch.</div>
-          <div className="page-actions mt-8">
-            <input
-              className="input"
-              value={matrixSearch}
-              onChange={(event) => setMatrixSearch(event.target.value)}
-              placeholder="Search matrix commands"
-            />
-            <select className="input" value={matrixPlatform} onChange={(event) => setMatrixPlatform(event.target.value)}>
-              <option value="all">All matrix platforms</option>
-              <option value="windows">Windows matrix</option>
-              <option value="linux">Linux matrix</option>
-            </select>
-          </div>
-          <div className="grid-2 mt-10">
-            <select className="input" value={matrixPresetId} onChange={(event) => setMatrixPresetId(event.target.value)}>
-              {matrixPresets.length === 0 ? (
-                <option value="">No matrix commands match current filters</option>
-              ) : (
-                matrixPresets.map((item) => (
-                  <option key={`matrix-action-${item.id}`} value={item.id}>
-                    {item.label}
-                  </option>
-                ))
-              )}
-            </select>
-            <select className="input" value={matrixShell} onChange={(event) => setMatrixShell(event.target.value)}>
-              {matrixShellOptions.map((shellOption) => (
-                <option key={`matrix-shell-${shellOption}`} value={shellOption}>
-                  {shellOption}
-                </option>
-              ))}
-            </select>
-          </div>
-          <label className="inline-check mt-8">
-            <input
-              type="checkbox"
-              checked={matrixRunAsSystem}
-              onChange={(event) => setMatrixRunAsSystem(Boolean(event.target.checked))}
-            />
-            <span>Run with elevated privileges (SYSTEM/root)</span>
-          </label>
-          <textarea
-            className="input mt-8 mono"
-            rows={4}
-            value={matrixCommand}
-            onChange={(event) => setMatrixCommand(event.target.value)}
-            placeholder="Matrix command text"
-          />
-          <div className="meta-line mt-8">
-            {matrixPresets.length} / {MIN_COMMAND_MATRIX.length} matrix commands visible
-          </div>
-          <div className="meta-line">
-            Effective matrix platform: {effectiveMatrixPlatform === "all" ? "All platforms" : effectiveMatrixPlatform}
-          </div>
-          {matrixPlatformMismatch ? (
-            <div className="empty-state mt-8">
-              Selected matrix command targets {selectedMatrixPreset?.platform || "unknown"} endpoints only.
-            </div>
-          ) : null}
-          <div className="page-actions mt-8">
-            <button className="btn" type="button" onClick={runMatrixAction} disabled={!canRunMatrix}>
-              {dispatching ? "Queueing..." : "Run Matrix Action"}
-            </button>
-            <button
-              className="btn secondary"
-              type="button"
-              disabled={!selectedMatrixPreset}
-              onClick={() => {
-                if (!selectedMatrixPreset) return;
-                setMatrixShell(String(selectedMatrixPreset.shell || "powershell").toLowerCase());
-                setMatrixRunAsSystem(Boolean(selectedMatrixPreset.runAsSystem));
-                setMatrixCommand(String(selectedMatrixPreset.command || ""));
-              }}
-            >
-              Reset Matrix Command
-            </button>
-          </div>
         </div>
 
         <div className="list-item readable">

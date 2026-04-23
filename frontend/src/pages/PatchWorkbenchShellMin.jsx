@@ -966,10 +966,6 @@ export default function PatchWorkbenchShellMin({
       return blob.includes(query);
     });
   }, [builtinQuery, shell]);
-  const selectedBuiltin = useMemo(
-    () => availableBuiltins.find((item) => String(item?.id || "") === String(selectedBuiltinId || "")) || null,
-    [availableBuiltins, selectedBuiltinId]
-  );
   const normalizedMode = (() => {
     const raw = String(mode || "").trim().toLowerCase();
     if (raw === "actions" || raw === "playbooks" || raw === "scheduler") return raw;
@@ -977,13 +973,8 @@ export default function PatchWorkbenchShellMin({
   })();
 
   useEffect(() => {
-    if (!availableBuiltins.length) {
-      if (selectedBuiltinId) setSelectedBuiltinId("");
-      return;
-    }
-    if (!selectedBuiltinId || !availableBuiltins.some((item) => String(item?.id || "") === String(selectedBuiltinId))) {
-      setSelectedBuiltinId(String(availableBuiltins[0]?.id || ""));
-    }
+    if (availableBuiltins.length) return;
+    if (selectedBuiltinId) setSelectedBuiltinId("");
   }, [availableBuiltins, selectedBuiltinId]);
 
   const handleModuleExecutionCreated = useCallback((executionId) => {
@@ -1212,29 +1203,6 @@ export default function PatchWorkbenchShellMin({
       return Array.from(selected);
     });
   }, [pagedVulnerabilities]);
-
-  const applyBuiltinCommand = useCallback((mode = "replace") => {
-    if (!selectedBuiltin) {
-      setRunStatus("Pick a built-in command first.");
-      return;
-    }
-    const snippet = String(selectedBuiltin.command || "").trim();
-    if (!snippet) {
-      setRunStatus("Selected built-in command is empty.");
-      return;
-    }
-    setCommand((current) => {
-      const existing = String(current || "").trim();
-      if (mode === "append") {
-        if (!existing) return snippet;
-        const glue = shell === "powershell" ? "; " : " && ";
-        return `${existing}${glue}${snippet}`;
-      }
-      return snippet;
-    });
-    if (selectedBuiltin.runAsSystem) setRunAsSystem(true);
-    setRunStatus(`Loaded built-in command: ${selectedBuiltin.label}`);
-  }, [selectedBuiltin, shell]);
 
   const runPatchCommand = useCallback(async () => {
     const rawCommand = String(command || "").trim();
@@ -1674,36 +1642,31 @@ export default function PatchWorkbenchShellMin({
               <select
                 className="input mt-8"
                 value={selectedBuiltinId}
-                onChange={(event) => setSelectedBuiltinId(event.target.value)}
+                onChange={(event) => {
+                  const nextId = event.target.value;
+                  setSelectedBuiltinId(nextId);
+                  const nextBuiltin = availableBuiltins.find((item) => String(item?.id || "") === String(nextId));
+                  if (!nextBuiltin) return;
+                  const snippet = String(nextBuiltin.command || "").trim();
+                  if (!snippet) {
+                    setRunStatus("Selected built-in command is empty.");
+                    return;
+                  }
+                  setCommand(snippet);
+                  if (nextBuiltin.runAsSystem) setRunAsSystem(true);
+                  setRunStatus(`Loaded built-in command: ${nextBuiltin.label}`);
+                }}
               >
-                {availableBuiltins.length === 0 ? (
-                  <option value="">No built-ins for this shell</option>
-                ) : (
+                <option value="">Select built-in command</option>
+                {availableBuiltins.length > 0 ? (
                   availableBuiltins.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.label}
                     </option>
                   ))
-                )}
+                ) : null}
               </select>
-              <div className="page-actions mt-8">
-                <button
-                  className="btn secondary"
-                  type="button"
-                  onClick={() => applyBuiltinCommand("replace")}
-                  disabled={!selectedBuiltin}
-                >
-                  Use Built-in
-                </button>
-                <button
-                  className="btn secondary"
-                  type="button"
-                  onClick={() => applyBuiltinCommand("append")}
-                  disabled={!selectedBuiltin}
-                >
-                  Append
-                </button>
-              </div>
+              <div className="meta-line mt-8">Select a built-in to load it into the command box.</div>
             </div>
 
             <div className="list-item readable">

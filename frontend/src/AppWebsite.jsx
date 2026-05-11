@@ -8,6 +8,8 @@ const MINI_RELEASE_TAG = "min-v1.1.12";
 const MINI_ZIP_URL =
   `${RELEASES_URL}/download/${MINI_RELEASE_TAG}/click2fix-patch-workbench-installer-min-v1.1.12.zip`;
 const FULL_VERSION = "v1.1.10";
+const ASSET_BASE = import.meta.env.BASE_URL || "/";
+const COMMAND_MARK = `${ASSET_BASE.replace(/\/?$/, "/")}click2fix-command-mark.svg`;
 const FULL_BOOTSTRAP_PS =
   `${REPO_URL.replace("github.com", "raw.githubusercontent.com")}/${FULL_VERSION}/deploy/appliance/bootstrap-from-github.ps1`;
 const FULL_BOOTSTRAP_SH =
@@ -930,7 +932,7 @@ function AppWebsite() {
       document.head.appendChild(icon);
     }
     icon.setAttribute("type", "image/svg+xml");
-    icon.setAttribute("href", "/click2fix-command-mark.svg");
+    icon.setAttribute("href", COMMAND_MARK);
   }, []);
 
   return (
@@ -938,7 +940,7 @@ function AppWebsite() {
       <CyberCanvas />
       <nav className="site-nav" aria-label="Primary navigation">
         <a className="site-brand" href="#top" aria-label="Click2Fix home">
-          <img src="/click2fix-command-mark.svg" alt="" />
+          <img src={COMMAND_MARK} alt="" />
           <span>
             Click2Fix
             <small>Cyber Ops Platform</small>
@@ -1275,7 +1277,7 @@ function AppWebsite() {
 
       <footer className="site-footer">
         <a href="#top" className="site-brand" aria-label="Back to top">
-          <img src="/click2fix-command-mark.svg" alt="" />
+          <img src={COMMAND_MARK} alt="" />
           <span>
             Click2Fix
             <small>Cyber Ops Platform</small>

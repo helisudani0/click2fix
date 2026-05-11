@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "node ./node_modules/vite/bin/vite.js --configLoader native",
+    "dev:site": "node ./node_modules/vite/bin/vite.js --configLoader native --mode product-site --host 0.0.0.0 --port 5174",
     "build": "node ./node_modules/vite/bin/vite.js build --configLoader native",
+    "build:site": "node ./node_modules/vite/bin/vite.js build --configLoader native --mode product-site",
     "lint": "eslint .",
-    "preview": "node ./node_modules/vite/bin/vite.js preview --configLoader native"
+    "preview": "node ./node_modules/vite/bin/vite.js preview --configLoader native",
+    "preview:site": "node ./node_modules/vite/bin/vite.js preview --configLoader native --host 0.0.0.0 --port 4174"
   },
   "dependencies": {
     "axios": "^1.13.5",

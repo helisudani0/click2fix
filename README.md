@@ -1,5 +1,7 @@
 # Click2Fix
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20712097.svg)](https://doi.org/10.5281/zenodo.20712097)
+
 Click2Fix is a SOC operations and response platform for Wazuh-managed environments.  
 It gives IT/security teams one console for triage, response, remote command execution, verification, and audit evidence.
 
@@ -8,6 +10,25 @@ It gives IT/security teams one console for triage, response, remote command exec
 - Latest published stable tag: `v1.1.10`
 - Stable deployment model: appliance installer + Docker images (GHCR)
 - Active implementation track in this repo: `v2 foundation / native services MVP`
+
+## Research and Citation
+
+Click2Fix is published as a citable research artifact:
+
+- DOI: [`10.5281/zenodo.20712097`](https://doi.org/10.5281/zenodo.20712097)
+- Paper: **Click2Fix: Design and Implementation of an Open-Source SOAR Platform for Automated SOC Operations**
+
+If you use Click2Fix in research, evaluation, or derivative work, cite:
+
+```bibtex
+@misc{click2fix2026,
+  title        = {Click2Fix: Design and Implementation of an Open-Source SOAR Platform for Automated SOC Operations},
+  author       = {Sudani, Heli},
+  year         = {2026},
+  doi          = {10.5281/zenodo.20712097},
+  url          = {https://doi.org/10.5281/zenodo.20712097}
+}
+```
 
 ## Current Product State
 

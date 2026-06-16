@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use Click2Fix in research, evaluation, or derivative work, please cite the Zenodo research artifact."
+title: "Click2Fix"
+version: "1.1.10"
+doi: "10.5281/zenodo.20712097"
+date-released: "2026-06-16"
+url: "https://doi.org/10.5281/zenodo.20712097"
+repository-code: "https://github.com/helisudani0/click2fix"
+authors:
+  - family-names: "Sudani"
+    given-names: "Heli"
+preferred-citation:
+  type: conference-paper
+  title: "Click2Fix: Design and Implementation of an Open-Source SOAR Platform for Automated SOC Operations"
+  authors:
+    - family-names: "Sudani"
+      given-names: "Heli"
+  year: 2026
+  doi: "10.5281/zenodo.20712097"
+  url: "https://doi.org/10.5281/zenodo.20712097"
